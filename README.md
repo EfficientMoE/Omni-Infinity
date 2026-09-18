@@ -52,12 +52,21 @@ Bootstrap in progress — see the
 - [x] Task 0 — moe-store multi-component H3 converter with AdaLN bundle
       groups ([moe-store#9](https://github.com/EfficientMoE/moe-store/pull/9),
       released in v0.2.1)
-- [ ] Task 1 — repo skeleton (this) + reference-parity harness: wrap the
-      unmodified H3-Base pipeline behind the runner API on a large-VRAM host
-      and record golden latent fixtures
+- [ ] Task 1 — repo skeleton (done) + reference-parity harness: the runner
+      API (`omni_infinity/runner.py`), smoke CLI
+      (`examples/fl2va_smoke.py`), and the bitwise parity test
+      (`tests/test_reference_parity.py`, skips until goldens exist) are in
+      place; recording the golden latent fixtures needs the large-VRAM
+      reference host ([#1](https://github.com/EfficientMoE/Omni-Infinity/issues/1))
 - [ ] Task 2 — component offload + AdaLN caching + FP8 on a single 24 GB GPU
 
-Nothing here is runnable yet; APIs will stabilize with Task 1.
+Reference smoke (large-VRAM host, diffusers >= 0.40):
+
+```bash
+python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
+    --seed 0 --steps 8 --resolution 256p --frames 8 \
+    --record-goldens tests/fixtures/goldens
+```
 
 ## License
 
