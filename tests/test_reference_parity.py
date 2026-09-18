@@ -41,6 +41,7 @@ def test_reference_runner_reproduces_golden_latents():
     runner = ReferenceRunner.from_pretrained(
         os.environ.get("OMNI_H3_CHECKPOINT", "MiniMaxAI/MiniMax-H3"),
         offload=os.environ.get("OMNI_H3_OFFLOAD", "0") == "1",
+        store_dir=os.environ.get("OMNI_H3_STORE"),
     )
     result = runner.generate(
         payload["prompt"],

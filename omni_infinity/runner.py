@@ -55,6 +55,22 @@ class GenerationResult:
     audio_latents: torch.Tensor | None
 
 
+def _h3_component_class(name: str):
+    import diffusers
+
+    classes = {
+        "vae": "AutoencoderKLMiniMaxH3",
+        "audio_vae": "AutoencoderKLMiniMaxH3Audio",
+        "transformer": "MiniMaxH3Transformer3DModel",
+    }
+    try:
+        return getattr(diffusers, classes[name])
+    except KeyError:
+        raise ValueError(
+            f"no store-loadable class known for component {name!r}"
+        ) from None
+
+
 def resolve_resolution(resolution: str) -> tuple[int, int]:
     try:
         return RESOLUTIONS[resolution]
@@ -80,6 +96,8 @@ class ReferenceRunner:
         torch_dtype: torch.dtype = torch.bfloat16,
         offload: bool = False,
         components: tuple[str, ...] = FL2VA_COMPONENTS,
+        store_dir: str | None = None,
+        store_components: tuple[str, ...] = ("vae", "audio_vae"),
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -99,12 +117,32 @@ class ReferenceRunner:
             components_manager = ComponentsManager()
             components_manager.enable_auto_cpu_offload(device=device)
 
+        substituted = tuple(store_components) if store_dir else ()
         pipeline = MiniMaxH3ModularPipeline.from_pretrained(
             checkpoint, components_manager=components_manager
         )
         pipeline.load_components(
-            names=list(components), torch_dtype=torch_dtype
+            names=[c for c in components if c not in substituted],
+            torch_dtype=torch_dtype,
         )
+        if store_dir:
+            from omni_infinity.store import (
+                StoreComponentSource,
+                load_diffusers_component,
+            )
+
+            source = StoreComponentSource(store_dir)
+            built = {
+                name: load_diffusers_component(
+                    _h3_component_class(name),
+                    checkpoint,
+                    name,
+                    source,
+                    torch_dtype,
+                )
+                for name in substituted
+            }
+            pipeline.update_components(**built)
         if not offload:
             pipeline.to(device)
         return cls(pipeline)

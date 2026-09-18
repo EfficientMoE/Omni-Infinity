@@ -87,3 +87,24 @@ class StoreComponentSource:
         for group in self.groups_for(component):
             state.update(self.read_group(group))
         return state
+
+
+def load_diffusers_component(
+    component_cls,
+    checkpoint: str,
+    component: str,
+    source: StoreComponentSource,
+    torch_dtype: torch.dtype = torch.bfloat16,
+):
+    config = component_cls.load_config(checkpoint, subfolder=component)
+    model = component_cls.from_config(config)
+    state = source.load_component_state_dict(component)
+    missing, unexpected = model.load_state_dict(
+        state, strict=False, assign=True
+    )
+    if unexpected:
+        raise ValueError(
+            f"{component}: store tensors not accepted by the model: "
+            f"{sorted(unexpected)[:5]}"
+        )
+    return model.to(torch_dtype).eval()
