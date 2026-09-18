@@ -57,18 +57,22 @@ def export_outputs(result, output_dir: Path) -> None:
         except ImportError:
             torch.save(result.videos, output_dir / "out_video.pt")
             print("imageio/opencv not installed; saved raw video tensor")
-    if result.audios is not None:
+    if result.audio is not None:
         try:
             import soundfile
 
-            audio = result.audios[0]
+            audio = result.audio
             if isinstance(audio, torch.Tensor):
                 audio = audio.float().cpu().numpy()
+            while audio.ndim > 2:
+                audio = audio[0]
             soundfile.write(
-                str(output_dir / "out.flac"), audio.T, samplerate=40 * 1000
+                str(output_dir / "out.flac"),
+                audio.T,
+                samplerate=int(result.sampling_rate or 48000),
             )
         except ImportError:
-            torch.save(result.audios, output_dir / "out_audio.pt")
+            torch.save(result.audio, output_dir / "out_audio.pt")
             print("soundfile not installed; saved raw audio tensor")
 
 

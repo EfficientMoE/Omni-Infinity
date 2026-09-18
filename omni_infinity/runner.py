@@ -37,13 +37,20 @@ FL2VA_COMPONENTS = (
     "transformer",
 )
 
-_OUTPUT_KEYS = ("videos", "audios", "latents", "audio_latents")
+_OUTPUT_KEYS = (
+    "videos",
+    "audio",
+    "sampling_rate",
+    "latents",
+    "audio_latents",
+)
 
 
 @dataclasses.dataclass
 class GenerationResult:
     videos: Any
-    audios: Any
+    audio: Any
+    sampling_rate: int | None
     latents: torch.Tensor | None
     audio_latents: torch.Tensor | None
 

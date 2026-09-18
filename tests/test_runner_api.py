@@ -57,7 +57,8 @@ def test_generate_maps_parameters_into_pipeline_call():
     class FakeState:
         values = {
             "videos": ["video"],
-            "audios": ["audio"],
+            "audio": torch.zeros(2, 4),
+            "sampling_rate": 48000,
             "latents": torch.zeros(1),
             "audio_latents": torch.zeros(2),
         }
@@ -84,4 +85,6 @@ def test_generate_maps_parameters_into_pipeline_call():
     assert isinstance(calls["generator"], torch.Generator)
     assert calls["generator"].initial_seed() == 7
     assert result.videos == ["video"]
+    assert result.sampling_rate == 48000
+    assert torch.equal(result.audio, torch.zeros(2, 4))
     assert torch.equal(result.audio_latents, torch.zeros(2))
