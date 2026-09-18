@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frames", type=int, default=8)
     parser.add_argument("--checkpoint", default="MiniMaxAI/MiniMax-H3")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--offload",
+        action="store_true",
+        help="run components sequentially via ComponentsManager auto CPU "
+        "offload (required when the pipeline exceeds one GPU)",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("."))
     parser.add_argument("--record-goldens", type=Path, default=None)
     return parser.parse_args()
@@ -91,7 +97,7 @@ def record_goldens(result, goldens_dir: Path, args) -> None:
 def main() -> int:
     args = parse_args()
     runner = ReferenceRunner.from_pretrained(
-        args.checkpoint, device=args.device
+        args.checkpoint, device=args.device, offload=args.offload
     )
     result = runner.generate(
         args.prompt,

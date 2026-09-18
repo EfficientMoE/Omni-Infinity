@@ -26,6 +26,17 @@ RESOLUTIONS = {
     "768p": (768, 768),
 }
 
+FL2VA_COMPONENTS = (
+    "text_encoder",
+    "tokenizer",
+    "processor",
+    "vae",
+    "audio_vae",
+    "scheduler",
+    "audio_scheduler",
+    "transformer",
+)
+
 _OUTPUT_KEYS = ("videos", "audios", "latents", "audio_latents")
 
 
@@ -60,6 +71,8 @@ class ReferenceRunner:
         *,
         device: str | torch.device = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
+        offload: bool = False,
+        components: tuple[str, ...] = FL2VA_COMPONENTS,
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -69,9 +82,24 @@ class ReferenceRunner:
                 "for the reference runner"
             ) from exc
 
-        pipeline = MiniMaxH3ModularPipeline.from_pretrained(checkpoint)
-        pipeline.load_components(torch_dtype=torch_dtype)
-        pipeline.to(device)
+        components_manager = None
+        if offload:
+            # The full FL2VA component set (~144 GB bf16) exceeds a single
+            # GPU, so the reference path can run components sequentially with
+            # ComponentsManager auto CPU offload instead of .to(device).
+            from diffusers.modular_pipelines import ComponentsManager
+
+            components_manager = ComponentsManager()
+            components_manager.enable_auto_cpu_offload(device=device)
+
+        pipeline = MiniMaxH3ModularPipeline.from_pretrained(
+            checkpoint, components_manager=components_manager
+        )
+        pipeline.load_components(
+            names=list(components), torch_dtype=torch_dtype
+        )
+        if not offload:
+            pipeline.to(device)
         return cls(pipeline)
 
     def generate(
