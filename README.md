@@ -52,19 +52,21 @@ Bootstrap in progress — see the
 - [x] Task 0 — moe-store multi-component H3 converter with AdaLN bundle
       groups ([moe-store#9](https://github.com/EfficientMoE/moe-store/pull/9),
       released in v0.2.1)
-- [ ] Task 1 — repo skeleton (done) + reference-parity harness: the runner
-      API (`omni_infinity/runner.py`), smoke CLI
-      (`examples/fl2va_smoke.py`), and the bitwise parity test
-      (`tests/test_reference_parity.py`, skips until goldens exist) are in
-      place; recording the golden latent fixtures needs the large-VRAM
-      reference host ([#1](https://github.com/EfficientMoE/Omni-Infinity/issues/1))
+- [x] Task 1 — repo skeleton + reference-parity harness: runner API
+      (`omni_infinity/runner.py`), smoke CLI (`examples/fl2va_smoke.py`),
+      and the bitwise parity gate (`tests/test_reference_parity.py`) —
+      validated on real H3-Base weights: a fresh generation reproduces the
+      committed golden latents bitwise
+      ([#1](https://github.com/EfficientMoE/Omni-Infinity/issues/1))
 - [ ] Task 2 — component offload + AdaLN caching + FP8 on a single 24 GB GPU
 
-Reference smoke (large-VRAM host, diffusers >= 0.40):
+Reference smoke (diffusers >= 0.40; `--offload` runs components
+sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
+5-15 s at 24 fps, so `--frames` must be >= 120):
 
 ```bash
 python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
-    --seed 0 --steps 8 --resolution 256p --frames 8 \
+    --seed 0 --steps 8 --resolution 256p --frames 120 --offload \
     --record-goldens tests/fixtures/goldens
 ```
 

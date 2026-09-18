@@ -81,6 +81,9 @@ def record_goldens(result, goldens_dir: Path, args) -> None:
         "resolution": args.resolution,
         "frames": args.frames,
         "torch_version": torch.__version__,
+        "gpu_name": (
+            torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+        ),
         "latents": (
             result.latents.cpu() if result.latents is not None else None
         ),
@@ -106,9 +109,9 @@ def main() -> int:
         resolution=args.resolution,
         num_frames=args.frames,
     )
-    export_outputs(result, args.output_dir)
     if args.record_goldens is not None:
         record_goldens(result, args.record_goldens, args)
+    export_outputs(result, args.output_dir)
     return 0
 
 
