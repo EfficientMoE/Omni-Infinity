@@ -53,6 +53,7 @@ def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
         offload_to_disk_path=to_disk,
     )
 
+
 RESOLUTIONS = {
     "256p": (256, 256),
     "512p": (512, 512),
@@ -215,7 +216,9 @@ class ReferenceRunner:
                     "the ComponentsManager)"
                 )
             _enable_block_streaming(
-                pipeline, device, block_stream_blocks_per_group,
+                pipeline,
+                device,
+                block_stream_blocks_per_group,
                 block_stream_to_disk,
             )
         if offload:
