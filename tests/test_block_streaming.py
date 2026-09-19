@@ -113,7 +113,7 @@ class _FakeEncoder(nn.Module):
         self.model = _FakeDecoder()
 
 
-def test_group_offload_targets_nested_decoder_layers():
+def test_group_offload_targets_nested_decoder_layers(cpu_accelerator):
     from diffusers.hooks import apply_group_offloading
     from diffusers.hooks.group_offloading import _is_group_offload_enabled
 
