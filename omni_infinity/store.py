@@ -75,8 +75,15 @@ class StoreComponentSource:
             if self.stage_name(group).endswith(".adaln")
         ]
 
-    def read_adaln_cache(self, component: str = "transformer") -> dict:
+    def read_adaln_cache(
+        self,
+        component: str = "transformer",
+        *,
+        fp8: bool = False,
+        compute_dtype: torch.dtype = torch.bfloat16,
+    ) -> dict:
         from omni_infinity.adaln import AdaLNEntry
+        from omni_infinity.fp8 import quantize_per_row_fp8
 
         cache: dict[int, AdaLNEntry] = {}
         for group in self.adaln_groups(component):
@@ -92,7 +99,13 @@ class StoreComponentSource:
                     f"adaln group {group.group_id:#x} is not a "
                     "{weight, bias} projection bundle"
                 )
-            cache[block] = AdaLNEntry(weight, bias)
+            if fp8:
+                quantized, scale = quantize_per_row_fp8(weight)
+                cache[block] = AdaLNEntry(
+                    quantized, bias, compute_dtype=compute_dtype, scale=scale
+                )
+            else:
+                cache[block] = AdaLNEntry(weight, bias)
         return cache
 
     def read_group(self, group) -> dict[str, torch.Tensor]:
@@ -149,6 +162,10 @@ def load_transformer_with_adaln_cache(
     source: StoreComponentSource,
     torch_dtype: torch.dtype = torch.bfloat16,
     component: str = "transformer",
+    *,
+    fp8: bool = False,
+    fp8_skip_last_blocks: int = 0,
+    adaln_fp8: bool = False,
 ):
     from omni_infinity.adaln import HostResidentAdaLN
 
@@ -159,7 +176,9 @@ def load_transformer_with_adaln_cache(
     # never become GPU-movable Parameters (so pipeline.to(device) leaves them
     # on the host) and the discarded fp32 init Linears are freed here rather
     # than surviving the load.
-    cache = source.read_adaln_cache(component)
+    cache = source.read_adaln_cache(
+        component, fp8=adaln_fp8, compute_dtype=torch_dtype
+    )
     for index, block in enumerate(model.transformer_blocks):
         entry = cache.get(index)
         if entry is None:
@@ -170,6 +189,24 @@ def load_transformer_with_adaln_cache(
     state = source.load_component_state_dict(component, exclude_adaln=True)
     _load_state_dict_strict_unexpected(model, state, component)
     model = _cast_preserving_fp32(model, component_cls, torch_dtype)
+    if fp8:
+        # Non-adaln FP8: store the attn/ff Linears as per-row-scaled float8 and
+        # upcast per forward (scaled, not diffusers' unscaled layerwise which
+        # is ~17-35% off on H3's ~1e-2 weights). FP8 error compounds across the
+        # 50 blocks, so fp8_skip_last_blocks keeps the last N blocks bf16 to cap
+        # the output deviation. Applied on the CPU model so weights are float8
+        # before .to(device) -- no 40 GB bf16 spike.
+        from omni_infinity.fp8 import apply_scaled_fp8_casting
+
+        total_blocks = len(model.transformer_blocks)
+        skip_blocks = (
+            frozenset(range(total_blocks - fp8_skip_last_blocks, total_blocks))
+            if fp8_skip_last_blocks > 0
+            else frozenset()
+        )
+        apply_scaled_fp8_casting(
+            model, compute_dtype=torch_dtype, skip_blocks=skip_blocks
+        )
     return model.eval()
 
 

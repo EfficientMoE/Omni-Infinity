@@ -99,6 +99,9 @@ class ReferenceRunner:
         store_dir: str | None = None,
         store_components: tuple[str, ...] = ("vae", "audio_vae"),
         adaln_host_cache: bool = False,
+        transformer_fp8: bool = False,
+        fp8_skip_last_blocks: int = 0,
+        offload_memory_margin: str | None = None,
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -112,20 +115,33 @@ class ReferenceRunner:
         if offload:
             # The full FL2VA component set (~144 GB bf16) exceeds a single
             # GPU, so the reference path can run components sequentially with
-            # ComponentsManager auto CPU offload instead of .to(device).
+            # ComponentsManager auto CPU offload instead of .to(device). Auto
+            # offload is enabled below, after update_components, so its hooks
+            # bind to the store-built (and FP8) transformer rather than the
+            # from_pretrained placeholder.
             from diffusers.modular_pipelines import ComponentsManager
 
             components_manager = ComponentsManager()
-            components_manager.enable_auto_cpu_offload(device=device)
 
         substituted = tuple(store_components) if store_dir else ()
         pipeline = MiniMaxH3ModularPipeline.from_pretrained(
             checkpoint, components_manager=components_manager
         )
-        pipeline.load_components(
-            names=[c for c in components if c not in substituted],
-            torch_dtype=torch_dtype,
-        )
+        # The Qwen3-VL processor's component spec resolves by repo id, which
+        # fails under HF offline mode (a sub-tokenizer config lookup raises
+        # rather than skipping a locally-absent file). Load it from the
+        # checkpoint path directly and inject it; harmless online.
+        preloaded = {}
+        loadable = [c for c in components if c not in substituted]
+        if "processor" in loadable:
+            from transformers import AutoProcessor
+
+            loadable.remove("processor")
+            preloaded["processor"] = AutoProcessor.from_pretrained(
+                checkpoint, subfolder="processor"
+            )
+        pipeline.load_components(names=loadable, torch_dtype=torch_dtype)
+        built = dict(preloaded)
         if store_dir:
             from omni_infinity.store import (
                 StoreComponentSource,
@@ -134,14 +150,17 @@ class ReferenceRunner:
             )
 
             source = StoreComponentSource(store_dir)
-            built = {}
             for name in substituted:
-                if name == "transformer" and adaln_host_cache:
+                if name == "transformer" and (
+                    adaln_host_cache or transformer_fp8
+                ):
                     built[name] = load_transformer_with_adaln_cache(
                         _h3_component_class(name),
                         checkpoint,
                         source,
                         torch_dtype,
+                        fp8=transformer_fp8,
+                        fp8_skip_last_blocks=fp8_skip_last_blocks,
                     )
                 else:
                     built[name] = load_diffusers_component(
@@ -151,8 +170,17 @@ class ReferenceRunner:
                         source,
                         torch_dtype,
                     )
+        if built:
             pipeline.update_components(**built)
-        if not offload:
+        if offload:
+            # memory_reserve_margin = (device total - target budget) keeps the
+            # manager evicting until only ~budget stays resident, emulating a
+            # small-VRAM envelope on a large dev-box GPU.
+            margin = offload_memory_margin or "3GB"
+            components_manager.enable_auto_cpu_offload(
+                device=device, memory_reserve_margin=margin
+            )
+        else:
             pipeline.to(device)
         return cls(pipeline)
 
