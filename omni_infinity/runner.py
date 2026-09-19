@@ -77,14 +77,16 @@ def _encoder_layer_host(pipeline):
 
 
 def _stream_text_encoder(pipeline, device):
-    # bf16 layer-streaming of the Qwen3-VL decoder layers: device-only moves,
-    # so the prompt embeds (and thus the latents) stay parity-identical.
+    # bf16 leaf-level streaming of the Qwen3-VL decoder subtree: device-only
+    # moves, so the prompt embeds (and thus the latents) stay parity-identical.
+    # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
+    # so each self-onloads when it runs; block_level leaves the embedding on the
+    # offload device and the first token lookup hits a device mismatch.
     _APPLY_GROUP_OFFLOADING(
         _encoder_layer_host(pipeline),
         onload_device=torch.device(device),
         offload_device=torch.device("cpu"),
-        offload_type="block_level",
-        num_blocks_per_group=1,
+        offload_type="leaf_level",
         use_stream=True,
         record_stream=False,
         low_cpu_mem_usage=False,
