@@ -12,10 +12,30 @@ transformer). CPU-only with use_stream=False so no CUDA is required; the
 real-store GPU bitwise gate lives in tests/test_reference_parity.py.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 
 from omni_infinity.adaln import AdaLNEntry, HostResidentAdaLN
+
+
+@pytest.fixture
+def cpu_accelerator(monkeypatch):
+    """Present a CPU device when no real accelerator is available.
+
+    diffusers' ``ModuleGroup.__init__`` resolves
+    ``torch.accelerator.current_accelerator().type`` at construction time,
+    which is ``None`` on CPU-only runners (the CI ``test`` job installs CPU
+    torch) and raises ``AttributeError``. These tests never onload/forward
+    (``use_stream=False``), so the accelerator module is only needed for
+    construction, never at runtime. On GPU hosts ``current_accelerator()`` is
+    already a device, so this fixture is a no-op.
+    """
+    accel = getattr(torch, "accelerator", None)
+    if accel is not None and accel.current_accelerator() is None:
+        monkeypatch.setattr(
+            accel, "current_accelerator", lambda *a, **k: torch.device("cpu")
+        )
 
 
 class _Block(nn.Module):
@@ -37,7 +57,7 @@ class _Stack(nn.Module):
         )
 
 
-def test_group_offload_skips_param_less_adaln():
+def test_group_offload_skips_param_less_adaln(cpu_accelerator):
     from diffusers.hooks import apply_group_offloading
 
     model = _Stack().to(torch.bfloat16)
@@ -58,7 +78,7 @@ def test_group_offload_skips_param_less_adaln():
         assert list(block.adaln_proj.parameters()) == []
 
 
-def test_group_offload_state_is_detectable_for_manager_compose():
+def test_group_offload_state_is_detectable_for_manager_compose(cpu_accelerator):
     from diffusers.hooks import apply_group_offloading
     from diffusers.hooks.group_offloading import _is_group_offload_enabled
 

@@ -256,7 +256,9 @@ class ReferenceRunner:
                     "the ComponentsManager)"
                 )
             _enable_block_streaming(
-                pipeline, device, block_stream_blocks_per_group,
+                pipeline,
+                device,
+                block_stream_blocks_per_group,
                 block_stream_to_disk,
             )
         if stream_text_encoder:
