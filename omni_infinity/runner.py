@@ -20,6 +20,39 @@ from typing import Any
 
 import torch
 
+
+def _transformer_component(pipeline):
+    for accessor in (
+        lambda: pipeline.get_component("transformer"),
+        lambda: pipeline.transformer,
+    ):
+        try:
+            component = accessor()
+        except Exception:
+            continue
+        if component is not None:
+            return component
+    raise AttributeError("could not locate the transformer on the pipeline")
+
+
+def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
+    # Native diffusers block-level group offload: streams one block's attn/ff
+    # weights at a time with CUDA-stream prefetch (use_stream forces
+    # num_blocks_per_group=1). The param-less HostResidentAdaLN is skipped, so
+    # the 26 GB of AdaLN branches are never streamed. bf16 device-only moves
+    # keep the latents bitwise-identical to the full-resident reference.
+    transformer = _transformer_component(pipeline)
+    transformer.enable_group_offload(
+        onload_device=torch.device(device),
+        offload_device=torch.device("cpu"),
+        offload_type="block_level",
+        num_blocks_per_group=max(blocks_per_group, 1),
+        use_stream=True,
+        record_stream=False,
+        low_cpu_mem_usage=False,
+        offload_to_disk_path=to_disk,
+    )
+
 RESOLUTIONS = {
     "256p": (256, 256),
     "512p": (512, 512),
@@ -102,6 +135,8 @@ class ReferenceRunner:
         transformer_fp8: bool = False,
         fp8_skip_last_blocks: int = 0,
         offload_memory_margin: str | None = None,
+        block_stream_blocks_per_group: int = 0,
+        block_stream_to_disk: str | None = None,
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -172,6 +207,17 @@ class ReferenceRunner:
                     )
         if built:
             pipeline.update_components(**built)
+        if block_stream_blocks_per_group:
+            if not offload:
+                raise ValueError(
+                    "block streaming requires offload=True (the transformer "
+                    "manages its own device placement; other components need "
+                    "the ComponentsManager)"
+                )
+            _enable_block_streaming(
+                pipeline, device, block_stream_blocks_per_group,
+                block_stream_to_disk,
+            )
         if offload:
             # memory_reserve_margin = (device total - target budget) keeps the
             # manager evicting until only ~budget stays resident, emulating a
