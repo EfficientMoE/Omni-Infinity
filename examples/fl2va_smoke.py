@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--block-stream-to-disk", default=None)
     parser.add_argument(
+        "--stream-text-encoder",
+        action="store_true",
+        help="bf16 layer-stream the Qwen3-VL text encoder (requires --offload)",
+    )
+    parser.add_argument(
         "--max-vram",
         default=None,
         help="e.g. 22GiB: assert the transformer denoise-window "
@@ -235,6 +240,7 @@ def main() -> int:
         offload_memory_margin=_offload_margin(args),
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
         block_stream_to_disk=args.block_stream_to_disk,
+        stream_text_encoder=args.stream_text_encoder,
     )
     probe = None
     if args.max_vram is not None:

@@ -71,11 +71,14 @@ Bootstrap in progress — see the
         streams the transformer blocks (attn/ff) with prefetch; the AdaLN
         host cache is untouched. Reproduces the goldens **bitwise**
         (`rms_rel=0.0000`) with a trivial transformer weight footprint (inc 5)
-  - [ ] Text-encoder handling — the 64 GB Qwen3-VL encoder is the remaining
-        blocker for the full-pipeline ≤22 GiB envelope (with block-streaming
-        the transformer's footprint is ~0, so the offload manager keeps the
-        encoder resident and the denoise-window peak is encoder-dominated,
-        ~62 GiB). Needs encoder quantization/streaming — a separate increment.
+  - [x] Text-encoder streaming — the 64-layer Qwen3-VL encoder is
+        leaf-level group-offloaded (bf16), so its layers stream through the GPU
+        instead of the whole 64 GB staying resident. Reproduces the goldens
+        **bitwise** with the transformer block-streamed too (inc 6). `leaf_level`
+        (not `block_level`) is required so `embed_tokens` self-onloads.
+  - [ ] Whole-pipeline ≤22 GiB measurement + true-24 GB-card run before release
+        (streaming preserves parity; the remaining work is the in-script
+        `max_memory_allocated` gate over the full encode+denoise+decode window).
 
 Reference smoke (diffusers >= 0.40; `--offload` runs components
 sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
