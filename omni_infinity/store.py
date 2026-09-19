@@ -107,4 +107,37 @@ def load_diffusers_component(
             f"{component}: store tensors not accepted by the model: "
             f"{sorted(unexpected)[:5]}"
         )
-    return model.to(torch_dtype).eval()
+    fp32_modules = getattr(component_cls, "_keep_in_fp32_modules", None) or []
+
+    def _keep_fp32(tensor_name: str) -> bool:
+        return any(pattern in tensor_name for pattern in fp32_modules)
+
+    # Match diffusers' mixed-precision load: _keep_in_fp32_modules stay fp32
+    # (params from the dtype-preserving store AND init-computed buffers such
+    # as rope.inv_freq), everything else is the compute dtype. Snapshot the
+    # fp32 tensors before the blanket cast so a bf16 round-trip cannot
+    # irrecoverably truncate them.
+    named = {
+        **dict(model.named_parameters()),
+        **dict(model.named_buffers()),
+    }
+    preserved = {
+        name: tensor.clone()
+        for name, tensor in named.items()
+        if _keep_fp32(name)
+    }
+    model = model.to(torch_dtype)
+    for name, tensor in preserved.items():
+        _assign_param(model, name, tensor)
+    return model.eval()
+
+
+def _assign_param(model, dotted_name: str, tensor: torch.Tensor) -> None:
+    module_path, _, leaf = dotted_name.rpartition(".")
+    module = model.get_submodule(module_path)
+    if leaf in dict(module.named_parameters(recurse=False)):
+        module._parameters[leaf] = torch.nn.Parameter(
+            tensor, requires_grad=False
+        )
+    elif leaf in dict(module.named_buffers(recurse=False)):
+        module._buffers[leaf] = tensor
