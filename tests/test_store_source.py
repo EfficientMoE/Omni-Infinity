@@ -19,7 +19,7 @@ import pytest
 import torch
 from safetensors.torch import save_file
 
-from omni_infinity.store import StoreComponentSource
+from omni_infinity.store import StoreComponentSource, _block_index
 
 HIDDEN = 16
 
@@ -47,6 +47,9 @@ def _write_tiny_h3_pipeline(root: Path) -> dict[str, dict[str, torch.Tensor]]:
         prefix = f"transformer_blocks.{block}"
         state[f"{prefix}.adaln_proj.linear.weight"] = torch.randn(
             6 * HIDDEN, HIDDEN, dtype=torch.bfloat16
+        )
+        state[f"{prefix}.adaln_proj.linear.bias"] = torch.randn(
+            6 * HIDDEN, dtype=torch.bfloat16
         )
         state[f"{prefix}.attn.to_q.weight"] = torch.randn(
             HIDDEN, HIDDEN, dtype=torch.bfloat16
@@ -95,6 +98,27 @@ def test_synthetic_store_round_trips_byte_exact(tmp_path):
     for group in adaln:
         names = set(source.read_group(group))
         assert all("adaln_proj" in name for name in names)
+
+
+def test_read_adaln_cache_round_trips_byte_exact(tmp_path):
+    pytest.importorskip("moe_store")
+    from moe_store.convert.convert import convert_checkpoint
+
+    root = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    states = _write_tiny_h3_pipeline(root)
+    convert_checkpoint(str(root), str(store_dir))
+
+    source = StoreComponentSource(store_dir)
+    cache = source.read_adaln_cache("transformer")
+
+    assert set(cache) == {0, 1}
+    expected = states["transformer"]
+    for block, entry in cache.items():
+        prefix = f"transformer_blocks.{block}.adaln_proj.linear"
+        assert torch.equal(entry.weight, expected[f"{prefix}.weight"])
+        assert torch.equal(entry.bias, expected[f"{prefix}.bias"])
+        assert entry.scale is None
 
 
 def test_group_fetch_is_single_read(tmp_path, monkeypatch):
@@ -146,6 +170,15 @@ def test_real_h3_store_structure_and_audio_vae_bytes():
         "audio_vae",
     }
     assert len(source.adaln_groups("transformer")) == 50
+
+    # The store leaves group.layer_id == -1, so the cache keys blocks by the
+    # index parsed from the member name; assert that covers all 50 blocks
+    # (metadata only — reading the 26 GB of bundles is covered elsewhere).
+    blocks = {
+        _block_index(group.members[0].name)
+        for group in source.adaln_groups("transformer")
+    }
+    assert blocks == set(range(50))
 
     state = source.load_component_state_dict("audio_vae")
     assert state

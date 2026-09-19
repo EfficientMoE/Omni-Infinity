@@ -98,6 +98,7 @@ class ReferenceRunner:
         components: tuple[str, ...] = FL2VA_COMPONENTS,
         store_dir: str | None = None,
         store_components: tuple[str, ...] = ("vae", "audio_vae"),
+        adaln_host_cache: bool = False,
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -129,19 +130,27 @@ class ReferenceRunner:
             from omni_infinity.store import (
                 StoreComponentSource,
                 load_diffusers_component,
+                load_transformer_with_adaln_cache,
             )
 
             source = StoreComponentSource(store_dir)
-            built = {
-                name: load_diffusers_component(
-                    _h3_component_class(name),
-                    checkpoint,
-                    name,
-                    source,
-                    torch_dtype,
-                )
-                for name in substituted
-            }
+            built = {}
+            for name in substituted:
+                if name == "transformer" and adaln_host_cache:
+                    built[name] = load_transformer_with_adaln_cache(
+                        _h3_component_class(name),
+                        checkpoint,
+                        source,
+                        torch_dtype,
+                    )
+                else:
+                    built[name] = load_diffusers_component(
+                        _h3_component_class(name),
+                        checkpoint,
+                        name,
+                        source,
+                        torch_dtype,
+                    )
             pipeline.update_components(**built)
         if not offload:
             pipeline.to(device)

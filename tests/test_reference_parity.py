@@ -47,6 +47,7 @@ def test_reference_runner_reproduces_golden_latents():
                 ","
             )
         ),
+        adaln_host_cache=os.environ.get("OMNI_H3_ADALN_CACHE", "0") == "1",
     )
     result = runner.generate(
         payload["prompt"],
