@@ -57,6 +57,14 @@ def parse_args() -> argparse.Namespace:
         "in the late blocks; trades memory for latent accuracy)",
     )
     parser.add_argument(
+        "--block-stream-blocks-per-group",
+        type=int,
+        default=0,
+        help="stream transformer blocks through the GPU (bf16, 1 block/group "
+        "with prefetch); requires --offload",
+    )
+    parser.add_argument("--block-stream-to-disk", default=None)
+    parser.add_argument(
         "--max-vram",
         default=None,
         help="e.g. 22GiB: assert the transformer denoise-window "
@@ -225,6 +233,8 @@ def main() -> int:
         transformer_fp8=args.transformer_fp8,
         fp8_skip_last_blocks=args.fp8_skip_last_blocks,
         offload_memory_margin=_offload_margin(args),
+        block_stream_blocks_per_group=args.block_stream_blocks_per_group,
+        block_stream_to_disk=args.block_stream_to_disk,
     )
     probe = None
     if args.max_vram is not None:
