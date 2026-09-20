@@ -3,9 +3,19 @@
 
 # EfficientMoE Team
 
+import importlib.util
+import sys
 from argparse import Namespace
+from pathlib import Path
 
-from examples import fl2va_smoke
+_ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(_ROOT))
+_SMOKE_PATH = _ROOT / "examples" / "fl2va_smoke.py"
+_SPEC = importlib.util.spec_from_file_location("fl2va_smoke", _SMOKE_PATH)
+if _SPEC is None or _SPEC.loader is None:
+    raise RuntimeError(f"could not load {_SMOKE_PATH}")
+fl2va_smoke = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(fl2va_smoke)
 
 
 def test_vram_window_defaults_to_denoise(monkeypatch):
