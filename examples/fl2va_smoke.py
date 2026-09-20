@@ -70,10 +70,17 @@ def parse_args() -> argparse.Namespace:
         help="bf16 layer-stream the Qwen3-VL text encoder (requires --offload)",
     )
     parser.add_argument(
+        "--vram-window",
+        choices=("denoise", "full"),
+        default="denoise",
+        help="measure max_memory_allocated over the transformer denoise window "
+        "or the full text-encode + denoise + VAE-decode pipeline",
+    )
+    parser.add_argument(
         "--max-vram",
         default=None,
-        help="e.g. 22GiB: assert the transformer denoise-window "
-        "max_memory_allocated stays under this budget",
+        help="e.g. 22GiB: assert max_memory_allocated for --vram-window stays "
+        "under this budget",
     )
     parser.add_argument(
         "--goldens",
@@ -243,10 +250,12 @@ def main() -> int:
         stream_text_encoder=args.stream_text_encoder,
     )
     probe = None
-    if args.max_vram is not None:
+    if args.max_vram is not None and args.vram_window == "denoise":
         probe = DenoiseMemoryProbe(args.device)
         probe.attach(runner.pipeline)
     start = time.perf_counter()
+    if args.max_vram is not None and args.vram_window == "full":
+        torch.cuda.reset_peak_memory_stats(args.device)
     result = runner.generate(
         args.prompt,
         seed=args.seed,
@@ -254,6 +263,9 @@ def main() -> int:
         resolution=args.resolution,
         num_frames=args.frames,
     )
+    full_peak = None
+    if args.max_vram is not None and args.vram_window == "full":
+        full_peak = torch.cuda.max_memory_allocated(args.device)
     print(f"generate wall-clock: {time.perf_counter() - start:.1f}s")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if result.latents is not None:
@@ -264,12 +276,18 @@ def main() -> int:
     if args.goldens is not None:
         parity_ok = report_latent_parity(result, args.goldens)
     vram_ok = True
-    if probe is not None:
+    if probe is not None or full_peak is not None:
         budget = parse_vram(args.max_vram)
-        peak_gib = probe.peak / (1024**3)
-        vram_ok = probe.peak < budget
+        peak = probe.peak if probe is not None else full_peak
+        peak_gib = peak / (1024**3)
+        vram_ok = peak < budget
+        window = (
+            "transformer denoise-window"
+            if args.vram_window == "denoise"
+            else "full pipeline-window"
+        )
         print(
-            "transformer denoise-window max_memory_allocated: "
+            f"{window} max_memory_allocated: "
             f"{peak_gib:.2f} GiB (budget {budget / (1024**3):.2f} GiB) "
             f"ok={vram_ok}"
         )

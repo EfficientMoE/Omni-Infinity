@@ -76,9 +76,11 @@ Bootstrap in progress — see the
         instead of the whole 64 GB staying resident. Reproduces the goldens
         **bitwise** with the transformer block-streamed too (inc 6). `leaf_level`
         (not `block_level`) is required so `embed_tokens` self-onloads.
-  - [ ] Whole-pipeline ≤22 GiB measurement + true-24 GB-card run before release
-        (streaming preserves parity; the remaining work is the in-script
-        `max_memory_allocated` gate over the full encode+denoise+decode window).
+  - [x] Whole-pipeline ≤22 GiB gate — the full encode+denoise+decode window
+        peaks at **9.96 GiB** under the emulated 22 GiB offload envelope, with
+        `rms_rel=0.0000`, elementwise `allclose(rtol=2e-2)`, and 38.1 s
+        wall-clock (inc 7)
+  - [ ] Confirm the emulated envelope on a true 24 GB card before release
 
 Reference smoke (diffusers >= 0.40; `--offload` runs components
 sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
