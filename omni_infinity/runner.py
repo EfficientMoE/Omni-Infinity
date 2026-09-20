@@ -20,6 +20,40 @@ from typing import Any
 
 import torch
 
+
+def _transformer_component(pipeline):
+    for accessor in (
+        lambda: pipeline.get_component("transformer"),
+        lambda: pipeline.transformer,
+    ):
+        try:
+            component = accessor()
+        except Exception:
+            continue
+        if component is not None:
+            return component
+    raise AttributeError("could not locate the transformer on the pipeline")
+
+
+def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
+    # Native diffusers block-level group offload: streams one block's attn/ff
+    # weights at a time with CUDA-stream prefetch (use_stream forces
+    # num_blocks_per_group=1). The param-less HostResidentAdaLN is skipped, so
+    # the 26 GB of AdaLN branches are never streamed. bf16 device-only moves
+    # keep the latents bitwise-identical to the full-resident reference.
+    transformer = _transformer_component(pipeline)
+    transformer.enable_group_offload(
+        onload_device=torch.device(device),
+        offload_device=torch.device("cpu"),
+        offload_type="block_level",
+        num_blocks_per_group=max(blocks_per_group, 1),
+        use_stream=True,
+        record_stream=False,
+        low_cpu_mem_usage=False,
+        offload_to_disk_path=to_disk,
+    )
+
+
 RESOLUTIONS = {
     "256p": (256, 256),
     "512p": (512, 512),
@@ -98,6 +132,12 @@ class ReferenceRunner:
         components: tuple[str, ...] = FL2VA_COMPONENTS,
         store_dir: str | None = None,
         store_components: tuple[str, ...] = ("vae", "audio_vae"),
+        adaln_host_cache: bool = False,
+        transformer_fp8: bool = False,
+        fp8_skip_last_blocks: int = 0,
+        offload_memory_margin: str | None = None,
+        block_stream_blocks_per_group: int = 0,
+        block_stream_to_disk: str | None = None,
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -111,39 +151,85 @@ class ReferenceRunner:
         if offload:
             # The full FL2VA component set (~144 GB bf16) exceeds a single
             # GPU, so the reference path can run components sequentially with
-            # ComponentsManager auto CPU offload instead of .to(device).
+            # ComponentsManager auto CPU offload instead of .to(device). Auto
+            # offload is enabled below, after update_components, so its hooks
+            # bind to the store-built (and FP8) transformer rather than the
+            # from_pretrained placeholder.
             from diffusers.modular_pipelines import ComponentsManager
 
             components_manager = ComponentsManager()
-            components_manager.enable_auto_cpu_offload(device=device)
 
         substituted = tuple(store_components) if store_dir else ()
         pipeline = MiniMaxH3ModularPipeline.from_pretrained(
             checkpoint, components_manager=components_manager
         )
-        pipeline.load_components(
-            names=[c for c in components if c not in substituted],
-            torch_dtype=torch_dtype,
-        )
+        # The Qwen3-VL processor's component spec resolves by repo id, which
+        # fails under HF offline mode (a sub-tokenizer config lookup raises
+        # rather than skipping a locally-absent file). Load it from the
+        # checkpoint path directly and inject it; harmless online.
+        preloaded = {}
+        loadable = [c for c in components if c not in substituted]
+        if "processor" in loadable:
+            from transformers import AutoProcessor
+
+            loadable.remove("processor")
+            preloaded["processor"] = AutoProcessor.from_pretrained(
+                checkpoint, subfolder="processor"
+            )
+        pipeline.load_components(names=loadable, torch_dtype=torch_dtype)
+        built = dict(preloaded)
         if store_dir:
             from omni_infinity.store import (
                 StoreComponentSource,
                 load_diffusers_component,
+                load_transformer_with_adaln_cache,
             )
 
             source = StoreComponentSource(store_dir)
-            built = {
-                name: load_diffusers_component(
-                    _h3_component_class(name),
-                    checkpoint,
-                    name,
-                    source,
-                    torch_dtype,
-                )
-                for name in substituted
-            }
+            for name in substituted:
+                if name == "transformer" and (
+                    adaln_host_cache or transformer_fp8
+                ):
+                    built[name] = load_transformer_with_adaln_cache(
+                        _h3_component_class(name),
+                        checkpoint,
+                        source,
+                        torch_dtype,
+                        fp8=transformer_fp8,
+                        fp8_skip_last_blocks=fp8_skip_last_blocks,
+                    )
+                else:
+                    built[name] = load_diffusers_component(
+                        _h3_component_class(name),
+                        checkpoint,
+                        name,
+                        source,
+                        torch_dtype,
+                    )
+        if built:
             pipeline.update_components(**built)
-        if not offload:
+        if block_stream_blocks_per_group:
+            if not offload:
+                raise ValueError(
+                    "block streaming requires offload=True (the transformer "
+                    "manages its own device placement; other components need "
+                    "the ComponentsManager)"
+                )
+            _enable_block_streaming(
+                pipeline,
+                device,
+                block_stream_blocks_per_group,
+                block_stream_to_disk,
+            )
+        if offload:
+            # memory_reserve_margin = (device total - target budget) keeps the
+            # manager evicting until only ~budget stays resident, emulating a
+            # small-VRAM envelope on a large dev-box GPU.
+            margin = offload_memory_margin or "3GB"
+            components_manager.enable_auto_cpu_offload(
+                device=device, memory_reserve_margin=margin
+            )
+        else:
             pipeline.to(device)
         return cls(pipeline)
 

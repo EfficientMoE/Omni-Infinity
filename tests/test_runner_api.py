@@ -88,3 +88,25 @@ def test_generate_maps_parameters_into_pipeline_call():
     assert result.sampling_rate == 48000
     assert torch.equal(result.audio, torch.zeros(2, 4))
     assert torch.equal(result.audio_latents, torch.zeros(2))
+
+
+def test_block_streaming_invokes_group_offload_and_requires_offload():
+    from omni_infinity import runner as runner_mod
+
+    calls = {}
+
+    class FakeTransformer:
+        def enable_group_offload(self, **kwargs):
+            calls["group_offload"] = kwargs
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer = FakeTransformer()
+
+    runner_mod._enable_block_streaming(
+        FakePipeline(), torch.device("cuda"), blocks_per_group=1, to_disk=None
+    )
+    assert calls["group_offload"]["offload_type"] == "block_level"
+    assert calls["group_offload"]["num_blocks_per_group"] == 1
+    assert calls["group_offload"]["use_stream"] is True
+    assert calls["group_offload"]["offload_device"] == torch.device("cpu")

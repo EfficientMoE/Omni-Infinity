@@ -58,7 +58,24 @@ Bootstrap in progress — see the
       validated on real H3-Base weights: a fresh generation reproduces the
       committed golden latents bitwise
       ([#1](https://github.com/EfficientMoE/Omni-Infinity/issues/1))
-- [ ] Task 2 — component offload + AdaLN caching + FP8 on a single 24 GB GPU
+- [~] Task 2 — component offload + AdaLN caching + FP8 on a single 24 GB GPU
+      ([#2](https://github.com/EfficientMoE/Omni-Infinity/issues/2)):
+  - [x] Store-sourced components (`StoreComponentSource`, one-read group
+        fetches) reproduce the goldens bitwise (inc 1, 2, 2b)
+  - [x] Host-resident AdaLN branch cache — 66.28 → 40.26 GB GPU-resident,
+        bitwise parity (inc 3)
+  - [x] FP8 weight path (opt-in) + offline QA harness — validated 40.26 →
+        20.19 GB, but H3 is not FP8-native so it can't meet `rtol=2e-2`
+        (~16-25% latent error); memory tradeoff only (inc 4)
+  - [x] bf16 block-streaming — native `enable_group_offload(block_level)`
+        streams the transformer blocks (attn/ff) with prefetch; the AdaLN
+        host cache is untouched. Reproduces the goldens **bitwise**
+        (`rms_rel=0.0000`) with a trivial transformer weight footprint (inc 5)
+  - [ ] Text-encoder handling — the 64 GB Qwen3-VL encoder is the remaining
+        blocker for the full-pipeline ≤22 GiB envelope (with block-streaming
+        the transformer's footprint is ~0, so the offload manager keeps the
+        encoder resident and the denoise-window peak is encoder-dominated,
+        ~62 GiB). Needs encoder quantization/streaming — a separate increment.
 
 Reference smoke (diffusers >= 0.40; `--offload` runs components
 sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
@@ -68,6 +85,19 @@ sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
 python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
     --seed 0 --steps 8 --resolution 256p --frames 120 --offload \
     --record-goldens tests/fixtures/goldens
+```
+
+Memory-constrained path — host-resident AdaLN cache + bf16 block-streaming
+from a moe-store, bitwise-identical latents (the transformer's blocks stream
+one at a time; parity is preserved because bf16 weights move device-only):
+
+```bash
+python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
+    --seed 0 --steps 8 --resolution 256p --frames 120 \
+    --checkpoint <local-H3-snapshot-dir> --offload \
+    --store-dir <moe-store> --store-components transformer,vae,audio_vae \
+    --adaln-host-cache --block-stream-blocks-per-group 1 \
+    --goldens tests/fixtures/goldens/fl2va_goldens.pt
 ```
 
 ## License
