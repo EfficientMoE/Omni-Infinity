@@ -20,6 +20,7 @@ from omni_infinity.fp8 import (
     apply_scaled_fp8_casting,
     quantize_per_row_fp8,
 )
+from omni_infinity.kernels import dequant_block_fp8, quantize_block_fp8
 
 
 def test_quantize_adaln_fp8_shapes_and_dtype():
@@ -41,21 +42,41 @@ def test_quantize_adaln_fp8_reconstruction_error_bounded():
     assert relative_frobenius < 0.05, relative_frobenius.item()
 
 
-def test_fp8_entry_materialize_dequantizes_per_row():
+def test_fp8_entry_materialize_fp8_returns_weight_scale_bias():
     torch.manual_seed(1)
-    weight = (torch.randn(128, 64) * 0.03).to(torch.bfloat16)
-    bias = torch.randn(128, dtype=torch.bfloat16)
-    quantized, scale = quantize_per_row_fp8(weight)
-    entry = AdaLNEntry(quantized, bias, scale=scale)
+    # weight is 6*hidden x hidden
+    weight = (torch.randn(768, 256) * 0.03).to(torch.bfloat16)
+    bias = torch.randn(768, dtype=torch.bfloat16)
+    q, s = quantize_block_fp8(weight)
+    entry = AdaLNEntry(q, bias, scale=s, block_scaled=True)
+    w_fp8, w_scale, out_bias = entry.materialize_fp8(torch.device("cpu"))
+    assert w_fp8.dtype == torch.float8_e4m3fn
+    assert tuple(w_scale.shape) == (6, 2)  # ceil(768/128), ceil(256/128)
+    assert torch.equal(out_bias, bias)
 
-    materialized_weight, materialized_bias = entry.materialize(
-        torch.device("cpu")
-    )
 
-    assert materialized_weight.dtype == torch.bfloat16
-    expected = (quantized.to(torch.float32) * scale).to(torch.bfloat16)
-    assert torch.equal(materialized_weight, expected)
-    assert torch.equal(materialized_bias, bias)
+def test_hostresident_adaln_fp8_matches_reference_projection():
+    torch.manual_seed(2)
+    hidden = 128
+    weight = (torch.randn(6 * hidden, hidden) * 0.03).to(torch.bfloat16)
+    bias = torch.randn(6 * hidden, dtype=torch.bfloat16)
+    q, s = quantize_block_fp8(weight)
+    from omni_infinity.adaln import AdaLNEntry, HostResidentAdaLN
+
+    entry = AdaLNEntry(q, bias, scale=s, block_scaled=True)
+    mod = HostResidentAdaLN(entry, hidden).eval()
+    temb = torch.randn(4, hidden, dtype=torch.bfloat16)
+    outs = mod(temb)
+    # reference: silu -> F.linear(dequant) -> view -> chunk(6)
+    import torch.nn.functional as F
+
+    w = dequant_block_fp8(q, s).to(torch.float32)
+    ref = F.linear(F.silu(temb).to(torch.float32), w, bias.to(torch.float32))
+    ref = ref.view(-1, 6 * hidden).chunk(6, dim=-1)
+    for got, exp in zip(outs, ref):
+        rel = (got.float() - exp).norm() / exp.norm()
+        assert rel < 2e-2, rel.item()
+    assert len(outs) == 6
 
 
 def test_bf16_entry_materialize_stays_bitwise():
