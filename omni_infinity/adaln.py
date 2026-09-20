@@ -78,9 +78,9 @@ class AdaLNEntry:
         ``device`` WITHOUT dequantizing — the fused kernel dequantizes inside
         the GEMM. Transfers half the bytes of the bf16 weight (fp8 weight +
         tiny scale)."""
-        assert self.scale is not None and self.block_scaled, (
-            "materialize_fp8 requires a block-scaled fp8 entry"
-        )
+        assert (
+            self.scale is not None and self.block_scaled
+        ), "materialize_fp8 requires a block-scaled fp8 entry"
         return (
             self.weight.to(device, non_blocking=True),
             self.scale.to(device, non_blocking=True),
@@ -120,6 +120,7 @@ class HostResidentAdaLN(nn.Module):
         else:
             # block-scaled fp8 — fused weight-only GEMM (no bf16 materialize)
             from omni_infinity.kernels import fused_fp8_gemm
+
             weight_fp8, scale, bias = self._entry.materialize_fp8(temb.device)
             temb = fused_fp8_gemm(
                 activated.to(torch.bfloat16), weight_fp8, scale, bias

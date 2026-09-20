@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Block-wise (128x128) FP8 weight quantization for the fused
 weight-only GEMM."""
+
 from __future__ import annotations
 
 import torch

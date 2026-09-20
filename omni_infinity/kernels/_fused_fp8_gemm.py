@@ -6,6 +6,7 @@ Derived from EfficientMoE/BatchGen (Apache-2.0); see NOTICE. Hardened with
 @triton.autotune, optional bias, and a corrected out=/3D return. Activations
 stay bf16 (weight-only); the MMA runs on bf16 tensor cores.
 """
+
 from __future__ import annotations
 
 import torch
@@ -22,7 +23,8 @@ _CONFIGS = [
             "BLOCK_SIZE_K": bk,
             "GROUP_SIZE_M": 8,
         },
-        num_stages=ns, num_warps=nw,
+        num_stages=ns,
+        num_warps=nw,
     )
     for bm in (64, 128)
     for bn in (64, 128)
@@ -34,9 +36,20 @@ _CONFIGS = [
 @triton.autotune(configs=_CONFIGS, key=["M", "N", "K"])
 @triton.jit
 def _fgemm_kernel(
-    a_ptr, b_ptr, c_ptr, scale_ptr, bias_ptr,
-    M, N, K,
-    stride_am, stride_ak, stride_bk, stride_bn, stride_cm, stride_cn,
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    scale_ptr,
+    bias_ptr,
+    M,
+    N,
+    K,
+    stride_am,
+    stride_ak,
+    stride_bk,
+    stride_bn,
+    stride_cm,
+    stride_cn,
     SCALE_BLOCK_M: tl.constexpr,
     SCALE_BLOCK_K: tl.constexpr,
     HAS_BIAS: tl.constexpr,
@@ -128,12 +141,22 @@ def fused_fp8_gemm_triton(
         )
 
     _fgemm_kernel[grid](
-        a2d, b_fp8, c2d, scale, bias if bias is not None else a2d,
-        M, N, K,
-        a2d.stride(0), a2d.stride(1),
-        b_fp8.stride(1), b_fp8.stride(0),  # swap => B.T
-        c2d.stride(0), c2d.stride(1),
-        SCALE_BLOCK_M=scale_block[0], SCALE_BLOCK_K=scale_block[1],
+        a2d,
+        b_fp8,
+        c2d,
+        scale,
+        bias if bias is not None else a2d,
+        M,
+        N,
+        K,
+        a2d.stride(0),
+        a2d.stride(1),
+        b_fp8.stride(1),
+        b_fp8.stride(0),  # swap => B.T
+        c2d.stride(0),
+        c2d.stride(1),
+        SCALE_BLOCK_M=scale_block[0],
+        SCALE_BLOCK_K=scale_block[1],
         HAS_BIAS=bias is not None,
     )
     return c2d.reshape(*orig[:-1], N)

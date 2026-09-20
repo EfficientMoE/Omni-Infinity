@@ -22,6 +22,7 @@ win unless measured.
 Run (idle GPU only; keep tensors within the free budget):
     CUDA_VISIBLE_DEVICES=5 python benchmarks/bench_fp8_gemm.py
 """
+
 from __future__ import annotations
 
 import torch
@@ -115,6 +116,6 @@ if __name__ == "__main__":
         (4096, 28672, 5376),
         (8192, 28672, 5376),
     ]
-    for (M, N, K) in shapes:
+    for M, N, K in shapes:
         bench(M, N, K)
         torch.cuda.empty_cache()

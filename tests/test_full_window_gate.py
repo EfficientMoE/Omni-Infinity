@@ -49,6 +49,7 @@ def test_full_vram_window_bounds_generate(monkeypatch, capsys):
         store_components="vae,audio_vae",
         adaln_host_cache=False,
         transformer_fp8=False,
+        fp8_scale="block",
         fp8_skip_last_blocks=0,
         block_stream_blocks_per_group=0,
         block_stream_to_disk=None,

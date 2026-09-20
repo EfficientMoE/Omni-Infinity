@@ -105,14 +105,20 @@ class StoreComponentSource:
                 if fp8_mode == "block":
                     quantized, scale = quantize_block_fp8(weight)
                     cache[block] = AdaLNEntry(
-                        quantized, bias, compute_dtype=compute_dtype,
-                        scale=scale, block_scaled=True,
+                        quantized,
+                        bias,
+                        compute_dtype=compute_dtype,
+                        scale=scale,
+                        block_scaled=True,
                     )
                 else:
                     quantized, scale = quantize_per_row_fp8(weight)
                     cache[block] = AdaLNEntry(
-                        quantized, bias, compute_dtype=compute_dtype,
-                        scale=scale, block_scaled=False,
+                        quantized,
+                        bias,
+                        compute_dtype=compute_dtype,
+                        scale=scale,
+                        block_scaled=False,
                     )
             else:
                 cache[block] = AdaLNEntry(weight, bias)
@@ -216,7 +222,9 @@ def load_transformer_with_adaln_cache(
             else frozenset()
         )
         apply_scaled_fp8_casting(
-            model, compute_dtype=torch_dtype, skip_blocks=skip_blocks,
+            model,
+            compute_dtype=torch_dtype,
+            skip_blocks=skip_blocks,
             mode=fp8_mode,
         )
     return model.eval()

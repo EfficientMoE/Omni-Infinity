@@ -51,9 +51,7 @@ def test_quantize_block_handles_non_divisible_K():
     assert tuple(deq.shape) == (128, 200)
 
 
-cuda = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="needs CUDA"
-)
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 
 
 @cuda

@@ -4,6 +4,7 @@
 
 Doubles as the unit-test oracle and the no-Triton / non-CUDA fallback.
 """
+
 from __future__ import annotations
 
 import torch
