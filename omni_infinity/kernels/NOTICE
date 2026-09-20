@@ -1,0 +1,4 @@
+omni_infinity/kernels/_fused_fp8_gemm.py contains a Triton kernel derived from
+EfficientMoE/BatchGen (batchgen/attention/mla/fused_gemm_rmsnorm.py), Apache-2.0.
+Hardened for Omni-Infinity: added @triton.autotune, optional post-GEMM bias, and a
+corrected out=/3D-shape return contract. Original: Copyright (c) EfficientMoE.
