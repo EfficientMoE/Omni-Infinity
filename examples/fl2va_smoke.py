@@ -50,6 +50,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adaln-host-cache", action="store_true")
     parser.add_argument("--transformer-fp8", action="store_true")
     parser.add_argument(
+        "--fp8-scale",
+        choices=["per_row", "block"],
+        default="block",
+        help="fp8 weight scale granularity for the accuracy A/B "
+        "(block=fused weight-only GEMM; per_row=legacy dequant-materialize)",
+    )
+    parser.add_argument(
         "--fp8-skip-last-blocks",
         type=int,
         default=0,
@@ -243,6 +250,7 @@ def main() -> int:
         store_components=tuple(args.store_components.split(",")),
         adaln_host_cache=args.adaln_host_cache,
         transformer_fp8=args.transformer_fp8,
+        fp8_scale=args.fp8_scale,
         fp8_skip_last_blocks=args.fp8_skip_last_blocks,
         offload_memory_margin=_offload_margin(args),
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
