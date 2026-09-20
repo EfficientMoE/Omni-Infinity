@@ -1,5 +1,6 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
+import pytest
 import torch
 
 from omni_infinity.kernels._quant import quantize_block_fp8
@@ -48,3 +49,42 @@ def test_quantize_block_handles_non_divisible_K():
     assert tuple(s.shape) == (1, 2)
     deq = dequant_block_fp8(q, s)
     assert tuple(deq.shape) == (128, 200)
+
+
+cuda = pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="needs CUDA"
+)
+
+
+@cuda
+@pytest.mark.parametrize(
+    "M,N,K", [(256, 256, 512), (2048, 1536, 4096), (17, 384, 200)]
+)
+def test_triton_matches_reference(M, N, K):
+    from omni_infinity.kernels._fused_fp8_gemm import fused_fp8_gemm_triton
+
+    torch.manual_seed(0)
+    dev = "cuda"
+    x = torch.randn(M, K, dtype=torch.bfloat16, device=dev)
+    w = (torch.randn(N, K, device=dev) * 0.02).to(torch.bfloat16)
+    b = torch.randn(N, dtype=torch.bfloat16, device=dev)
+    q, s = quantize_block_fp8(w.cpu())
+    q, s = q.to(dev), s.to(dev)
+    got = fused_fp8_gemm_triton(x, q, s, b)
+    ref = fused_fp8_gemm_reference(x, q, s, b)
+    rel = (got.float() - ref.float()).norm() / ref.float().norm()
+    assert rel < 2e-2, rel.item()
+    assert got.shape == (M, N) and got.dtype == torch.bfloat16
+
+
+@cuda
+def test_triton_3d_input_and_out():
+    from omni_infinity.kernels._fused_fp8_gemm import fused_fp8_gemm_triton
+
+    dev = "cuda"
+    x = torch.randn(2, 128, 512, dtype=torch.bfloat16, device=dev)
+    w = (torch.randn(256, 512, device=dev) * 0.02).to(torch.bfloat16)
+    q, s = quantize_block_fp8(w.cpu())
+    q, s = q.to(dev), s.to(dev)
+    y = fused_fp8_gemm_triton(x, q, s)
+    assert tuple(y.shape) == (2, 128, 256)
