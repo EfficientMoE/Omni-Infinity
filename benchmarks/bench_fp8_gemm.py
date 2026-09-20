@@ -97,7 +97,7 @@ def bench(M: int, N: int, K: int, dev: str = "cuda") -> None:
             lat = _time(fn)
             mem = torch.cuda.max_memory_allocated() / 1e6
             print(f"  {name:22s} {lat:8.3f} ms  peak {mem:8.1f} MB")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             reason = str(exc).splitlines()[0][:100]
             print(f"  {name:22s} n/a ({reason})")
 
