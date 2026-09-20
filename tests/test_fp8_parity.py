@@ -71,21 +71,38 @@ def test_bf16_entry_materialize_stays_bitwise():
     assert torch.equal(materialized_bias, bias)
 
 
-def test_scaled_fp8_linear_stores_float8_and_approximates():
+def test_scaled_fp8_linear_uses_block_scale_and_approximates():
     torch.manual_seed(0)
-    linear = nn.Linear(256, 128).to(torch.bfloat16).eval()
+    linear = nn.Linear(512, 256).to(torch.bfloat16).eval()
     with torch.no_grad():
         linear.weight.mul_(0.02)
     fp8_linear = ScaledFp8Linear(linear, torch.bfloat16).eval()
-
     assert fp8_linear.weight_fp8.dtype == torch.float8_e4m3fn
-    assert fp8_linear.weight_fp8.element_size() == 1
-
-    x = torch.randn(8, 256, dtype=torch.bfloat16)
+    # block-wise scale grid, not per-row [N,1]:
+    # (ceil(256/128), ceil(512/128)) == (2, 4)
+    assert tuple(fp8_linear.weight_scale.shape) == (2, 4)
+    x = torch.randn(8, 512, dtype=torch.bfloat16)
     with torch.no_grad():
-        reference = linear(x).to(torch.float32)
+        ref = linear(x).to(torch.float32)
         approx = fp8_linear(x).to(torch.float32)
-    rel = (approx - reference).norm() / reference.norm()
+    rel = (approx - ref).norm() / ref.norm()
+    assert rel < 0.05, rel.item()
+
+
+def test_scaled_fp8_linear_per_row_mode_preserves_legacy():
+    torch.manual_seed(0)
+    linear = nn.Linear(512, 256).to(torch.bfloat16).eval()
+    with torch.no_grad():
+        linear.weight.mul_(0.02)
+    fp8_linear = ScaledFp8Linear(linear, torch.bfloat16, mode="per_row").eval()
+    # legacy per-row scale is [N, 1], NOT the block-wise
+    # [ceil(N/128), ceil(K/128)]
+    assert tuple(fp8_linear.weight_scale.shape) == (256, 1)
+    x = torch.randn(8, 512, dtype=torch.bfloat16)
+    with torch.no_grad():
+        ref = linear(x).to(torch.float32)
+        approx = fp8_linear(x).to(torch.float32)
+    rel = (approx - ref).norm() / ref.norm()
     assert rel < 0.05, rel.item()
 
 

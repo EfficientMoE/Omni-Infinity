@@ -24,6 +24,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from omni_infinity.kernels import fused_fp8_gemm, quantize_block_fp8
+
 _SKIP_PATTERNS = ("norm", "pos_embed", "patch_embed")
 
 
@@ -42,22 +44,40 @@ def quantize_per_row_fp8(
 
 
 class ScaledFp8Linear(nn.Module):
-    """`nn.Linear` with a float8 weight + per-row scale, dequantized per call.
+    """nn.Linear with a float8 weight, fused-dequantized per call.
 
-    The float8 weight and scale are buffers (they ride `.to(device)` without a
-    dtype change), so the layer stays ~half its bf16 size resident; forward
-    reconstructs the bf16 weight just for the matmul.
+    ``mode='block'`` (default) stores a block-wise (128x128) scale and runs the
+    fused weight-only GEMM WITHOUT materializing the bf16 weight (activations
+    stay bf16 -> accuracy-preserving vs W8A8). ``mode='per_row'`` keeps the
+    legacy per-output-channel scale + dequant-materialize ``F.linear`` path,
+    retained for the inc-8 accuracy A/B. Both store the float8 weight + scale as
+    buffers (they ride ``.to(device)`` without a dtype change), so the layer
+    stays ~half its bf16 size resident.
     """
 
-    def __init__(self, linear: nn.Linear, compute_dtype: torch.dtype):
+    def __init__(
+        self, linear: nn.Linear, compute_dtype: torch.dtype, mode: str = "block"
+    ):
         super().__init__()
-        quantized, scale = quantize_per_row_fp8(linear.weight.detach())
+        assert mode in ("block", "per_row"), mode
+        self.mode = mode
+        if mode == "block":
+            quantized, scale = quantize_block_fp8(linear.weight.detach())
+        else:
+            quantized, scale = quantize_per_row_fp8(linear.weight.detach())
         self.register_buffer("weight_fp8", quantized)
         self.register_buffer("weight_scale", scale)
         self.bias = linear.bias
         self.compute_dtype = compute_dtype
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        if self.mode == "block":
+            return fused_fp8_gemm(
+                hidden_states.to(torch.bfloat16),
+                self.weight_fp8,
+                self.weight_scale,
+                self.bias,
+            )
         weight = (self.weight_fp8.to(torch.float32) * self.weight_scale).to(
             self.compute_dtype
         )
@@ -71,6 +91,7 @@ def apply_scaled_fp8_casting(
     model: nn.Module,
     compute_dtype: torch.dtype = torch.bfloat16,
     skip_blocks: frozenset[int] = frozenset(),
+    mode: str = "block",
 ) -> int:
     skip = set(_SKIP_PATTERNS)
     skip.update(getattr(model, "_keep_in_fp32_modules", None) or ())
@@ -90,5 +111,5 @@ def apply_scaled_fp8_casting(
     for name, module in targets:
         parent_path, _, leaf = name.rpartition(".")
         parent = model.get_submodule(parent_path) if parent_path else model
-        setattr(parent, leaf, ScaledFp8Linear(module, compute_dtype))
+        setattr(parent, leaf, ScaledFp8Linear(module, compute_dtype, mode=mode))
     return len(targets)
