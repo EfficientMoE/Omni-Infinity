@@ -88,3 +88,37 @@ def test_triton_3d_input_and_out():
     q, s = q.to(dev), s.to(dev)
     y = fused_fp8_gemm_triton(x, q, s)
     assert tuple(y.shape) == (2, 128, 256)
+
+
+def test_facade_exports():
+    import omni_infinity.kernels as K
+
+    assert hasattr(K, "fused_fp8_gemm") and hasattr(K, "quantize_block_fp8")
+    assert K.WEIGHT_BLOCK == (128, 128)
+
+
+def test_facade_reference_fallback_on_cpu():
+    import omni_infinity.kernels as K
+
+    x = torch.randn(4, 256, dtype=torch.bfloat16)
+    w = (torch.randn(128, 256) * 0.02).to(torch.bfloat16)
+    q, s = K.quantize_block_fp8(w)
+    y = K.fused_fp8_gemm(x, q, s)  # cpu -> reference impl
+    assert tuple(y.shape) == (4, 128) and y.dtype == torch.bfloat16
+
+
+@cuda
+def test_facade_env_forces_reference(monkeypatch):
+    monkeypatch.setenv("OMO_KERNELS_REFERENCE", "1")
+    import importlib
+
+    import omni_infinity.kernels as K
+
+    importlib.reload(K)
+    x = torch.randn(8, 256, dtype=torch.bfloat16, device="cuda")
+    w = (torch.randn(128, 256, device="cuda") * 0.02).to(torch.bfloat16)
+    q, s = K.quantize_block_fp8(w.cpu())
+    q, s = q.cuda(), s.cuda()
+    y = K.fused_fp8_gemm(x, q, s)
+    assert tuple(y.shape) == (8, 128)
+    importlib.reload(K)  # restore
