@@ -54,6 +54,45 @@ def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
     )
 
 
+def _APPLY_GROUP_OFFLOADING(module, **kwargs):
+    from diffusers.hooks import apply_group_offloading
+
+    apply_group_offloading(module, **kwargs)
+
+
+def _encoder_layer_host(pipeline):
+    # Submodule whose direct child is the longest ModuleList (the decoder
+    # layers). block_level group offload must target it: the layers are nested
+    # (Qwen3-VL: model.language_model.layers), not a direct child of the top
+    # encoder. Dynamic lookup avoids hardcoding a transformers-version path.
+    encoder = pipeline.text_encoder
+    best_module, best_len = None, -1
+    for _name, module in encoder.named_modules():
+        for child in module.children():
+            if isinstance(child, torch.nn.ModuleList) and len(child) > best_len:
+                best_module, best_len = module, len(child)
+    if best_module is None:
+        raise AttributeError("no decoder-layer ModuleList on the text encoder")
+    return best_module
+
+
+def _stream_text_encoder(pipeline, device):
+    # bf16 leaf-level streaming of the Qwen3-VL decoder subtree: device-only
+    # moves, so the prompt embeds (and thus the latents) stay parity-identical.
+    # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
+    # so each self-onloads when it runs; block_level leaves the embedding on the
+    # offload device and the first token lookup hits a device mismatch.
+    _APPLY_GROUP_OFFLOADING(
+        _encoder_layer_host(pipeline),
+        onload_device=torch.device(device),
+        offload_device=torch.device("cpu"),
+        offload_type="leaf_level",
+        use_stream=True,
+        record_stream=False,
+        low_cpu_mem_usage=False,
+    )
+
+
 RESOLUTIONS = {
     "256p": (256, 256),
     "512p": (512, 512),
@@ -138,6 +177,7 @@ class ReferenceRunner:
         offload_memory_margin: str | None = None,
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
+        stream_text_encoder: bool = False,
     ) -> "ReferenceRunner":
         try:
             from diffusers import MiniMaxH3ModularPipeline
@@ -221,6 +261,10 @@ class ReferenceRunner:
                 block_stream_blocks_per_group,
                 block_stream_to_disk,
             )
+        if stream_text_encoder:
+            if not offload:
+                raise ValueError("stream_text_encoder requires offload=True")
+            _stream_text_encoder(pipeline, device)
         if offload:
             # memory_reserve_margin = (device total - target budget) keeps the
             # manager evicting until only ~budget stays resident, emulating a

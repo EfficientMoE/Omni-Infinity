@@ -110,3 +110,38 @@ def test_block_streaming_invokes_group_offload_and_requires_offload():
     assert calls["group_offload"]["num_blocks_per_group"] == 1
     assert calls["group_offload"]["use_stream"] is True
     assert calls["group_offload"]["offload_device"] == torch.device("cpu")
+
+
+def test_stream_text_encoder_invokes_group_offloading():
+    from omni_infinity import runner as runner_mod
+
+    calls = {}
+
+    class FakeEncoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Module()
+            self.model.layers = torch.nn.ModuleList(
+                [torch.nn.Linear(4, 4) for _ in range(4)]
+            )
+
+    class FakePipeline:
+        def __init__(self):
+            self.text_encoder = FakeEncoder()
+
+    original = runner_mod._APPLY_GROUP_OFFLOADING
+
+    def fake_apply(module, **kwargs):
+        calls["module"] = module
+        calls["kwargs"] = kwargs
+
+    runner_mod._APPLY_GROUP_OFFLOADING = fake_apply
+    try:
+        runner_mod._stream_text_encoder(FakePipeline(), torch.device("cuda"))
+    finally:
+        runner_mod._APPLY_GROUP_OFFLOADING = original
+
+    assert calls["module"] is not None
+    assert calls["kwargs"]["use_stream"] is True
+    assert calls["kwargs"]["offload_device"] == torch.device("cpu")
+    assert calls["kwargs"]["offload_type"] in ("block_level", "leaf_level")

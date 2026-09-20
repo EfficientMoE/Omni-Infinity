@@ -51,6 +51,8 @@ def test_reference_runner_reproduces_golden_latents():
         block_stream_blocks_per_group=int(
             os.environ.get("OMNI_H3_BLOCK_STREAM", "0")
         ),
+        stream_text_encoder=os.environ.get("OMNI_H3_STREAM_TEXT_ENCODER", "0")
+        == "1",
     )
     result = runner.generate(
         payload["prompt"],
