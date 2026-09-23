@@ -26578,3 +26578,181 @@ Found 2446 errors.
 All checks passed!
 ```
 </details>
+
+### 2026-09-23T11:07:47.531691+00:00 — Task 5 commit
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && GIT_MASTER=1 git status --short && GIT_MASTER=1 git diff --stat && GIT_MASTER=1 git log --oneline -10 && GIT_MASTER=1 git add README.md docs/attribution_vdn.md docs/attribution_vdn_runlog.md pyproject.toml && GIT_MASTER=1 git diff --staged --stat && GIT_MASTER=1 git commit -m "docs: VDN speedup attribution study (#10)" -m "Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)" -m "Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>" && GIT_MASTER=1 git log -1 --oneline`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `575919aaa1c891e212840a8ca63f9ead6984f7ac`
+- **Wall time:** 0.053 s
+- **Artifacts:** git commit, docs/attribution_vdn.md, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 5 commit: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+ M README.md
+ M docs/attribution_vdn_runlog.md
+ M pyproject.toml
+ ? third_party/vdn-minimax-h3
+?? .sisyphus/
+?? docs/attribution_vdn.md
+?? generated_latents.pt
+ README.md                      |     3 +-
+ docs/attribution_vdn_runlog.md | 24065 +++++++++++++++++++++++++++++++++++++++
+ pyproject.toml                 |     1 +
+ 3 files changed, 24068 insertions(+), 1 deletion(-)
+575919a feat(bench): add VDN sequence scaling analysis (#10)
+0d36add feat(bench): audit VDN attention density (#10)
+a93d6ce feat(bench): report VDN component attribution (#10)
+52c3365 feat(bench): profiler shim + attribution driver (#10)
+19cbd25 feat(docker): reproducible VDN environment image (#10)
+f58fc27 docs: VDN-H3 16-run ablation study results (#10)
+43a3f97 fix(bench): drop frame-mismatched goldens gate from omni grid rows (#10)
+b0efffb docs: model-arch/optimization category section in README (#10)
+8914d6c docs: VDN repro results (sm120) + fix omni ablation rows for cross-repo guard (#10)
+fd7fda5 test: record vdn-hybrid golden latents (#10)
+ README.md                      |     3 +-
+ docs/attribution_vdn.md        |   150 +
+ docs/attribution_vdn_runlog.md | 24065 +++++++++++++++++++++++++++++++++++++++
+ pyproject.toml                 |     1 +
+ 4 files changed, 24218 insertions(+), 1 deletion(-)
+[feat/vdn-minimax-h3 96bd7a8] docs: VDN speedup attribution study (#10)
+ 4 files changed, 24218 insertions(+), 1 deletion(-)
+ create mode 100644 docs/attribution_vdn.md
+96bd7a8 docs: VDN speedup attribution study (#10)
+```
+</details>
+
+### 2026-09-23T11:08:13.702101+00:00 — Final verification
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && grep -c "Verdict:" docs/attribution_vdn.md && python -m pytest tests/ -q && ruff check . && GIT_MASTER=1 git branch --show-current && GIT_MASTER=1 git log --oneline -5 && GIT_MASTER=1 git status --short && nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name --format=csv,noheader`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `96bd7a8cc64eecf8f6d2986660c1cf7a2ddae99d`
+- **Wall time:** 4.833 s
+- **Artifacts:** docs/attribution_vdn.md, docs/attribution_vdn_runlog.md
+- **Outcome:** Final verification: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+6
+..............................ssss..ss................ss......           [100%]
+54 passed, 8 skipped in 3.49s
+All checks passed!
+feat/vdn-minimax-h3
+96bd7a8 docs: VDN speedup attribution study (#10)
+575919a feat(bench): add VDN sequence scaling analysis (#10)
+0d36add feat(bench): audit VDN attention density (#10)
+a93d6ce feat(bench): report VDN component attribution (#10)
+52c3365 feat(bench): profiler shim + attribution driver (#10)
+ M docs/attribution_vdn_runlog.md
+ ? third_party/vdn-minimax-h3
+?? .sisyphus/
+?? generated_latents.pt
+GPU-44eed628-3411-839c-dce4-5f8d7947def8, 2394648, /home/liang/miniconda3/envs/dflash-vllm/bin/python3.12
+GPU-be6405b1-4805-a2de-e6ff-0c05da1cf9f4, 2394649, /home/liang/miniconda3/envs/dflash-vllm/bin/python3.12
+GPU-5c646282-ca35-8cb5-c583-942744081bec, 2394650, /home/liang/miniconda3/envs/dflash-vllm/bin/python3.12
+GPU-cc5becee-27e4-a23f-d8c8-2f8fc4622833, 2394651, /home/liang/miniconda3/envs/dflash-vllm/bin/python3.12
+GPU-2e03447a-2804-6988-10ad-050d6936bf06, 2394652, /home/liang/miniconda3/envs/dflash-vllm/bin/python3.12
+```
+</details>
+
+### 2026-09-23T11:08:26.416089+00:00 — Final branch push
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && GIT_MASTER=1 git push origin feat/vdn-minimax-h3`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `96bd7a8cc64eecf8f6d2986660c1cf7a2ddae99d`
+- **Wall time:** 1.815 s
+- **Artifacts:** origin/feat/vdn-minimax-h3, docs/attribution_vdn_runlog.md
+- **Outcome:** Final branch push: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+To https://github.com/EfficientMoE/Omni-Infinity.git
+   19cbd25..96bd7a8  feat/vdn-minimax-h3 -> feat/vdn-minimax-h3
+```
+</details>
+
+## 345f claim-alignment runs
+
+Two upstream-native runs at `render.num_frames=345` (the exact workload upstream's
+Results tables use) on this box (6× RTX PRO 6000 Blackwell; Server 0-3, Max-Q 4-5).
+Goal: close the "345-frame claim alignment" for VDN-H3 — (R1) single-GPU fp8, (R2)
+4-rank Ulysses branch-parallel fp8 (3 softmax + 1 linear). Driver + 2 s-cadence
+nvidia-smi memory pollers live in `results/vdn/claim345/`. Env for every run:
+`source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate`, `HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface`,
+`PYTHONPATH=''` (no HF network). VDN upstream SHA `e9204ce2330febbf36d8fee462f04a321e8217b6`;
+outer Omni-Infinity SHA `96bd7a8cc64eecf8f6d2986660c1cf7a2ddae99d`.
+checkpoint_head_sha256 `355b4a26ebb0539cb71cfc06e684e6f53f03cfc4b364432eb610ecb0b5d14e14`.
+
+### 2026-09-23T12:41:11+00:00 — R1 single-GPU fp8 @345f
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface PYTHONPATH='' && cd /mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3 && CUDA_VISIBLE_DEVICES=0 python src/inference/infer.py --config configs/inference/8nfe_tuned_fp8.yaml checkpoint=ckpts/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.num_frames=345 render.record=true render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/claim345/r1_single_fp8.mp4` (wrapped by `results/vdn/claim345/r1_driver.sh 0 "" r1` with a 2 s nvidia-smi mem poller on physical GPU 0)
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3`
+- **GPU(s):** physical 0 = NVIDIA RTX PRO 6000 Blackwell Server Edition (97887 MiB). At launch GPUs 1(61645 MiB) 2(65169 MiB) 3(68927 MiB) were busy with an unrelated job (100% util); Max-Q 4-5 untouched.
+- **Git SHA:** vdn `e9204ce2330febbf36d8fee462f04a321e8217b6`; outer `96bd7a8cc64eecf8f6d2986660c1cf7a2ddae99d`
+- **Wall time:** 360 s (WALL_SECONDS); denoise 199.68 s
+- **Artifacts:** `results/vdn/claim345/r1_single_fp8.mp4` (5.0 MB), `r1_single_fp8.mp4.inference.json`, `r1_single_fp8.log`, `r1.gpupeak.csv`, `r1_driver.sh`
+- **Outcome:** exit 0. Resolved `softmax_backend=decomposed` (config `auto` on sm120); `fp8_linears=363`; flex backend NOT latched (`compiled_variants=[]`, `flash_available=null`). Steady **24.95 s/NFE** (post-warmup mean of last 7 steps; all-8 mean 24.96). Per-NFE: 25.03 24.95 24.95 24.95 24.95 24.95 24.95 24.95. **Peak 81563 MiB = 79.65 GiB** (nvidia-smi working set) → FITS a 96 GB card. A transient `CUDACachingAllocator ... OOM ... trying to allocate 5.46 GB (free 4.82 GB)` warning fired once during warm-up; the caching allocator freed reserved blocks and retried, the process never died, so the `kernels.softmax_backend=flex` fallback was NOT triggered. num_frames=345, num_steps=8, warmup_steps=2, seed=42 (config default).
+
+<details><summary>Verbatim output (key lines)</summary>
+
+```text
+LAUNCH tag=r1 gpu=0 config=8nfe_tuned_fp8.yaml num_frames=345 backend_override='' at 2026-09-23T12:41:11+0000
+built from spec: 800 branch tensors, 571 LoRA pairs merged
+window softmax: decomposed
+fp8: 363 Linears quantised
+warming up 2 NFE (discarded)
+[W923 12:42:10.427197455 CUDACachingAllocator.cpp:3933] memory allocation failed with OOM on device 0 while trying to allocate 5458886656 bytes (free: 4823449600, total: 101976440832).
+timing: denoise 199.68s (24.96s/NFE; per NFE 25.03 24.95 24.95 24.95 24.95 24.95 24.95 24.95)
+wrote /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/claim345/r1_single_fp8.mp4
+wrote /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/claim345/r1_single_fp8.mp4.inference.json
+WALL_SECONDS=360
+EXIT_CODE=0
+PEAK_MiB_gpu0=81563
+DONE_r1
+```
+</details>
+
+### 2026-09-23T12:50:29+00:00 — R2 4-rank Ulysses fp8 @345f — BLOCKED (GPUs unavailable)
+
+- **Command (would-be run, verbatim):** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface PYTHONPATH='' && cd /mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3 && CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nproc_per_node=4 src/inference/infer_ulysses.py --config configs/inference/8nfe_tuned_fp8_ulysses_b200.yaml checkpoint=ckpts/stage-dmd-step-250 parallel.softmax_ranks=3 render.prompt_file=prompts/example_0.pt render.num_frames=345 render.record=true render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/claim345/r2_ulysses4_fp8.mp4` (wrapped by `results/vdn/claim345/r2_driver.sh` with a 2 s 4-GPU mem poller; gated by `results/vdn/claim345/r2_wait_and_run.sh` = poll GPUs 0-3 every 15 s, launch on all-idle, else timeout)
+- **Gate command:** `nohup bash results/vdn/claim345/r2_wait_and_run.sh` (30-min window, idle threshold mem<2000 MiB)
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3` (gate wrapper cwd `/mnt/raid0nvme0/leyang/Omni-Infinity`)
+- **GPU(s) required:** physical 0,1,2,3 (Server). Available at gate start 12:50:29Z through timeout 13:20:36Z: only GPU 0 idle (freed by R1); **GPUs 1,2,3 continuously pinned at 100% util** (steady 61645 / 65169→66149 / 68927 MiB) by an unrelated job.
+- **Blocking job:** `torchrun --standalone --nproc_per_node=5 -m dflash_rl.pretrain.train --config configs/qwen3.5_4b_dflash2_code_64k.yaml ...` (user `liang`, env `dflash-vllm`, PID 2394573) — occupies physical GPUs 1,2,3,4,5, leaving GPU 0 the only free Server GPU. Max-Q 4-5 also in use (untouched per policy).
+- **Git SHA:** vdn `e9204ce2330febbf36d8fee462f04a321e8217b6`; outer `96bd7a8cc64eecf8f6d2986660c1cf7a2ddae99d`
+- **Wall time:** 1807 s polling (12:50:29Z → 13:20:36Z), full 30-min window exhausted; R2 never launched.
+- **Artifacts:** `results/vdn/claim345/r2_gate.status` (poll log), `r2_wait_and_run.sh`, `r2_driver.sh`. No `r2_ulysses4_fp8.*` produced.
+- **Outcome:** BLOCKED / not run. Gate exited code 2. Per GPU-discipline (Server 0-3 only; wait ≤30 min then report), R2 is reported blocked by 3 busy GPUs (1,2,3); no processes left running. R2 remains to be executed when GPUs 1-3 are idle.
+
+<details><summary>Verbatim output (gate terminal lines)</summary>
+
+```text
+GATE start 2026-09-23T12:50:29+0000 deadline_in=1800s need=GPUs0-3 idle(mem<2000MiB)
+GATE wait 2026-09-23T12:50:29+0000 busy: 1(61645MiB) 2(65169MiB) 3(68927MiB)
+...
+GATE wait 2026-09-23T13:20:21+0000 busy: 1(61645MiB) 2(66149MiB) 3(68927MiB)
+GATE timeout 2026-09-23T13:20:36+0000 BLOCKED_by: 1(61645MiB) 2(66149MiB) 3(68927MiB)
+```
+</details>
