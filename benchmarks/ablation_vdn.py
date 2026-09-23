@@ -24,6 +24,7 @@ from typing import Any
 
 FRAMES = 222
 SEED = 0
+VDN_HUB_REPO = "OpenVDN/vdn-minimax-h3"
 PROMPT = "a red ball bouncing"
 CSV_FIELDS = (
     "name",
@@ -247,8 +248,13 @@ def build_command(
         "examples/vdn_smoke.py",
         "--prompt",
         PROMPT,
+        # Hub repo-id, NOT the local dir: the vendored diffusers
+        # strips trust_remote_code when the pipeline repo differs
+        # from the remote-code transformer repo (see
+        # docs/repro_vdn.md, cross-repo guard). Resolved offline
+        # from the pre-populated HF_HOME cache.
         "--checkpoint",
-        str(checkpoints),
+        VDN_HUB_REPO,
         "--variant",
         str(run.params.get("variant", "8-step")),
         "--seed",
@@ -377,6 +383,11 @@ def execute(
     argv = build_command(run, results, upstream, ckpts)
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    if run.stack == "omni":
+        env.setdefault(
+            "HF_HOME",
+            "/mnt/raid0nvme0/leyang/.cache/huggingface",
+        )
     cwd = upstream if run.stack == "upstream" else repo
     peak_gib = _run_subprocess(
         argv, cwd, env, gpu, sample_vram=run.stack == "upstream"
