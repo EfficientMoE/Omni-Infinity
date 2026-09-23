@@ -209,6 +209,68 @@ def _report_components(results: Path) -> None:
     print(f"wrote {output}")
 
 
+def _latent_frames(requested: int) -> tuple[int, int]:
+    aligned = requested
+    while aligned % 17 != 5:
+        aligned += 1
+    latent = (aligned - 5) // 17 * 5 + 2
+    return aligned, latent
+
+
+def _window_density(num_frames: int) -> float:
+    allowed = 0
+    for query in range(num_frames):
+        chunk = query // 5
+        lo = max((chunk - 1) * 5, 0)
+        hi = min((chunk + 2) * 5 - 1, num_frames - 1)
+        if query in (0, num_frames - 1):
+            keys = set(range(num_frames))
+        else:
+            keys = set(range(lo, hi + 1))
+            keys.update((0, num_frames - 1))
+        allowed += len(keys)
+    return allowed / (num_frames * num_frames)
+
+
+def _report_density(results: Path, frames: list[int]) -> None:
+    densities: dict[int, float] = {}
+    print(
+        "analytic video-frame-pair density "
+        "(chunk=5, radius=1, anchors=both):"
+    )
+    for requested in frames:
+        aligned, latent = _latent_frames(requested)
+        density = _window_density(latent)
+        densities[requested] = density
+        print(
+            f"N={requested}: aligned={aligned}, latent_frames={latent}, "
+            f"density={100.0 * density:.4f}%"
+        )
+        if requested == 345:
+            delta = 100.0 * density - 3.57
+            print(
+                f"N=345 vs paper 3.57%: delta={delta:+.4f} percentage points; "
+                "FLAGGED: the exact released frame-pair mask includes three "
+                "5-frame chunks plus dense first/last anchor rows and columns, "
+                "so the paper uses a different density denominator or geometry."
+            )
+
+    dense = _load_summary(results, "D-prof")["dense_attn_ms"]
+    density_222 = densities.get(222, _window_density(_latent_frames(222)[1]))
+    print("empirical N=222 window/dense CUDA-time proxy:")
+    print(
+        "run | window_ms | dense_ms | kernel_ratio | density | "
+        "efficiency_factor"
+    )
+    for name in ("V0-prof", "V1-prof", "V2-prof"):
+        window = _load_summary(results, name)["window_softmax_ms"]
+        ratio = window / dense
+        print(
+            f"{name} | {window:.1f} | {dense:.1f} | {ratio:.4f} | "
+            f"{density_222:.4f} | {ratio / density_222:.3f}"
+        )
+
+
 def _gpu_is_idle(sample: str) -> bool:
     values = (int(value.strip()) for value in sample.split(","))
     memory_mib, utilization = values
@@ -377,6 +439,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--only", choices=tuple(GROUPS))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--report-components", action="store_true")
+    parser.add_argument("--density", action="store_true")
+    parser.add_argument("--frames", nargs="+", type=int, default=[222, 345])
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
@@ -385,6 +449,9 @@ def main() -> int:
     args = _parse_args()
     if args.report_components:
         _report_components(Path(args.results_dir).resolve())
+        return 0
+    if args.density:
+        _report_density(Path(args.results_dir).resolve(), args.frames)
         return 0
     runs = GROUPS[args.only] if args.only else RUNS
     if args.dry_run:

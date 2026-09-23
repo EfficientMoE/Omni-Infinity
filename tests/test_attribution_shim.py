@@ -135,3 +135,21 @@ def test_profile_summary_drops_warmups_and_derives_residual():
     assert summary["step_total_ms"] == 1000.0
     assert summary["other_ms"] == 200.0
     assert summary["ratios"] == [1000.0 / 1020.0]
+
+
+def test_density_uses_realized_latent_frames_and_anchor_union():
+    driver_path = (
+        Path(__file__).parents[1] / "benchmarks" / "attribution_vdn.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "attribution_vdn_density",
+        driver_path,
+    )
+    assert spec is not None and spec.loader is not None
+    driver = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = driver
+    spec.loader.exec_module(driver)
+
+    assert driver._latent_frames(345) == (345, 102)
+    assert driver._latent_frames(222) == (226, 67)
+    assert driver._window_density(2) == 1.0

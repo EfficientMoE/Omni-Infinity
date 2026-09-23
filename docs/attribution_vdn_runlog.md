@@ -1632,3 +1632,288 @@ Found 1 error.
 All checks passed!
 ```
 </details>
+
+### 2026-09-23T10:18:52.004714+00:00 — Task 2 commit
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && GIT_MASTER=1 git status --short && GIT_MASTER=1 git diff --stat && GIT_MASTER=1 git add benchmarks/attribution_vdn.py benchmarks/vdn_prof_shim/sitecustomize.py tests/test_attribution_shim.py docs/attribution_vdn_runlog.md && GIT_MASTER=1 git diff --staged --stat && GIT_MASTER=1 git commit -m "feat(bench): report VDN component attribution (#10)" -m "Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)" -m "Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>" && GIT_MASTER=1 git log -1 --oneline`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.029 s
+- **Artifacts:** git commit, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 commit: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+ M benchmarks/attribution_vdn.py
+ M benchmarks/vdn_prof_shim/sitecustomize.py
+ M docs/attribution_vdn_runlog.md
+ M tests/test_attribution_shim.py
+ ? third_party/vdn-minimax-h3
+?? .sisyphus/
+?? generated_latents.pt
+ benchmarks/attribution_vdn.py             | 132 ++++++++
+ benchmarks/vdn_prof_shim/sitecustomize.py |  26 +-
+ docs/attribution_vdn_runlog.md            | 503 ++++++++++++++++++++++++++++++
+ tests/test_attribution_shim.py            |  26 ++
+ 4 files changed, 680 insertions(+), 7 deletions(-)
+ benchmarks/attribution_vdn.py             | 132 ++++++++
+ benchmarks/vdn_prof_shim/sitecustomize.py |  26 +-
+ docs/attribution_vdn_runlog.md            | 503 ++++++++++++++++++++++++++++++
+ tests/test_attribution_shim.py            |  26 ++
+ 4 files changed, 680 insertions(+), 7 deletions(-)
+[feat/vdn-minimax-h3 a93d6ce] feat(bench): report VDN component attribution (#10)
+ 4 files changed, 680 insertions(+), 7 deletions(-)
+a93d6ce feat(bench): report VDN component attribution (#10)
+```
+</details>
+
+### 2026-09-23T10:19:31.528433+00:00 — Task 3 inspect frame helpers
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -c "import inspect; from diffusers.modular_pipelines.minimax_h3.modular_pipeline import align_num_frames, video_latent_num_frames; print(inspect.getsource(align_num_frames)); print(inspect.getsource(video_latent_num_frames))"`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `a93d6ce41b4eacb0aaa8342229921bef352deabb`
+- **Wall time:** 3.346 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 3 inspect frame helpers: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+def align_num_frames(num_frames: int, frames_per_chunk: int, latents_per_chunk: int) -> int:
+    r"""
+    Snap a frame count up to the next `frames_per_chunk * n + latents_per_chunk` the video VAE can encode.
+
+    Args:
+        num_frames (`int`): The requested number of frames.
+        frames_per_chunk (`int`): Pixel frames the video VAE encodes per chunk, its `clip_length`.
+        latents_per_chunk (`int`): Latent frames a chunk keeps, the VAE's `tokens_chunk_size`.
+
+    Returns:
+        `int`: The aligned number of frames.
+    """
+    if num_frames < 1:
+        raise ValueError(f"`num_frames` must be positive, got {num_frames}.")
+    while num_frames % frames_per_chunk != latents_per_chunk:
+        num_frames += 1
+    return num_frames
+
+def video_latent_num_frames(num_frames: int, frames_per_chunk: int, latents_per_chunk: int) -> int:
+    r"""
+    The number of latent frames the video VAE produces for a `17 * n + 5` frame count.
+
+    Args:
+        num_frames (`int`): An aligned number of frames.
+
+    Returns:
+        `int`: The number of latent frames, `5 * n + 2`.
+    """
+    if num_frames % frames_per_chunk != latents_per_chunk:
+        raise ValueError(
+            f"`num_frames` must be of the form {frames_per_chunk} * n + {latents_per_chunk}, got {num_frames}."
+        )
+    return (num_frames - latents_per_chunk) // frames_per_chunk * latents_per_chunk + 2
+
+Modular Diffusers is currently an experimental feature under active development. The API is subject to breaking changes in future releases.
+W0923 10:19:33.931000 2400050 torch/utils/_pytree.py:630] <enum 'KernelPreference'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+W0923 10:19:33.948000 2400050 torch/utils/_pytree.py:630] <enum 'ScaleCalculationMode'> is an Enum subclass and is now natively supported by torch.compile as an opaque value type. Calling register_constant() on Enum subclasses is deprecated and will be an error in a future release.
+Unable to import `torchao` Tensor objects. This may affect loading checkpoints serialized with `torchao`
+```
+</details>
+
+### 2026-09-23T10:20:01.114675+00:00 — Task 3 density RED
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py::test_density_uses_realized_latent_frames_and_anchor_union -v`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `a93d6ce41b4eacb0aaa8342229921bef352deabb`
+- **Wall time:** 0.179 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 3 density RED: exit 1
+
+<details><summary>Verbatim output</summary>
+
+```text
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /mnt/raid0nvme0/leyang/envs/vdn/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/raid0nvme0/leyang/Omni-Infinity
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+collecting ... collected 1 item
+
+tests/test_attribution_shim.py::test_density_uses_realized_latent_frames_and_anchor_union FAILED [100%]
+
+=================================== FAILURES ===================================
+__________ test_density_uses_realized_latent_frames_and_anchor_union ___________
+
+    def test_density_uses_realized_latent_frames_and_anchor_union():
+        driver_path = (
+            Path(__file__).parents[1] / "benchmarks" / "attribution_vdn.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "attribution_vdn_density",
+            driver_path,
+        )
+        assert spec is not None and spec.loader is not None
+        driver = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = driver
+        spec.loader.exec_module(driver)
+    
+>       assert driver._latent_frames(345) == (345, 102)
+               ^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'attribution_vdn_density' has no attribute '_latent_frames'
+
+tests/test_attribution_shim.py:153: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_attribution_shim.py::test_density_uses_realized_latent_frames_and_anchor_union
+============================== 1 failed in 0.02s ===============================
+```
+</details>
+
+### 2026-09-23T10:20:24.143824+00:00 — Task 3 density GREEN
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py::test_density_uses_realized_latent_frames_and_anchor_union -v`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `a93d6ce41b4eacb0aaa8342229921bef352deabb`
+- **Wall time:** 0.158 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 3 density GREEN: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /mnt/raid0nvme0/leyang/envs/vdn/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/raid0nvme0/leyang/Omni-Infinity
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+collecting ... collected 1 item
+
+tests/test_attribution_shim.py::test_density_uses_realized_latent_frames_and_anchor_union PASSED [100%]
+
+============================== 1 passed in 0.01s ===============================
+```
+</details>
+
+### 2026-09-23T10:20:28.449285+00:00 — Task 3 density QA
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python benchmarks/attribution_vdn.py --density --frames 222 345`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `a93d6ce41b4eacb0aaa8342229921bef352deabb`
+- **Wall time:** 0.044 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 3 density QA: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+analytic video-frame-pair density (chunk=5, radius=1, anchors=both):
+N=222: aligned=226, latent_frames=67, density=26.3088%
+N=345: aligned=345, latent_frames=102, density=17.7432%
+N=345 vs paper 3.57%: delta=+14.1732 percentage points; FLAGGED: the exact released frame-pair mask includes three 5-frame chunks plus dense first/last anchor rows and columns, so the paper uses a different density denominator or geometry.
+empirical N=222 window/dense CUDA-time proxy:
+run | window_ms | dense_ms | kernel_ratio | density | efficiency_factor
+V0-prof | 9037.1 | 29812.8 | 0.3031 | 0.2631 | 1.152
+V1-prof | 8374.2 | 29812.8 | 0.2809 | 0.2631 | 1.068
+V2-prof | 8358.7 | 29812.8 | 0.2804 | 0.2631 | 1.066
+```
+</details>
+
+### 2026-09-23T10:20:34.510545+00:00 — Task 3 regression QA
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py -q && ruff check benchmarks/ tests/test_attribution_shim.py`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `a93d6ce41b4eacb0aaa8342229921bef352deabb`
+- **Wall time:** 0.178 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 3 regression QA: exit 1
+
+<details><summary>Verbatim output</summary>
+
+```text
+......                                                                   [100%]
+6 passed in 0.01s
+benchmarks/attribution_vdn.py:237:81: E501 Line too long (81 > 80)
+    |
+235 | def _report_density(results: Path, frames: list[int]) -> None:
+236 |     densities: dict[int, float] = {}
+237 |     print("analytic video-frame-pair density (chunk=5, radius=1, anchors=both):")
+    |                                                                                 ^ E501
+238 |     for requested in frames:
+239 |         aligned, latent = _latent_frames(requested)
+    |
+
+benchmarks/attribution_vdn.py:258:81: E501 Line too long (84 > 80)
+    |
+256 |     density_222 = densities.get(222, _window_density(_latent_frames(222)[1]))
+257 |     print("empirical N=222 window/dense CUDA-time proxy:")
+258 |     print("run | window_ms | dense_ms | kernel_ratio | density | efficiency_factor")
+    |                                                                                 ^^^^ E501
+259 |     for name in ("V0-prof", "V1-prof", "V2-prof"):
+260 |         window = _load_summary(results, name)["window_softmax_ms"]
+    |
+
+Found 2 errors.
+```
+</details>
+
+### 2026-09-23T10:20:43.447708+00:00 — Task 3 regression QA retry
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py -q && ruff check benchmarks/ tests/test_attribution_shim.py`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `a93d6ce41b4eacb0aaa8342229921bef352deabb`
+- **Wall time:** 0.177 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 3 regression QA retry: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+......                                                                   [100%]
+6 passed in 0.01s
+All checks passed!
+```
+</details>
