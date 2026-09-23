@@ -70,7 +70,8 @@ backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
 [docs/repro_vdn.md](docs/repro_vdn.md) — dense→hybrid+fp8 **2.15×**
 per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
 streaming ~20 GiB peak. Ablation study:
-[docs/ablation_vdn.md](docs/ablation_vdn.md). Tracking:
+[docs/ablation_vdn.md](docs/ablation_vdn.md). Speedup attribution study:
+[docs/attribution_vdn.md](docs/attribution_vdn.md). Tracking:
 [#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
 
 ## Status

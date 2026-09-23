@@ -32,6 +32,7 @@ include = ["omni_infinity*"]
 
 [tool.ruff]
 line-length = 80
+extend-exclude = ["third_party"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
