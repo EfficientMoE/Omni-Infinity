@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import shlex
 import statistics
@@ -52,6 +53,7 @@ RUNS = (
     Run("D-345-prof", "8nfe.yaml", None, 345),
     Run("V0-120-prof", "8nfe.yaml", "stage-dmd-step-250", 120),
     Run("V0-311-prof", "8nfe.yaml", "stage-dmd-step-250", 311),
+    Run("V0-294-prof", "8nfe.yaml", "stage-dmd-step-250", 294),
 )
 GROUPS = {
     "V0-prof-overheadcheck": RUNS[:2],
@@ -271,6 +273,176 @@ def _report_density(results: Path, frames: list[int]) -> None:
         )
 
 
+def _fit_power(
+    x_values: list[float],
+    y_values: list[float],
+) -> tuple[float, float]:
+    x_log = [math.log(value) for value in x_values]
+    y_log = [math.log(value) for value in y_values]
+    x_mean = statistics.mean(x_log)
+    y_mean = statistics.mean(y_log)
+    denominator = sum((value - x_mean) ** 2 for value in x_log)
+    slope = sum(
+        (x_value - x_mean) * (y_value - y_mean)
+        for x_value, y_value in zip(x_log, y_log)
+    ) / denominator
+    intercept = y_mean - slope * x_mean
+    predicted = [intercept + slope * value for value in x_log]
+    residual = sum(
+        (actual - estimate) ** 2
+        for actual, estimate in zip(y_log, predicted)
+    )
+    total = sum((actual - y_mean) ** 2 for actual in y_log)
+    r_squared = 1.0 - residual / total if total else 1.0
+    return slope, r_squared
+
+
+def _token_count(requested_frames: int) -> tuple[int, int]:
+    aligned, latent = _latent_frames(requested_frames)
+    video_tokens = latent * 24 * 42
+    audio_tokens = 2 * round(aligned / 24 * 40)
+    return aligned, 800 + video_tokens + audio_tokens
+
+
+def _oom_line(results: Path, name: str) -> str:
+    log = results / f"{name}.log"
+    for line in reversed(log.read_text().splitlines()):
+        if "CUDA out of memory" in line:
+            return line.strip()
+    raise ValueError(f"{name}: OOM log has no allocator line")
+
+
+def _fit_linear(
+    x_values: list[float],
+    y_values: list[float],
+) -> tuple[float, float]:
+    x_mean = statistics.mean(x_values)
+    y_mean = statistics.mean(y_values)
+    slope = sum(
+        (x_value - x_mean) * (y_value - y_mean)
+        for x_value, y_value in zip(x_values, y_values)
+    ) / sum((value - x_mean) ** 2 for value in x_values)
+    return slope, y_mean - slope * x_mean
+
+
+def _report_scaling(results: Path) -> None:
+    measured = (
+        ("D-120-prof", "D", 120),
+        ("D-prof", "D", 222),
+        ("D-345-prof", "D", 345),
+        ("V0-120-prof", "V0", 120),
+        ("V0-prof", "V0", 222),
+        ("V2-prof", "V2", 222),
+    )
+    rows: list[dict[str, Any]] = []
+    summaries: dict[str, dict[str, Any]] = {}
+    for name, architecture, frames in measured:
+        summary = _load_summary(results, name)
+        summaries[name] = summary
+        aligned, tokens = _token_count(frames)
+        rows.append(
+            {
+                "run": name,
+                "arch": architecture,
+                "frames": frames,
+                "aligned_frames": aligned,
+                "token_count": tokens,
+                "status": "OK",
+                "step_s": summary["step_s"],
+                "dense_attn_ms": summary.get("dense_attn_ms", 0.0),
+                "window_softmax_ms": summary.get("window_softmax_ms", 0.0),
+                "linear_branch_ms": summary.get("linear_branch_ms", 0.0),
+                "gates_ms": summary.get("gates_ms", 0.0),
+                "other_ms": summary["other_ms"],
+                "notes": "",
+            }
+        )
+    for name, frames in (("V0-294-prof", 294), ("V0-311-prof", 311)):
+        aligned, tokens = _token_count(frames)
+        rows.append(
+            {
+                "run": name,
+                "arch": "V0",
+                "frames": frames,
+                "aligned_frames": aligned,
+                "token_count": tokens,
+                "status": "OOM",
+                "step_s": "",
+                "dense_attn_ms": "",
+                "window_softmax_ms": "",
+                "linear_branch_ms": "",
+                "gates_ms": "",
+                "other_ms": "",
+                "notes": _oom_line(results, name),
+            }
+        )
+
+    csv_path = results / "scaling.csv"
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=tuple(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    dense_rows = [row for row in rows if row["arch"] == "D"]
+    hybrid_rows = [
+        row for row in rows if row["arch"] == "V0" and row["status"] == "OK"
+    ]
+    dense_exponent, dense_r2 = _fit_power(
+        [float(row["token_count"]) for row in dense_rows],
+        [float(row["step_s"]) for row in dense_rows],
+    )
+    hybrid_exponent, hybrid_r2 = _fit_power(
+        [float(row["token_count"]) for row in hybrid_rows],
+        [float(row["step_s"]) for row in hybrid_rows],
+    )
+    linear_exponent, linear_r2 = _fit_power(
+        [float(row["token_count"]) for row in hybrid_rows],
+        [float(row["linear_branch_ms"]) for row in hybrid_rows],
+    )
+    print(f"dense exponent={dense_exponent:.4f}, R²={dense_r2:.4f}")
+    print(
+        f"hybrid exponent={hybrid_exponent:.4f}, R²={hybrid_r2:.4f} "
+        "(two measured points; 294/311 OOM)"
+    )
+    print(
+        f"linear-branch exponent={linear_exponent:.4f}, R²={linear_r2:.4f}"
+    )
+
+    token_x = [float(row["token_count"]) for row in hybrid_rows]
+    time_y = [float(row["step_s"]) for row in hybrid_rows]
+    slope, intercept = _fit_linear(token_x, time_y)
+    _, tokens_345 = _token_count(345)
+    predicted_345 = slope * tokens_345 + intercept
+    dense_345 = summaries["D-345-prof"]["step_s"]
+    table = [
+        "| N | dense s/NFE | V0 s/NFE | speedup | status |",
+        "|---:|---:|---:|---:|---|",
+    ]
+    for dense_name, hybrid_name, frames in (
+        ("D-120-prof", "V0-120-prof", 120),
+        ("D-prof", "V0-prof", 222),
+    ):
+        dense_time = summaries[dense_name]["step_s"]
+        hybrid_time = summaries[hybrid_name]["step_s"]
+        table.append(
+            f"| {frames} | {dense_time:.4f} | {hybrid_time:.4f} | "
+            f"{dense_time / hybrid_time:.3f}× | MEASURED |"
+        )
+    table.extend(
+        [
+            "| 294 | — | OOM | — | MEASURED OOM BOUND |",
+            "| 311 | — | OOM | — | MEASURED OOM BOUND |",
+            f"| 345 | {dense_345:.4f} | {predicted_345:.4f} | "
+            f"{dense_345 / predicted_345:.3f}× | "
+            "EXTRAPOLATED/OOM-BOUNDED |",
+        ]
+    )
+    markdown = results / "speedup_vs_N.md"
+    markdown.write_text("\n".join(table) + "\n")
+    print("\n".join(table))
+    print(f"wrote {csv_path} and {markdown}")
+
+
 def _gpu_is_idle(sample: str) -> bool:
     values = (int(value.strip()) for value in sample.split(","))
     memory_mib, utilization = values
@@ -440,6 +612,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--report-components", action="store_true")
     parser.add_argument("--density", action="store_true")
+    parser.add_argument("--scaling", action="store_true")
     parser.add_argument("--frames", nargs="+", type=int, default=[222, 345])
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
@@ -452,6 +625,9 @@ def main() -> int:
         return 0
     if args.density:
         _report_density(Path(args.results_dir).resolve(), args.frames)
+        return 0
+    if args.scaling:
+        _report_scaling(Path(args.results_dir).resolve())
         return 0
     runs = GROUPS[args.only] if args.only else RUNS
     if args.dry_run:

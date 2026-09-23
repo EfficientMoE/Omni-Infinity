@@ -110,6 +110,7 @@ def test_driver_rejects_busy_gpu():
     assert driver._gpu_is_idle("3, 0")
     assert not driver._gpu_is_idle("90000, 99")
     assert driver.DEFAULT_CKPTS == driver.DEFAULT_VDN / "ckpts"
+    assert driver.GROUPS["V0-294-prof"][0].frames == 294
 
 
 def test_profile_summary_drops_warmups_and_derives_residual():
@@ -153,3 +154,6 @@ def test_density_uses_realized_latent_frames_and_anchor_union():
     assert driver._latent_frames(345) == (345, 102)
     assert driver._latent_frames(222) == (226, 67)
     assert driver._window_density(2) == 1.0
+    exponent, r_squared = driver._fit_power([1, 2, 4], [1, 4, 16])
+    assert exponent == 2.0
+    assert r_squared == 1.0
