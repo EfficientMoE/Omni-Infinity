@@ -274,10 +274,10 @@ def build_command(
         argv.extend(["--block-stream", str(block_stream)])
     if run.params.get("stream_text_encoder"):
         argv.append("--stream-text-encoder")
-    repo = pathlib.Path(__file__).resolve().parents[1]
-    goldens = repo / "tests/fixtures/vdn_goldens/vdn_goldens.pt"
-    if not run.params.get("fp8") and goldens.exists():
-        argv.extend(["--goldens", str(goldens)])
+    # No --goldens in grid runs: the fixture is 120-frame; grid runs
+    # are 222-frame (temporal dims differ -> hard shape error). Bitwise
+    # parity is covered by tests/test_vdn_parity.py and the streaming
+    # parity check in docs/repro_vdn.md instead.
     argv.extend(["--metrics-out", str(results / f"{run.name}.metrics.json")])
     return argv
 
