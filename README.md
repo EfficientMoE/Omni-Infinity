@@ -44,6 +44,35 @@ step-synchronous loop, not shared with MoE-Infinity.
   sparse-attention inference (the H3 open release supports full attention
   only).
 
+## Model archs & optimizations
+
+Two orthogonal category axes (`omni_infinity/registry.py`) describe every
+supported configuration; the smoke CLIs and the ablation harness
+(`benchmarks/ablation_vdn.py`) resolve their flags through the registry.
+
+| model-arch | runner | checkpoint |
+|---|---|---|
+| `h3-dense` | `omni_infinity.runner.ReferenceRunner` | `MiniMaxAI/MiniMax-H3` |
+| `vdn-hybrid` | `omni_infinity.arch.vdn.VdnRunner` | `OpenVDN/vdn-minimax-h3` (Hub repo-id only — see the cross-repo `trust_remote_code` note in [docs/repro_vdn.md](docs/repro_vdn.md)) |
+
+| optimization | h3-dense | vdn-hybrid |
+|---|:---:|:---:|
+| `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
+| `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
+| `block-stream` (transformer block_level group offload) | ✓ | ✓ |
+| `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
+
+`vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
+[OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
+pinned at `third_party/vdn-minimax-h3`): a frame-wise linear-attention
+branch + window softmax + two merged LoRA adapters on the frozen H3
+backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
+[docs/repro_vdn.md](docs/repro_vdn.md) — dense→hybrid+fp8 **2.15×**
+per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
+streaming ~20 GiB peak. Ablation study:
+[docs/ablation_vdn.md](docs/ablation_vdn.md). Tracking:
+[#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
+
 ## Status
 
 Bootstrap in progress — see the
