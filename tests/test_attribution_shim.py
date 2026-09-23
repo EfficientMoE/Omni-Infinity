@@ -35,6 +35,7 @@ def test_shim_imports_without_upstream_package(monkeypatch):
 
     assert module.UPSTREAM_PATCH_TARGETS
     assert "src" not in sys.modules
+    assert module._module_range_name("MiniMaxH3Attention") == "dense_attn"
 
 
 def test_range_accounting_sums_mock_cuda_events():
@@ -109,3 +110,28 @@ def test_driver_rejects_busy_gpu():
     assert driver._gpu_is_idle("3, 0")
     assert not driver._gpu_is_idle("90000, 99")
     assert driver.DEFAULT_CKPTS == driver.DEFAULT_VDN / "ckpts"
+
+
+def test_profile_summary_drops_warmups_and_derives_residual():
+    driver_path = (
+        Path(__file__).parents[1] / "benchmarks" / "attribution_vdn.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "attribution_vdn_summary",
+        driver_path,
+    )
+    assert spec is not None and spec.loader is not None
+    driver = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = driver
+    spec.loader.exec_module(driver)
+    step = {
+        "step_total": {"total_ms": 1000.0, "calls": 1},
+        "dense_attn": {"total_ms": 800.0, "calls": 52},
+        "linear_calls": {"total_ms": 0.0, "calls": 370},
+    }
+
+    summary = driver._summarize_steps([step, step, step], [1.02], warmups=2)
+
+    assert summary["step_total_ms"] == 1000.0
+    assert summary["other_ms"] == 200.0
+    assert summary["ratios"] == [1000.0 / 1020.0]

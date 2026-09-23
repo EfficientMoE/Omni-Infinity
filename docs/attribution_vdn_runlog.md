@@ -1129,3 +1129,506 @@ a5d14e0 feat(smoke): vdn_smoke CLI + vdn-hybrid parity gate (#10)
 9e0a922 feat: VdnRunner - vdn-hybrid arch over the published diffusers component (#10)
 ```
 </details>
+
+### 2026-09-23T09:45:19.299227+00:00 — Task 1 commit
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && GIT_MASTER=1 git add benchmarks/attribution_vdn.py benchmarks/vdn_prof_shim/sitecustomize.py tests/test_attribution_shim.py docs/attribution_vdn_runlog.md && GIT_MASTER=1 git diff --staged --stat && GIT_MASTER=1 git commit -m "feat(bench): profiler shim + attribution driver (#10)" -m "Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-openagent)" -m "Co-authored-by: Sisyphus <clio-agent@sisyphuslabs.ai>" && GIT_MASTER=1 git log -1 --oneline`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `19cbd258b4dadd424b4c51f7d3fa1079881ab773`
+- **Wall time:** 0.021 s
+- **Artifacts:** git commit, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 1 commit: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+ benchmarks/attribution_vdn.py             |  279 +++++++
+ benchmarks/vdn_prof_shim/sitecustomize.py |  200 +++++
+ docs/attribution_vdn_runlog.md            | 1131 +++++++++++++++++++++++++++++
+ tests/test_attribution_shim.py            |  111 +++
+ 4 files changed, 1721 insertions(+)
+[feat/vdn-minimax-h3 52c3365] feat(bench): profiler shim + attribution driver (#10)
+ 4 files changed, 1721 insertions(+)
+ create mode 100644 benchmarks/attribution_vdn.py
+ create mode 100644 benchmarks/vdn_prof_shim/sitecustomize.py
+ create mode 100644 docs/attribution_vdn_runlog.md
+ create mode 100644 tests/test_attribution_shim.py
+52c3365 feat(bench): profiler shim + attribution driver (#10)
+```
+</details>
+
+### 2026-09-23T09:52:39.283903+00:00 — GPU D-prof
+
+- **Command:** `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe.yaml checkpoint=null render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3`
+- **GPU index + model:** 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 420.003 s
+- **Artifacts:** /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4.inference.json, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.log, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.ranges.json
+- **Outcome:** D-prof: exit 0
+
+### 2026-09-23T09:45:39.072213+00:00 — Task 2 D-prof GPU run
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES=0 PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_RUNLOG=/mnt/raid0nvme0/leyang/Omni-Infinity/docs/attribution_vdn_runlog.md && python benchmarks/attribution_vdn.py --only D-prof --gpu 0`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** 0; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 420.167 s
+- **Artifacts:** results/vdn/attribution/D-prof.{log,mp4,inference.json,ranges.json}, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 D-prof GPU run: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+GPU idle check: 0, NVIDIA RTX PRO 6000 Blackwell Server Edition; memory/utilization=3, 0
+run D-prof: CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe.yaml checkpoint=null render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+poll D-prof: pid=2366104 running
+completed D-prof in 420.0s; log=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.log
+```
+</details>
+
+### 2026-09-23T09:58:45.012264+00:00 — GPU V0-prof
+
+- **Command:** `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe.yaml checkpoint=/mnt/raid0nvme0/leyang/ckpts/vdn/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3`
+- **GPU index + model:** 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 360.003 s
+- **Artifacts:** /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.mp4.inference.json, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.log, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.mp4, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.ranges.json
+- **Outcome:** V0-prof: exit 0
+
+### 2026-09-23T09:52:44.797638+00:00 — Task 2 V0-prof GPU run
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES=0 PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_RUNLOG=/mnt/raid0nvme0/leyang/Omni-Infinity/docs/attribution_vdn_runlog.md && python benchmarks/attribution_vdn.py --only V0-prof --gpu 0`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** 0; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 360.172 s
+- **Artifacts:** results/vdn/attribution/V0-prof.{log,mp4,inference.json,ranges.json}, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 V0-prof GPU run: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+GPU idle check: 0, NVIDIA RTX PRO 6000 Blackwell Server Edition; memory/utilization=3, 0
+run V0-prof: CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe.yaml checkpoint=/mnt/raid0nvme0/leyang/ckpts/vdn/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+poll V0-prof: pid=2371240 running
+completed V0-prof in 360.0s; log=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V0-prof.log
+```
+</details>
+
+### 2026-09-23T10:04:19.941521+00:00 — GPU V1-prof
+
+- **Command:** `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe_tuned.yaml checkpoint=/mnt/raid0nvme0/leyang/ckpts/vdn/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3`
+- **GPU index + model:** 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 330.003 s
+- **Artifacts:** /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.mp4.inference.json, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.log, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.mp4, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.ranges.json
+- **Outcome:** V1-prof: exit 0
+
+### 2026-09-23T09:58:49.716519+00:00 — Task 2 V1-prof GPU run
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES=0 PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_RUNLOG=/mnt/raid0nvme0/leyang/Omni-Infinity/docs/attribution_vdn_runlog.md && python benchmarks/attribution_vdn.py --only V1-prof --gpu 0`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** 0; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 330.180 s
+- **Artifacts:** results/vdn/attribution/V1-prof.{log,mp4,inference.json,ranges.json}, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 V1-prof GPU run: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+GPU idle check: 0, NVIDIA RTX PRO 6000 Blackwell Server Edition; memory/utilization=3, 0
+run V1-prof: CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe_tuned.yaml checkpoint=/mnt/raid0nvme0/leyang/ckpts/vdn/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+poll V1-prof: pid=2376095 running
+completed V1-prof in 330.0s; log=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V1-prof.log
+```
+</details>
+
+### 2026-09-23T10:08:57.003290+00:00 — GPU V2-prof
+
+- **Command:** `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe_tuned_fp8.yaml checkpoint=/mnt/raid0nvme0/leyang/ckpts/vdn/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3`
+- **GPU index + model:** 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 270.002 s
+- **Artifacts:** /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.mp4.inference.json, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.log, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.mp4, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.ranges.json
+- **Outcome:** V2-prof: exit 0
+
+### 2026-09-23T10:04:26.783533+00:00 — Task 2 V2-prof GPU run
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES=0 PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_RUNLOG=/mnt/raid0nvme0/leyang/Omni-Infinity/docs/attribution_vdn_runlog.md && python benchmarks/attribution_vdn.py --only V2-prof --gpu 0`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** 0; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 270.176 s
+- **Artifacts:** results/vdn/attribution/V2-prof.{log,mp4,inference.json,ranges.json}, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 V2-prof GPU run: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+GPU idle check: 0, NVIDIA RTX PRO 6000 Blackwell Server Edition; memory/utilization=3, 0
+run V2-prof: CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe_tuned_fp8.yaml checkpoint=/mnt/raid0nvme0/leyang/ckpts/vdn/stage-dmd-step-250 render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+poll V2-prof: pid=2385914 running
+completed V2-prof in 270.0s; log=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/V2-prof.log
+```
+</details>
+
+### 2026-09-23T10:09:31.159897+00:00 — Task 2 dense module fallback RED
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py::test_shim_imports_without_upstream_package -v`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.166 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 dense module fallback RED: exit 1
+
+<details><summary>Verbatim output</summary>
+
+```text
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /mnt/raid0nvme0/leyang/envs/vdn/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/raid0nvme0/leyang/Omni-Infinity
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+collecting ... collected 1 item
+
+tests/test_attribution_shim.py::test_shim_imports_without_upstream_package FAILED [100%]
+
+=================================== FAILURES ===================================
+__________________ test_shim_imports_without_upstream_package __________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x710552e9a4b0>
+
+    def test_shim_imports_without_upstream_package(monkeypatch):
+        monkeypatch.delitem(sys.modules, "src", raising=False)
+    
+        module = _load_shim()
+    
+        assert module.UPSTREAM_PATCH_TARGETS
+        assert "src" not in sys.modules
+>       assert module._module_range_name("MiniMaxH3Attention") == "dense_attn"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'vdn_prof_sitecustomize' has no attribute '_module_range_name'
+
+tests/test_attribution_shim.py:38: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_attribution_shim.py::test_shim_imports_without_upstream_package
+============================== 1 failed in 0.02s ===============================
+```
+</details>
+
+### 2026-09-23T10:10:01.562984+00:00 — Task 2 dense module fallback GREEN
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py -v`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.159 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 dense module fallback GREEN: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /mnt/raid0nvme0/leyang/envs/vdn/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/raid0nvme0/leyang/Omni-Infinity
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+collecting ... collected 4 items
+
+tests/test_attribution_shim.py::test_shim_imports_without_upstream_package PASSED [ 25%]
+tests/test_attribution_shim.py::test_range_accounting_sums_mock_cuda_events PASSED [ 50%]
+tests/test_attribution_shim.py::test_linear_branch_accounting_subtracts_only_its_own_gate PASSED [ 75%]
+tests/test_attribution_shim.py::test_driver_rejects_busy_gpu PASSED      [100%]
+
+============================== 4 passed in 0.01s ===============================
+```
+</details>
+
+### 2026-09-23T10:17:06.657118+00:00 — GPU D-prof
+
+- **Command:** `CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe.yaml checkpoint=null render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity/third_party/vdn-minimax-h3`
+- **GPU index + model:** 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 420.003 s
+- **Artifacts:** /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4.inference.json, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.log, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4, /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.ranges.json
+- **Outcome:** D-prof: exit 0
+
+### 2026-09-23T10:10:06.430071+00:00 — Task 2 D-prof module-boundary fallback rerun
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES=0 PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_RUNLOG=/mnt/raid0nvme0/leyang/Omni-Infinity/docs/attribution_vdn_runlog.md && python benchmarks/attribution_vdn.py --only D-prof --gpu 0 --force`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** 0; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 420.182 s
+- **Artifacts:** results/vdn/attribution/D-prof.{log,mp4,inference.json,ranges.json}, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 D-prof module-boundary fallback rerun: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+GPU idle check: 0, NVIDIA RTX PRO 6000 Blackwell Server Edition; memory/utilization=3, 0
+run D-prof: CUDA_VISIBLE_DEVICES=0 PYTHONPATH=/mnt/raid0nvme0/leyang/Omni-Infinity/benchmarks/vdn_prof_shim HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface VDN_PROF_OUT=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.ranges.json python src/inference/infer.py --config configs/inference/8nfe.yaml checkpoint=null render.prompt_file=prompts/example_0.pt render.out=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.mp4 render.num_frames=222 render.seed=0 render.warmup_steps=2 render.record=true render.save_latents=false
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+poll D-prof: pid=2390652 running
+completed D-prof in 420.0s; log=/mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/D-prof.log
+```
+</details>
+
+### 2026-09-23T10:17:26.234607+00:00 — Task 2 report RED
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py::test_profile_summary_drops_warmups_and_derives_residual -v`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.173 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 report RED: exit 1
+
+<details><summary>Verbatim output</summary>
+
+```text
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /mnt/raid0nvme0/leyang/envs/vdn/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/raid0nvme0/leyang/Omni-Infinity
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+collecting ... collected 1 item
+
+tests/test_attribution_shim.py::test_profile_summary_drops_warmups_and_derives_residual FAILED [100%]
+
+=================================== FAILURES ===================================
+___________ test_profile_summary_drops_warmups_and_derives_residual ____________
+
+    def test_profile_summary_drops_warmups_and_derives_residual():
+        driver_path = (
+            Path(__file__).parents[1] / "benchmarks" / "attribution_vdn.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "attribution_vdn_summary",
+            driver_path,
+        )
+        assert spec is not None and spec.loader is not None
+        driver = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = driver
+        spec.loader.exec_module(driver)
+        step = {
+            "step_total": {"total_ms": 1000.0, "calls": 1},
+            "dense_attn": {"total_ms": 800.0, "calls": 52},
+            "linear_calls": {"total_ms": 0.0, "calls": 370},
+        }
+    
+>       summary = driver._summarize_steps([step, step, step], [1.02], warmups=2)
+                  ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'attribution_vdn_summary' has no attribute '_summarize_steps'
+
+tests/test_attribution_shim.py:133: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_attribution_shim.py::test_profile_summary_drops_warmups_and_derives_residual
+============================== 1 failed in 0.02s ===============================
+```
+</details>
+
+### 2026-09-23T10:18:06.388236+00:00 — Task 2 report GREEN
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py::test_profile_summary_drops_warmups_and_derives_residual -v`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.159 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 report GREEN: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /mnt/raid0nvme0/leyang/envs/vdn/bin/python
+cachedir: .pytest_cache
+rootdir: /mnt/raid0nvme0/leyang/Omni-Infinity
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.15.1
+collecting ... collected 1 item
+
+tests/test_attribution_shim.py::test_profile_summary_drops_warmups_and_derives_residual PASSED [100%]
+
+============================== 1 passed in 0.01s ===============================
+```
+</details>
+
+### 2026-09-23T10:18:11.839504+00:00 — Task 2 component QA
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python benchmarks/attribution_vdn.py --report-components`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.044 s
+- **Artifacts:** results/vdn/attribution/components.csv, docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 component QA: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+D-prof: step_total/step_seconds [0.9999, 0.9999] components_ms dense=29812.8 window=0.0 linear=0.0 gates=0.0 other=6055.4
+V0-prof: step_total/step_seconds [0.9999, 0.9999] components_ms dense=0.0 window=9037.1 linear=2701.1 gates=174.1 other=11286.6
+V1-prof: step_total/step_seconds [0.9999, 0.9999] components_ms dense=0.0 window=8374.2 linear=1726.2 gates=174.2 other=9595.6
+V2-prof: step_total/step_seconds [0.9999, 0.9999] components_ms dense=0.0 window=8358.7 linear=1723.9 gates=174.7 other=5672.9
+dense attention share = 83.12%
+per-layer-equivalent ms (50 main blocks): D-prof=717.36, V0-prof=463.98, V1-prof=397.40, V2-prof=318.60
+shape ratios: dense/hybrid=1.55x, hybrid/tuned=1.17x, tuned/fp8=1.25x; paper B200 dense/hybrid=1.73x, hybrid/(kernels+fp8)=1.53x
+wrote /mnt/raid0nvme0/leyang/Omni-Infinity/results/vdn/attribution/components.csv
+```
+</details>
+
+### 2026-09-23T10:18:21.811797+00:00 — Task 2 regression QA
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py -q && ruff check benchmarks/ tests/test_attribution_shim.py`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.177 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 regression QA: exit 1
+
+<details><summary>Verbatim output</summary>
+
+```text
+.....                                                                    [100%]
+5 passed in 0.01s
+benchmarks/attribution_vdn.py:95:81: E501 Line too long (82 > 80)
+   |
+93 |     if len(measured) != len(step_seconds):
+94 |         raise ValueError(
+95 |             f"{len(measured)} measured ranges != {len(step_seconds)} step timings"
+   |                                                                                 ^^ E501
+96 |         )
+97 |     range_names = set().union(*(step.keys() for step in measured))
+   |
+
+Found 1 error.
+```
+</details>
+
+### 2026-09-23T10:18:34.433408+00:00 — Task 2 regression QA retry
+
+- **Command:** `source /mnt/raid0nvme0/leyang/envs/vdn/bin/activate && export CUDA_VISIBLE_DEVICES="" PYTHONPATH="" HF_HOME=/mnt/raid0nvme0/leyang/.cache/huggingface && python -m pytest tests/test_attribution_shim.py -q && ruff check benchmarks/ tests/test_attribution_shim.py`
+- **CWD:** `/mnt/raid0nvme0/leyang/Omni-Infinity`
+- **GPU index + model:** ""; 0, NVIDIA RTX PRO 6000 Blackwell Server Edition
+1, NVIDIA RTX PRO 6000 Blackwell Server Edition
+2, NVIDIA RTX PRO 6000 Blackwell Server Edition
+3, NVIDIA RTX PRO 6000 Blackwell Server Edition
+4, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+5, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition
+- **Git SHA:** `52c3365914720a4eaacb7c5099f17d9437464966`
+- **Wall time:** 0.186 s
+- **Artifacts:** docs/attribution_vdn_runlog.md
+- **Outcome:** Task 2 regression QA retry: exit 0
+
+<details><summary>Verbatim output</summary>
+
+```text
+.....                                                                    [100%]
+5 passed in 0.01s
+All checks passed!
+```
+</details>

@@ -129,6 +129,16 @@ def _timed_method(method: Callable[..., Any], range_name: str):
     return wrapped
 
 
+def _module_range_name(class_name: str) -> str | None:
+    return {
+        "MiniMaxH3Attention": "dense_attn",
+        "MiniMaxH3Transformer3DModel": "step_total",
+        "VDNMiniMaxH3Transformer3DModel": "step_total",
+        "BidirectionalLinearBranch": "linear_branch",
+        "OutputGate": "gates",
+    }.get(class_name)
+
+
 def _patch_loaded_modules() -> None:
     hybrid = sys.modules.get("src.models.hybrid_attention")
     if hybrid is not None and hasattr(hybrid, "HybridAttention"):
@@ -160,13 +170,15 @@ def _install() -> None:
 
     def module_call(module: Any, *args: Any, **kwargs: Any):
         class_name = type(module).__name__
-        ranges = {
-            "MiniMaxH3Transformer3DModel": "step_total",
-            "VDNMiniMaxH3Transformer3DModel": "step_total",
-            "BidirectionalLinearBranch": "linear_branch",
-            "OutputGate": "gates",
-        }
-        range_name = ranges.get(class_name)
+        range_name = _module_range_name(class_name)
+        processor = getattr(module, "processor", None)
+        processor_call = getattr(type(processor), "__call__", None)
+        if range_name == "dense_attn" and getattr(
+            processor_call,
+            "_vdn_prof_wrapped",
+            False,
+        ):
+            range_name = None
         if range_name is None:
             return original_module_call(module, *args, **kwargs)
         assert _ACCOUNTING is not None
