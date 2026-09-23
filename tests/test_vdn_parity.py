@@ -33,7 +33,14 @@ def test_vdn_bf16_reproduces_goldens_bitwise():
             "goldens recorded on a different GPU model; bitwise "
             "parity is only guaranteed on the same model"
         )
-    runner = VdnRunner.from_pretrained(CHECKPOINT)
+    runner = VdnRunner.from_pretrained(
+        CHECKPOINT,
+        # 66 GB transformer resident; encoder leaf-streamed and
+        # decoders hooked (bitwise-safe device-only moves) so the
+        # full component set fits a 96 GB card.
+        offload=True,
+        stream_text_encoder=True,
+    )
     result = runner.generate(
         golden["prompt"],
         seed=golden["seed"],
