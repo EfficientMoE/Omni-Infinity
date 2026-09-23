@@ -21,7 +21,6 @@ def test_categories_are_disjoint_and_complete():
     assert not arch_names & opt_names
 
 
-@pytest.mark.xfail(reason="VdnRunner lands in Task 2.2", strict=True)
 def test_arch_specs_point_at_importable_runners():
     for spec in registry.ARCHS.values():
         cls = registry.runner_class(spec)

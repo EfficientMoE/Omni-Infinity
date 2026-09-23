@@ -7,6 +7,7 @@
 - ``vdn-hybrid`` -> :class:`omni_infinity.arch.vdn.VdnRunner`
 """
 
+from omni_infinity.arch.vdn import VdnRunner
 from omni_infinity.runner import ReferenceRunner
 
-__all__ = ["ReferenceRunner"]
+__all__ = ["ReferenceRunner", "VdnRunner"]
