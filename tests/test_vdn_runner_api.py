@@ -58,9 +58,7 @@ def test_fp8_and_backend_are_per_component(fake):
         fp8=True, softmax_backend="decomposed", device="cpu"
     )
     assert fake.load_kwargs["fp8"] == {"transformer": True}
-    assert fake.load_kwargs["softmax_backend"] == {
-        "transformer": "decomposed"
-    }
+    assert fake.load_kwargs["softmax_backend"] == {"transformer": "decomposed"}
 
 
 def test_block_stream_requires_offload(fake):

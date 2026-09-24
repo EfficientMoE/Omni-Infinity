@@ -119,9 +119,7 @@ def _summarize_steps(
 
 def _load_summary(results: Path, name: str) -> dict[str, Any]:
     ranges = json.loads((results / f"{name}.ranges.json").read_text())["nfes"]
-    record = json.loads(
-        (results / f"{name}.mp4.inference.json").read_text()
-    )
+    record = json.loads((results / f"{name}.mp4.inference.json").read_text())
     seconds = [float(value) for value in record["timings"]["step_seconds"]]
     return _summarize_steps(ranges, seconds)
 
@@ -282,15 +280,17 @@ def _fit_power(
     x_mean = statistics.mean(x_log)
     y_mean = statistics.mean(y_log)
     denominator = sum((value - x_mean) ** 2 for value in x_log)
-    slope = sum(
-        (x_value - x_mean) * (y_value - y_mean)
-        for x_value, y_value in zip(x_log, y_log)
-    ) / denominator
+    slope = (
+        sum(
+            (x_value - x_mean) * (y_value - y_mean)
+            for x_value, y_value in zip(x_log, y_log)
+        )
+        / denominator
+    )
     intercept = y_mean - slope * x_mean
     predicted = [intercept + slope * value for value in x_log]
     residual = sum(
-        (actual - estimate) ** 2
-        for actual, estimate in zip(y_log, predicted)
+        (actual - estimate) ** 2 for actual, estimate in zip(y_log, predicted)
     )
     total = sum((actual - y_mean) ** 2 for actual in y_log)
     r_squared = 1.0 - residual / total if total else 1.0
@@ -404,9 +404,7 @@ def _report_scaling(results: Path) -> None:
         f"hybrid exponent={hybrid_exponent:.4f}, R²={hybrid_r2:.4f} "
         "(two measured points; 294/311 OOM)"
     )
-    print(
-        f"linear-branch exponent={linear_exponent:.4f}, R²={linear_r2:.4f}"
-    )
+    print(f"linear-branch exponent={linear_exponent:.4f}, R²={linear_r2:.4f}")
 
     token_x = [float(row["token_count"]) for row in hybrid_rows]
     time_y = [float(row["step_s"]) for row in hybrid_rows]
