@@ -51,3 +51,23 @@ def test_runner_kwargs_for_merges_optimizations():
 def test_runner_kwargs_for_rejects_unsupported_pair():
     with pytest.raises(ValueError, match="adaln-host-cache"):
         registry.runner_kwargs_for("vdn-hybrid", ["adaln-host-cache"])
+
+
+def test_runner_kwargs_for_uses_arch_specific_fp8_names():
+    dense = registry.runner_kwargs_for("h3-dense", ["fp8"])
+    hybrid = registry.runner_kwargs_for("vdn-hybrid", ["fp8"])
+    assert dense == {"transformer_fp8": True}
+    assert hybrid == {"fp8": True}
+
+
+def test_resolve_profile_returns_runner_checkpoint_and_merged_kwargs():
+    profile = registry.resolve_profile(
+        "h3-dense", ["adaln-host-cache", "block-stream"]
+    )
+    assert profile.runner is registry.runner_class(registry.ARCHS["h3-dense"])
+    assert profile.checkpoint == "MiniMaxAI/MiniMax-H3"
+    assert profile.runner_kwargs == {
+        "adaln_host_cache": True,
+        "offload": True,
+        "block_stream_blocks_per_group": 1,
+    }

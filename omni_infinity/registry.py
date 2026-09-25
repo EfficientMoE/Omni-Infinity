@@ -44,7 +44,16 @@ class OptimizationSpec:
     name: str
     description: str
     supported_archs: tuple[str, ...]
-    runner_kwargs: MappingProxyType
+    runner_kwargs_by_arch: MappingProxyType
+
+
+@dataclasses.dataclass(frozen=True)
+class ResolvedProfile:
+    model_arch: str
+    optimizations: tuple[str, ...]
+    runner: type
+    checkpoint: str
+    runner_kwargs: dict
 
 
 def _kw(**kwargs) -> MappingProxyType:
@@ -74,7 +83,9 @@ OPTIMIZATIONS = {
         name="adaln-host-cache",
         description="Host-resident AdaLN branch cache from a moe-store.",
         supported_archs=("h3-dense",),
-        runner_kwargs=_kw(adaln_host_cache=True),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(adaln_host_cache=True)}
+        ),
     ),
     "fp8": OptimizationSpec(
         name="fp8",
@@ -83,7 +94,12 @@ OPTIMIZATIONS = {
             "store path; vdn-hybrid: upstream torchao preset)."
         ),
         supported_archs=("h3-dense", "vdn-hybrid"),
-        runner_kwargs=_kw(fp8=True),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(transformer_fp8=True),
+                "vdn-hybrid": _kw(fp8=True),
+            }
+        ),
     ),
     "block-stream": OptimizationSpec(
         name="block-stream",
@@ -92,13 +108,25 @@ OPTIMIZATIONS = {
             "a time (diffusers block_level group offload)."
         ),
         supported_archs=("h3-dense", "vdn-hybrid"),
-        runner_kwargs=_kw(offload=True, block_stream_blocks_per_group=1),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(offload=True, block_stream_blocks_per_group=1),
+                "vdn-hybrid": _kw(
+                    offload=True, block_stream_blocks_per_group=1
+                ),
+            }
+        ),
     ),
     "text-encoder-stream": OptimizationSpec(
         name="text-encoder-stream",
         description=("Leaf-level streaming of the Qwen3-VL text encoder."),
         supported_archs=("h3-dense", "vdn-hybrid"),
-        runner_kwargs=_kw(offload=True, stream_text_encoder=True),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(offload=True, stream_text_encoder=True),
+                "vdn-hybrid": _kw(offload=True, stream_text_encoder=True),
+            }
+        ),
     ),
 }
 
@@ -126,5 +154,25 @@ def runner_kwargs_for(arch: str, optimizations) -> dict:
             raise ValueError(
                 f"optimization {name!r} does not support arch {arch!r}"
             )
-        merged.update(spec.runner_kwargs)
+        merged.update(spec.runner_kwargs_by_arch[arch])
     return merged
+
+
+def resolve_profile(
+    arch: str,
+    optimizations,
+    checkpoint: str | None = None,
+) -> ResolvedProfile:
+    if arch not in ARCHS:
+        raise ValueError(f"unknown arch {arch!r}")
+    names = tuple(optimizations)
+    if len(set(names)) != len(names):
+        raise ValueError("optimization names must be unique")
+    spec = ARCHS[arch]
+    return ResolvedProfile(
+        model_arch=arch,
+        optimizations=names,
+        runner=runner_class(spec),
+        checkpoint=checkpoint or spec.default_checkpoint,
+        runner_kwargs=runner_kwargs_for(arch, names),
+    )

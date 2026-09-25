@@ -16,9 +16,13 @@ fixtures for the parity gate in ``tests/test_reference_parity.py``.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 
 import torch
+
+StepCallback = Callable[[int, int], None]
 
 
 def _transformer_component(pipeline, component_name="transformer"):
@@ -33,6 +37,31 @@ def _transformer_component(pipeline, component_name="transformer"):
         if component is not None:
             return component
     raise AttributeError("could not locate the transformer on the pipeline")
+
+
+@contextmanager
+def _denoising_progress(
+    pipeline,
+    total_steps: int,
+    callback: StepCallback | None,
+    component_name: str = "transformer",
+):
+    if callback is None:
+        yield
+        return
+    completed = 0
+
+    def after_transformer_forward(module, args, output):
+        nonlocal completed
+        completed += 1
+        callback(min(completed, total_steps), total_steps)
+
+    transformer = _transformer_component(pipeline, component_name)
+    handle = transformer.register_forward_hook(after_transformer_forward)
+    try:
+        yield
+    finally:
+        handle.remove()
 
 
 def _enable_block_streaming(
@@ -66,21 +95,45 @@ def _APPLY_GROUP_OFFLOADING(module, **kwargs):
     apply_group_offloading(module, **kwargs)
 
 
+def _encoder_layer_host(pipeline):
+    # Submodule whose direct child is the longest ModuleList (the decoder
+    # layers). block_level group offload must target it: the layers are nested
+    # (Qwen3-VL: model.language_model.layers), not a direct child of the top
+    # encoder. Dynamic lookup avoids hardcoding a transformers-version path.
+    encoder = pipeline.text_encoder
+    best_module, best_len = None, -1
+    for _name, module in encoder.named_modules():
+        for child in module.children():
+            if isinstance(child, torch.nn.ModuleList) and len(child) > best_len:
+                best_module, best_len = module, len(child)
+    if best_module is None:
+        raise AttributeError("no decoder-layer ModuleList on the text encoder")
+    return best_module
+
+
 def _stream_text_encoder(pipeline, device):
-    # bf16 leaf-level streaming of the complete Qwen3-VL encoder: device-only
+    # bf16 leaf-level streaming of the Qwen3-VL decoder subtree: device-only
     # moves, so prompt embeds (and thus latents) stay parity-identical. Ref2VA
-    # also executes the visual patch embedder, so streaming only the decoder
-    # subtree leaves its convolution on CPU. leaf_level hooks every executable
-    # leaf, including visual modules and embed_tokens.
-    _APPLY_GROUP_OFFLOADING(
-        pipeline.text_encoder,
-        onload_device=torch.device(device),
-        offload_device=torch.device("cpu"),
-        offload_type="leaf_level",
-        use_stream=True,
-        record_stream=False,
-        low_cpu_mem_usage=False,
-    )
+    # also executes the visual patch embedder, which may be nested under the
+    # encoder model rather than exposed directly on the text encoder.
+    # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
+    # so each self-onloads when it runs; block_level leaves the embedding on the
+    # offload device and the first token lookup hits a device mismatch.
+    kwargs = {
+        "onload_device": torch.device(device),
+        "offload_device": torch.device("cpu"),
+        "offload_type": "leaf_level",
+        "use_stream": True,
+        "record_stream": False,
+        "low_cpu_mem_usage": False,
+    }
+    _APPLY_GROUP_OFFLOADING(_encoder_layer_host(pipeline), **kwargs)
+    visual = getattr(pipeline.text_encoder, "visual", None)
+    if visual is None:
+        model = getattr(pipeline.text_encoder, "model", None)
+        visual = getattr(model, "visual", None)
+    if visual is not None:
+        _APPLY_GROUP_OFFLOADING(visual, **kwargs)
 
 
 RESOLUTIONS = {
@@ -161,9 +214,15 @@ def resolve_resolution(resolution: str) -> tuple[int, int]:
 class ReferenceRunner:
     """Full-resident H3-Base FL2VA text-to-audio/video reference path."""
 
-    def __init__(self, pipeline, overlap_controller=None):
+    def __init__(
+        self,
+        pipeline,
+        overlap_controller=None,
+        transformer_component: str = "transformer",
+    ):
         self.pipeline = pipeline
         self.overlap_controller = overlap_controller
+        self.transformer_component = transformer_component
 
     @classmethod
     def from_pretrained(
@@ -303,7 +362,11 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
-        return cls(pipeline, overlap_controller=overlap_controller)
+        return cls(
+            pipeline,
+            overlap_controller=overlap_controller,
+            transformer_component=transformer_component,
+        )
 
     def generate(
         self,
@@ -315,21 +378,34 @@ class ReferenceRunner:
         num_frames: int = 8,
         output_type: str = "np",
         references: list[Any] | None = None,
+        image: Any = None,
+        last_image: Any = None,
+        step_callback: StepCallback | None = None,
     ) -> GenerationResult:
         height, width = resolve_resolution(resolution)
         generator = torch.Generator(device="cpu").manual_seed(seed)
-        pipeline_kwargs = dict(
-            prompt=prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            num_inference_steps=num_inference_steps,
-            generator=generator,
-            output_type=output_type,
-        )
+        call_kwargs = {
+            "prompt": prompt,
+            "height": height,
+            "width": width,
+            "num_frames": num_frames,
+            "num_inference_steps": num_inference_steps,
+            "generator": generator,
+            "output_type": output_type,
+        }
+        if image is not None:
+            call_kwargs["image"] = image
+        if last_image is not None:
+            call_kwargs["last_image"] = last_image
         if references is not None:
-            pipeline_kwargs["references"] = references
-        state = self.pipeline(**pipeline_kwargs)
+            call_kwargs["references"] = references
+        with _denoising_progress(
+            self.pipeline,
+            num_inference_steps,
+            step_callback,
+            self.transformer_component,
+        ):
+            state = self.pipeline(**call_kwargs)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

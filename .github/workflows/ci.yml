@@ -28,7 +28,7 @@ jobs:
           python-version: "3.12"
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: pip install --no-deps 'moe-store @ git+https://github.com/EfficientMoE/moe-store.git@v0.2.1'
-      - run: pip install diffusers transformers pytest pytest-timeout
-      - run: pip install --no-deps -e .
+      - run: pip install diffusers transformers
+      - run: pip install -e '.[dev]'
       - run: python -c "import omni_infinity; print(omni_infinity.__version__)"
       - run: pytest tests/ -q --timeout 300

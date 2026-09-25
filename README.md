@@ -169,6 +169,110 @@ python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
     --goldens tests/fixtures/goldens/fl2va_goldens.pt
 ```
 
+## Job-serving API
+
+Install the optional serving stack:
+
+```bash
+pip install -e '.[serve]'
+```
+
+The server loads one immutable registry profile at startup and reuses that
+runner for every job. GPU generation is serialized through one in-process
+worker; requests for a different model architecture or optimization set
+return HTTP 409 rather than loading another pipeline.
+
+Example startup for the streamed dense profile and a 22 GiB budget:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+HF_HOME=/mnt/raid0nvme0/leyang/hf-home \
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+OMNI_CHECKPOINT=/mnt/raid0nvme0/leyang/hf-home/hub/models--MiniMaxAI--MiniMax-H3/snapshots/42ed227ee7df40d41602854ae760620d6eb651fe \
+OMNI_STORE_DIR=/mnt/raid0nvme0/leyang/h3-store-v2 \
+OMNI_STORE_COMPONENTS=transformer,vae,audio_vae \
+OMNI_MODEL_ARCH=h3-dense \
+OMNI_OPTIMIZATIONS=adaln-host-cache,block-stream,text-encoder-stream \
+OMNI_MAX_VRAM=22GiB \
+OMNI_JOBS_DIR=./jobs \
+OMNI_HOST=127.0.0.1 \
+OMNI_PORT=8000 \
+python -m omni_infinity.serve
+```
+
+`OMNI_HOST`, `OMNI_PORT`, and `OMNI_JOBS_DIR` default to `127.0.0.1`,
+`8000`, and `./jobs`. The checkpoint and store variables are optional in the
+configuration schema but are required for the offline streamed recipe above.
+
+Create and poll an FL2VA job:
+
+```bash
+curl -i http://127.0.0.1:8000/v1/jobs \
+  -H 'content-type: application/json' \
+  -d '{
+    "type": "fl2va",
+    "prompt": "a red ball bouncing",
+    "model_arch": "h3-dense",
+    "optimizations": [
+      "adaln-host-cache", "block-stream", "text-encoder-stream"
+    ],
+    "seed": 0,
+    "num_inference_steps": 8,
+    "resolution": "256p",
+    "num_frames": 120,
+    "first_frame_base64": "<optional-base64-PNG>",
+    "last_frame_base64": null
+  }'
+
+# HTTP 202, Location: /v1/jobs/0123456789abcdef0123456789abcdef
+# {
+#   "id": "0123456789abcdef0123456789abcdef",
+#   "status": "queued",
+#   "progress": {"completed_steps": 0, "total_steps": 8, "percent": 0.0},
+#   ...
+# }
+
+curl http://127.0.0.1:8000/v1/jobs/0123456789abcdef0123456789abcdef
+curl -o artifact.mp4 \
+  http://127.0.0.1:8000/v1/jobs/0123456789abcdef0123456789abcdef/artifacts
+```
+
+The prompt is required; the remaining generation fields have the defaults
+shown above. First/last frames are optional base64-encoded images in the JSON
+body (20 MiB decoded limit per image). Requests must repeat the server's exact
+fixed `model_arch` and ordered optimization list.
+
+Jobs move through `queued -> running -> succeeded|failed|cancelled`.
+Progress reports completed denoising transformer forwards, not a wall-clock
+estimate: queued jobs are `0/N`, running jobs advance after each forward, and
+successful jobs finish at `N/N`. Artifact access returns HTTP 409 until the
+job succeeds, then returns an H.264/AAC MP4 with one video stream and one
+stereo audio stream. `N` is `num_inference_steps` for `h3-dense` and model
+evaluations for `vdn-hybrid`. There is no public cancellation endpoint in
+issue #9; `cancelled` records arise when clean shutdown cancels queued work.
+
+Each job is persisted atomically under the configured jobs directory:
+
+```text
+jobs/<uuid>/
+  job.json
+  input-first.png   # only when supplied
+  input-last.png    # only when supplied
+  output.wav
+  output.mp4
+```
+
+On process restart, persisted `running` jobs become `failed` with a restart
+message; denoising is not resumed. Queued records remain on disk but are not
+automatically resubmitted. Terminal records remain pollable directly by their
+job ID (the same 32-hex value used as `<uuid>` above). `output.wav` is an
+internal stereo sidecar; the public artifacts endpoint returns only the MP4,
+whose AAC stream contains the same audio. `type="ref2va"` is schema-valid but
+returns HTTP 501 until Task 3 / issue #8 lands. Webhooks remain deferred from
+issue #9: the v0.1 contract is polling because callback authentication,
+signing, delivery persistence, and retry semantics have not yet been
+specified.
+
 ## Deferred: shared `moe-kernels` package
 
 > **Deferred — shared `moe-kernels`.** Kernels currently live behind the

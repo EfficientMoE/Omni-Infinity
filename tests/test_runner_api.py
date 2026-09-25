@@ -90,6 +90,52 @@ def test_generate_maps_parameters_into_pipeline_call():
     assert torch.equal(result.audio_latents, torch.zeros(2))
 
 
+def test_generate_reports_each_denoising_step_and_removes_hook():
+    calls = {}
+
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class FakeState:
+        values = {
+            "videos": ["video"],
+            "audio": torch.zeros(2, 4),
+            "sampling_rate": 48000,
+            "latents": torch.zeros(1),
+            "audio_latents": torch.zeros(2),
+        }
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer = FakeTransformer()
+
+        def __call__(self, **kwargs):
+            calls.update(kwargs)
+            for _ in range(kwargs["num_inference_steps"]):
+                self.transformer(torch.ones(1))
+            return FakeState()
+
+    pipeline = FakePipeline()
+    progress = []
+    first = object()
+    last = object()
+    ReferenceRunner(pipeline).generate(
+        "prompt",
+        num_inference_steps=3,
+        image=first,
+        last_image=last,
+        step_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+
+    assert calls["image"] is first
+    assert calls["last_image"] is last
+    assert progress == [(1, 3), (2, 3), (3, 3)]
+    assert pipeline.transformer._forward_hooks == {}
+
+
 def test_generate_passes_references_to_modular_pipeline():
     calls = {}
 
@@ -106,6 +152,32 @@ def test_generate_passes_references_to_modular_pipeline():
     )
     assert calls["references"] is references
     assert calls["num_frames"] == 120
+
+
+def test_generate_progress_uses_ref2va_transformer():
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer_ref = FakeTransformer()
+
+        def __call__(self, **kwargs):
+            self.transformer_ref(torch.ones(1))
+            return type("State", (), {"values": {}})()
+
+    progress = []
+    pipeline = FakePipeline()
+    ReferenceRunner(pipeline, transformer_component="transformer_ref").generate(
+        "animate this subject",
+        num_inference_steps=1,
+        step_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+    assert progress == [(1, 1)]
+    assert pipeline.transformer_ref._forward_hooks == {}
 
 
 def test_block_streaming_invokes_group_offload_and_requires_offload():
@@ -152,8 +224,7 @@ def test_stream_text_encoder_invokes_group_offloading():
     original = runner_mod._APPLY_GROUP_OFFLOADING
 
     def fake_apply(module, **kwargs):
-        calls["module"] = module
-        calls["kwargs"] = kwargs
+        calls.setdefault("applications", []).append((module, kwargs))
 
     runner_mod._APPLY_GROUP_OFFLOADING = fake_apply
     pipeline = FakePipeline()
@@ -162,10 +233,15 @@ def test_stream_text_encoder_invokes_group_offloading():
     finally:
         runner_mod._APPLY_GROUP_OFFLOADING = original
 
-    assert calls["module"] is pipeline.text_encoder
-    assert calls["kwargs"]["use_stream"] is True
-    assert calls["kwargs"]["offload_device"] == torch.device("cpu")
-    assert calls["kwargs"]["offload_type"] in ("block_level", "leaf_level")
+    applications = calls["applications"]
+    assert [module for module, _ in applications] == [
+        pipeline.text_encoder.model,
+        pipeline.text_encoder.model.visual,
+    ]
+    for _, kwargs in applications:
+        assert kwargs["use_stream"] is True
+        assert kwargs["offload_device"] == torch.device("cpu")
+        assert kwargs["offload_type"] == "leaf_level"
 
 
 def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
@@ -186,7 +262,10 @@ def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
 
     class FakeModularPipeline:
         @classmethod
-        def from_pretrained(cls, checkpoint, components_manager=None):
+        def from_pretrained(
+            cls, checkpoint, workflow="fl2va", components_manager=None
+        ):
+            captured["workflow"] = workflow
             return FakePipeline()
 
     def fake_load_transformer(
@@ -229,4 +308,5 @@ def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
     )
 
     assert captured["fp8_mode"] == "per_row"
+    assert captured["workflow"] == "fl2va"
     assert captured["built"]["transformer"] == "fake-transformer"
