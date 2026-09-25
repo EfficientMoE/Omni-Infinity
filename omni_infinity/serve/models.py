@@ -21,6 +21,7 @@ class JobStatus(str, enum.Enum):
 TERMINAL_STATUSES = frozenset(
     {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED}
 )
+MAX_ERROR_LENGTH = 4096
 
 
 class GenerationRequest(BaseModel):
@@ -75,7 +76,7 @@ class JobRecord(BaseModel):
     updated_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    error: str | None = Field(default=None, max_length=4096)
+    error: str | None = Field(default=None, max_length=MAX_ERROR_LENGTH)
     artifacts: ArtifactMetadata | None = None
 
 
