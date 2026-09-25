@@ -25,10 +25,10 @@ import torch
 StepCallback = Callable[[int, int], None]
 
 
-def _transformer_component(pipeline):
+def _transformer_component(pipeline, component_name="transformer"):
     for accessor in (
-        lambda: pipeline.get_component("transformer"),
-        lambda: pipeline.transformer,
+        lambda: pipeline.get_component(component_name),
+        lambda: getattr(pipeline, component_name),
     ):
         try:
             component = accessor()
@@ -41,7 +41,10 @@ def _transformer_component(pipeline):
 
 @contextmanager
 def _denoising_progress(
-    pipeline, total_steps: int, callback: StepCallback | None
+    pipeline,
+    total_steps: int,
+    callback: StepCallback | None,
+    component_name: str = "transformer",
 ):
     if callback is None:
         yield
@@ -53,22 +56,27 @@ def _denoising_progress(
         completed += 1
         callback(min(completed, total_steps), total_steps)
 
-    handle = _transformer_component(pipeline).register_forward_hook(
-        after_transformer_forward
-    )
+    transformer = _transformer_component(pipeline, component_name)
+    handle = transformer.register_forward_hook(after_transformer_forward)
     try:
         yield
     finally:
         handle.remove()
 
 
-def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
+def _enable_block_streaming(
+    pipeline,
+    device,
+    blocks_per_group,
+    to_disk,
+    component_name="transformer",
+):
     # Native diffusers block-level group offload: streams one block's attn/ff
     # weights at a time with CUDA-stream prefetch (use_stream forces
     # num_blocks_per_group=1). The param-less HostResidentAdaLN is skipped, so
     # the 26 GB of AdaLN branches are never streamed. bf16 device-only moves
     # keep the latents bitwise-identical to the full-resident reference.
-    transformer = _transformer_component(pipeline)
+    transformer = _transformer_component(pipeline, component_name)
     transformer.enable_group_offload(
         onload_device=torch.device(device),
         offload_device=torch.device("cpu"),
@@ -105,7 +113,9 @@ def _encoder_layer_host(pipeline):
 
 def _stream_text_encoder(pipeline, device):
     # bf16 leaf-level streaming of the Qwen3-VL decoder subtree: device-only
-    # moves, so the prompt embeds (and thus the latents) stay parity-identical.
+    # moves, so prompt embeds (and thus latents) stay parity-identical. Ref2VA
+    # also executes the visual patch embedder, which may be nested under the
+    # encoder model rather than exposed directly on the text encoder.
     # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
     # so each self-onloads when it runs; block_level leaves the embedding on the
     # offload device and the first token lookup hits a device mismatch.
@@ -143,6 +153,19 @@ FL2VA_COMPONENTS = (
     "transformer",
 )
 
+REF2VA_COMPONENTS = (
+    "text_encoder",
+    "tokenizer",
+    "processor",
+    "vae",
+    "audio_vae",
+    "scheduler",
+    "audio_scheduler",
+    "transformer_ref",
+)
+
+TRANSFORMER_COMPONENTS = {"fl2va": "transformer", "ref2va": "transformer_ref"}
+
 _OUTPUT_KEYS = (
     "videos",
     "audio",
@@ -168,6 +191,7 @@ def _h3_component_class(name: str):
         "vae": "AutoencoderKLMiniMaxH3",
         "audio_vae": "AutoencoderKLMiniMaxH3Audio",
         "transformer": "MiniMaxH3Transformer3DModel",
+        "transformer_ref": "MiniMaxH3Transformer3DModel",
     }
     try:
         return getattr(diffusers, classes[name])
@@ -190,8 +214,15 @@ def resolve_resolution(resolution: str) -> tuple[int, int]:
 class ReferenceRunner:
     """Full-resident H3-Base FL2VA text-to-audio/video reference path."""
 
-    def __init__(self, pipeline):
+    def __init__(
+        self,
+        pipeline,
+        overlap_controller=None,
+        transformer_component: str = "transformer",
+    ):
         self.pipeline = pipeline
+        self.overlap_controller = overlap_controller
+        self.transformer_component = transformer_component
 
     @classmethod
     def from_pretrained(
@@ -201,7 +232,8 @@ class ReferenceRunner:
         device: str | torch.device = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
         offload: bool = False,
-        components: tuple[str, ...] = FL2VA_COMPONENTS,
+        workflow: str = "fl2va",
+        components: tuple[str, ...] | None = None,
         store_dir: str | None = None,
         store_components: tuple[str, ...] = ("vae", "audio_vae"),
         adaln_host_cache: bool = False,
@@ -212,7 +244,10 @@ class ReferenceRunner:
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
         stream_text_encoder: bool = False,
+        step_overlap: bool = False,
     ) -> "ReferenceRunner":
+        if step_overlap and not block_stream_blocks_per_group:
+            raise ValueError("step_overlap requires bf16 block streaming")
         try:
             from diffusers import MiniMaxH3ModularPipeline
         except ImportError as exc:
@@ -220,6 +255,12 @@ class ReferenceRunner:
                 "diffusers >= 0.40 with MiniMaxH3ModularPipeline is required "
                 "for the reference runner"
             ) from exc
+
+        transformer_component = TRANSFORMER_COMPONENTS[workflow]
+        if components is None:
+            components = (
+                REF2VA_COMPONENTS if workflow == "ref2va" else FL2VA_COMPONENTS
+            )
 
         components_manager = None
         if offload:
@@ -235,7 +276,9 @@ class ReferenceRunner:
 
         substituted = tuple(store_components) if store_dir else ()
         pipeline = MiniMaxH3ModularPipeline.from_pretrained(
-            checkpoint, components_manager=components_manager
+            checkpoint,
+            workflow=workflow,
+            components_manager=components_manager,
         )
         # The Qwen3-VL processor's component spec resolves by repo id, which
         # fails under HF offline mode (a sub-tokenizer config lookup raises
@@ -261,7 +304,7 @@ class ReferenceRunner:
 
             source = StoreComponentSource(store_dir)
             for name in substituted:
-                if name == "transformer" and (
+                if name == transformer_component and (
                     adaln_host_cache or transformer_fp8
                 ):
                     built[name] = load_transformer_with_adaln_cache(
@@ -269,6 +312,7 @@ class ReferenceRunner:
                         checkpoint,
                         source,
                         torch_dtype,
+                        component=name,
                         fp8=transformer_fp8,
                         fp8_skip_last_blocks=fp8_skip_last_blocks,
                         fp8_mode=fp8_scale,
@@ -283,6 +327,7 @@ class ReferenceRunner:
                     )
         if built:
             pipeline.update_components(**built)
+        overlap_controller = None
         if block_stream_blocks_per_group:
             if not offload:
                 raise ValueError(
@@ -295,6 +340,13 @@ class ReferenceRunner:
                 device,
                 block_stream_blocks_per_group,
                 block_stream_to_disk,
+                transformer_component,
+            )
+        if step_overlap:
+            from omni_infinity.step_overlap import enable_step_overlap
+
+            overlap_controller = enable_step_overlap(
+                _transformer_component(pipeline, transformer_component)
             )
         if stream_text_encoder:
             if not offload:
@@ -310,7 +362,11 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
-        return cls(pipeline)
+        return cls(
+            pipeline,
+            overlap_controller=overlap_controller,
+            transformer_component=transformer_component,
+        )
 
     def generate(
         self,
@@ -321,6 +377,7 @@ class ReferenceRunner:
         resolution: str = "256p",
         num_frames: int = 8,
         output_type: str = "np",
+        references: list[Any] | None = None,
         image: Any = None,
         last_image: Any = None,
         step_callback: StepCallback | None = None,
@@ -340,8 +397,13 @@ class ReferenceRunner:
             call_kwargs["image"] = image
         if last_image is not None:
             call_kwargs["last_image"] = last_image
+        if references is not None:
+            call_kwargs["references"] = references
         with _denoising_progress(
-            self.pipeline, num_inference_steps, step_callback
+            self.pipeline,
+            num_inference_steps,
+            step_callback,
+            self.transformer_component,
         ):
             state = self.pipeline(**call_kwargs)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}

@@ -136,6 +136,50 @@ def test_generate_reports_each_denoising_step_and_removes_hook():
     assert pipeline.transformer._forward_hooks == {}
 
 
+def test_generate_passes_references_to_modular_pipeline():
+    calls = {}
+
+    class FakePipeline:
+        def __call__(self, **kwargs):
+            calls.update(kwargs)
+            return type("State", (), {"values": {}})()
+
+    references = [object()]
+    ReferenceRunner(FakePipeline()).generate(
+        "animate this subject",
+        references=references,
+        num_frames=120,
+    )
+    assert calls["references"] is references
+    assert calls["num_frames"] == 120
+
+
+def test_generate_progress_uses_ref2va_transformer():
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer_ref = FakeTransformer()
+
+        def __call__(self, **kwargs):
+            self.transformer_ref(torch.ones(1))
+            return type("State", (), {"values": {}})()
+
+    progress = []
+    pipeline = FakePipeline()
+    ReferenceRunner(pipeline, transformer_component="transformer_ref").generate(
+        "animate this subject",
+        num_inference_steps=1,
+        step_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+    assert progress == [(1, 1)]
+    assert pipeline.transformer_ref._forward_hooks == {}
+
+
 def test_block_streaming_invokes_group_offload_and_requires_offload():
     from omni_infinity import runner as runner_mod
 
@@ -167,10 +211,11 @@ def test_stream_text_encoder_invokes_group_offloading():
         def __init__(self):
             super().__init__()
             self.model = torch.nn.Module()
+            self.model.visual = torch.nn.Module()
+            self.model.visual.patch_embed = torch.nn.Conv3d(3, 4, 1)
             self.model.layers = torch.nn.ModuleList(
                 [torch.nn.Linear(4, 4) for _ in range(4)]
             )
-            self.model.visual = torch.nn.Sequential(torch.nn.Linear(4, 4))
 
     class FakePipeline:
         def __init__(self):
@@ -217,7 +262,10 @@ def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
 
     class FakeModularPipeline:
         @classmethod
-        def from_pretrained(cls, checkpoint, components_manager=None):
+        def from_pretrained(
+            cls, checkpoint, workflow="fl2va", components_manager=None
+        ):
+            captured["workflow"] = workflow
             return FakePipeline()
 
     def fake_load_transformer(
@@ -260,4 +308,5 @@ def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
     )
 
     assert captured["fp8_mode"] == "per_row"
+    assert captured["workflow"] == "fl2va"
     assert captured["built"]["transformer"] == "fake-transformer"
