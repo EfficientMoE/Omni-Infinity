@@ -110,9 +110,7 @@ OPTIMIZATIONS = {
         supported_archs=("h3-dense", "vdn-hybrid"),
         runner_kwargs_by_arch=MappingProxyType(
             {
-                "h3-dense": _kw(
-                    offload=True, block_stream_blocks_per_group=1
-                ),
+                "h3-dense": _kw(offload=True, block_stream_blocks_per_group=1),
                 "vdn-hybrid": _kw(
                     offload=True, block_stream_blocks_per_group=1
                 ),
