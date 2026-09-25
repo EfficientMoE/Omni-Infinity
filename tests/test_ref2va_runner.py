@@ -120,3 +120,104 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     assert captured["adaln_host_cache"] is True
     assert captured["block_stream_component"] == "transformer_ref"
     assert captured["stream_text_encoder"] is True
+
+
+def test_ref2va_smoke_issue_command_uses_optimized_defaults(monkeypatch):
+    from diffusers.modular_pipelines.minimax_h3 import MiniMaxH3ImageReference
+
+    from examples import ref2va_smoke
+
+    command = [
+        "--ref",
+        "tests/fixtures/ref.png",
+        "--seed",
+        "0",
+        "--steps",
+        "8",
+        "--resolution",
+        "256p",
+        "--frames",
+        "120",
+        "--max-vram",
+        "22GiB",
+    ]
+    args = ref2va_smoke.parse_args(command)
+    reference = object()
+    monkeypatch.setattr(
+        MiniMaxH3ImageReference,
+        "from_file",
+        staticmethod(lambda path: reference),
+    )
+
+    references = ref2va_smoke.build_references(args.ref)
+    options = ref2va_smoke.runner_options(args)
+
+    assert args.frames == 120
+    assert references == [reference]
+    assert options["workflow"] == "ref2va"
+    assert options["offload"] is True
+    assert options["store_dir"] == "/mnt/raid0nvme0/leyang/h3-store-v2"
+    assert options["store_components"] == (
+        "transformer_ref",
+        "vae",
+        "audio_vae",
+    )
+    assert options["adaln_host_cache"] is True
+    assert options["block_stream_blocks_per_group"] == 1
+    assert options["stream_text_encoder"] is True
+    assert options["step_overlap"] is True
+
+    calls = {}
+
+    class FakeRunner:
+        @classmethod
+        def from_pretrained(cls, checkpoint, **kwargs):
+            calls["runner_options"] = kwargs
+            return cls()
+
+        def generate(self, prompt, **kwargs):
+            calls["generate"] = kwargs
+            return object()
+
+    monkeypatch.setattr(ref2va_smoke, "ReferenceRunner", FakeRunner)
+    monkeypatch.setattr(
+        ref2va_smoke, "report_latent_parity", lambda *args: True
+    )
+    monkeypatch.setattr(ref2va_smoke, "export_outputs", lambda *args: None)
+    monkeypatch.setattr(ref2va_smoke, "_offload_margin", lambda value: None)
+    monkeypatch.setattr(
+        ref2va_smoke.torch.cuda, "reset_peak_memory_stats", lambda: None
+    )
+    monkeypatch.setattr(
+        ref2va_smoke.torch.cuda, "max_memory_allocated", lambda: 1
+    )
+
+    assert ref2va_smoke.main(command) == 0
+    assert calls["generate"]["references"] == [reference]
+    assert calls["generate"]["num_frames"] == 120
+    assert calls["runner_options"]["step_overlap"] is True
+
+
+def test_ref2va_smoke_full_resident_recording_disables_optimizations():
+    from examples import ref2va_smoke
+
+    args = ref2va_smoke.parse_args(
+        [
+            "--ref",
+            "tests/fixtures/ref.png",
+            "--full-resident",
+            "--record-goldens",
+            "tests/fixtures/goldens",
+        ]
+    )
+
+    options = ref2va_smoke.runner_options(args)
+
+    assert options["workflow"] == "ref2va"
+    assert options["offload"] is True
+    assert options["store_dir"] is None
+    assert options["store_components"] == ()
+    assert options["adaln_host_cache"] is False
+    assert options["block_stream_blocks_per_group"] == 0
+    assert options["stream_text_encoder"] is False
+    assert options["step_overlap"] is False
