@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import time
 from pathlib import Path
 
@@ -38,7 +39,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--frames", type=int, default=120)
     parser.add_argument("--max-vram", default=None)
-    parser.add_argument("--checkpoint", default="MiniMaxAI/MiniMax-H3")
+    parser.add_argument(
+        "--checkpoint",
+        default=os.environ.get("OMNI_H3_CHECKPOINT", "MiniMaxAI/MiniMax-H3"),
+    )
     parser.add_argument("--store-dir", default=DEFAULT_STORE)
     parser.add_argument("--goldens", type=Path, default=DEFAULT_GOLDENS)
     parser.add_argument("--record-goldens", type=Path, default=None)

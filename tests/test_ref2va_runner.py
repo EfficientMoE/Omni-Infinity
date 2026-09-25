@@ -163,6 +163,8 @@ def test_ref2va_smoke_issue_command_uses_optimized_defaults(monkeypatch):
 
     from examples import ref2va_smoke
 
+    monkeypatch.setenv("OMNI_H3_CHECKPOINT", "/offline/checkpoint")
+
     command = [
         "--ref",
         "tests/fixtures/ref.png",
@@ -189,6 +191,7 @@ def test_ref2va_smoke_issue_command_uses_optimized_defaults(monkeypatch):
     options = ref2va_smoke.runner_options(args)
 
     assert args.frames == 120
+    assert args.checkpoint == "/offline/checkpoint"
     assert references == [reference]
     assert options["workflow"] == "ref2va"
     assert options["offload"] is True
