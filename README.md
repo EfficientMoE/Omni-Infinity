@@ -81,6 +81,26 @@ Bootstrap in progress — see the
         `rms_rel=0.0000`, elementwise `allclose(rtol=2e-2)`, and 38.1 s
         wall-clock (inc 7)
   - [ ] Confirm the emulated envelope on a true 24 GB card before release
+- [x] Task 3 — Ref2VA store path + denoising-step prefetch overlap
+      ([#8](https://github.com/EfficientMoE/Omni-Infinity/issues/8)):
+  - Ref2VA selects `transformer_ref` and passes an ordered
+    `MiniMaxH3ImageReference` list. Its packed reference rows now use the same
+    store-backed, host-AdaLN, bf16 block-streamed, and text-encoder-streamed
+    execution path as FL2VA.
+  - The final transformer weight group now prefetches the first group for the
+    next denoising step. CUDA-event QA measured H2D/compute overlap ratios of
+    **0.637** and **0.599** for destination steps 2 and 3.
+  - The required 256p/120-frame smoke reproduced the full-resident video and
+    audio latents bitwise in **77.0 s**, peaking at **10.72 GiB**.
+
+Required Ref2VA smoke gate:
+
+```bash
+python examples/ref2va_smoke.py --ref tests/fixtures/ref.png --seed 0 --steps 8 --resolution 256p --frames 120 --max-vram 22GiB
+```
+
+See [docs/ref2va_step_overlap.md](docs/ref2va_step_overlap.md) for golden
+provenance, store inspection, parity, and overlap commands.
 
 Reference smoke (diffusers >= 0.40; `--offload` runs components
 sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
