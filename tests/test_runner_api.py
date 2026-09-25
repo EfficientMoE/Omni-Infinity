@@ -170,7 +170,7 @@ def test_stream_text_encoder_invokes_group_offloading():
             self.model.layers = torch.nn.ModuleList(
                 [torch.nn.Linear(4, 4) for _ in range(4)]
             )
-            self.visual = torch.nn.Sequential(torch.nn.Linear(4, 4))
+            self.model.visual = torch.nn.Sequential(torch.nn.Linear(4, 4))
 
     class FakePipeline:
         def __init__(self):
@@ -191,7 +191,7 @@ def test_stream_text_encoder_invokes_group_offloading():
     applications = calls["applications"]
     assert [module for module, _ in applications] == [
         pipeline.text_encoder.model,
-        pipeline.text_encoder.visual,
+        pipeline.text_encoder.model.visual,
     ]
     for _, kwargs in applications:
         assert kwargs["use_stream"] is True

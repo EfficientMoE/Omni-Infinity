@@ -119,6 +119,9 @@ def _stream_text_encoder(pipeline, device):
     }
     _APPLY_GROUP_OFFLOADING(_encoder_layer_host(pipeline), **kwargs)
     visual = getattr(pipeline.text_encoder, "visual", None)
+    if visual is None:
+        model = getattr(pipeline.text_encoder, "model", None)
+        visual = getattr(model, "visual", None)
     if visual is not None:
         _APPLY_GROUP_OFFLOADING(visual, **kwargs)
 
