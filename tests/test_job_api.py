@@ -3,9 +3,16 @@
 
 from datetime import datetime, timezone
 
+import av
+import numpy as np
 import pytest
+import soundfile
+import torch
 from pydantic import ValidationError
 
+from omni_infinity.runner import GenerationResult
+from omni_infinity.serve import artifacts as artifact_module
+from omni_infinity.serve.artifacts import write_artifacts
 from omni_infinity.serve.models import (
     TERMINAL_STATUSES,
     ArtifactMetadata,
@@ -26,6 +33,19 @@ from omni_infinity.serve.store import (
 @pytest.fixture
 def fl2va_request():
     return GenerationRequest(type="fl2va", prompt="a red ball bouncing")
+
+
+@pytest.fixture
+def artifact_result():
+    frames = np.zeros((6, 16, 16, 3), dtype=np.float32)
+    frames[:, :, :, 0] = np.linspace(0.0, 1.0, 6)[:, None, None]
+    return GenerationResult(
+        videos=[frames],
+        audio=torch.zeros(1, 2, 8000, dtype=torch.float32),
+        sampling_rate=48000,
+        latents=None,
+        audio_latents=None,
+    )
 
 
 def test_fl2va_request_defaults(fl2va_request):
@@ -155,3 +175,50 @@ def test_job_store_progress_errors_share_store_error_base(
     store.transition(record.id, JobStatus.RUNNING)
     with pytest.raises(JobStoreError):
         store.update_progress(record.id, 1, 9)
+
+
+def test_artifact_writer_creates_atomic_stereo_mp4_and_wav(
+    tmp_path, artifact_result
+):
+    metadata = write_artifacts(artifact_result, tmp_path)
+
+    assert (tmp_path / "output.wav").is_file()
+    assert (tmp_path / "output.mp4").is_file()
+    assert not (tmp_path / "output.partial.wav").exists()
+    assert not (tmp_path / "output.partial.mp4").exists()
+    assert soundfile.info(tmp_path / "output.wav").channels == 2
+    with av.open(tmp_path / "output.mp4") as container:
+        assert len(container.streams.video) == 1
+        assert len(container.streams.audio) == 1
+        assert container.streams.audio[0].layout.name == "stereo"
+    assert metadata.audio_channels == 2
+    assert metadata.sampling_rate == 48000
+
+
+def test_artifact_writer_rejects_mono_audio(tmp_path, artifact_result):
+    artifact_result.audio = torch.zeros(1, 8000)
+    with pytest.raises(ValueError, match="expected stereo audio"):
+        write_artifacts(artifact_result, tmp_path)
+    assert not (tmp_path / "output.wav").exists()
+    assert not (tmp_path / "output.mp4").exists()
+
+
+def test_artifact_writer_rolls_back_when_video_encoding_fails(
+    tmp_path, artifact_result, monkeypatch
+):
+    def fail_encode(*args, **kwargs):
+        assert not (tmp_path / "output.wav").exists()
+        raise RuntimeError("encoder failed")
+
+    monkeypatch.setattr(
+        "diffusers.utils.export_utils.encode_video", fail_encode
+    )
+    with pytest.raises(RuntimeError, match="encoder failed"):
+        artifact_module.write_artifacts(artifact_result, tmp_path)
+    for name in (
+        "output.wav",
+        "output.mp4",
+        "output.partial.wav",
+        "output.partial.mp4",
+    ):
+        assert not (tmp_path / name).exists()
