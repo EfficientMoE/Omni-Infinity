@@ -1,6 +1,8 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
+import time
 from datetime import datetime, timezone
 
 import av
@@ -10,6 +12,7 @@ import soundfile
 import torch
 from pydantic import ValidationError
 
+from omni_infinity.registry import resolve_profile
 from omni_infinity.runner import GenerationResult
 from omni_infinity.serve import artifacts as artifact_module
 from omni_infinity.serve.artifacts import write_artifacts
@@ -20,6 +23,11 @@ from omni_infinity.serve.models import (
     JobRecord,
     JobStatus,
     Progress,
+)
+from omni_infinity.serve.service import (
+    JobService,
+    ProfileConflict,
+    Ref2VANotImplemented,
 )
 from omni_infinity.serve.store import (
     CorruptJob,
@@ -222,3 +230,139 @@ def test_artifact_writer_rolls_back_when_video_encoding_fails(
         "output.partial.mp4",
     ):
         assert not (tmp_path / name).exists()
+
+
+def _wait_for_terminal(store, job_id, timeout=5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        record = store.get(job_id)
+        if record.status in TERMINAL_STATUSES:
+            return record
+        time.sleep(0.01)
+    raise AssertionError(f"job {job_id} did not finish")
+
+
+def test_job_service_serializes_jobs_and_persists_artifacts(
+    tmp_path, artifact_result
+):
+    class FakeRunner:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.active = 0
+            self.max_active = 0
+
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            try:
+                for completed in range(1, num_inference_steps + 1):
+                    time.sleep(0.01)
+                    step_callback(completed, num_inference_steps)
+                return artifact_result
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    runner = FakeRunner()
+    store = JobStore(tmp_path)
+    service = JobService(runner, resolve_profile("h3-dense", []), store)
+    try:
+        request = GenerationRequest(type="fl2va", prompt="prompt")
+        first = service.submit(request)
+        second = service.submit(request)
+        assert store.get(second.id).status == JobStatus.QUEUED
+
+        first_done = _wait_for_terminal(store, first.id)
+        second_done = _wait_for_terminal(store, second.id)
+
+        assert first_done.status == JobStatus.SUCCEEDED
+        assert second_done.status == JobStatus.SUCCEEDED
+        assert runner.max_active == 1
+        assert first_done.progress.completed_steps == 8
+        assert second_done.progress.completed_steps == 8
+        assert store.video_path(first.id).is_file()
+        assert store.video_path(second.id).is_file()
+    finally:
+        service.shutdown()
+
+
+def test_job_service_rejects_profile_conflicts(tmp_path):
+    service = JobService(
+        object(), resolve_profile("h3-dense", []), JobStore(tmp_path)
+    )
+    try:
+        request = GenerationRequest(
+            type="fl2va", prompt="prompt", model_arch="vdn-hybrid"
+        )
+        with pytest.raises(ProfileConflict):
+            service.submit(request)
+    finally:
+        service.shutdown()
+
+
+def test_job_service_persists_runner_failures(tmp_path):
+    class FailingRunner:
+        def generate(self, *args, **kwargs):
+            raise RuntimeError("GPU exploded")
+
+    store = JobStore(tmp_path)
+    service = JobService(
+        FailingRunner(), resolve_profile("h3-dense", []), store
+    )
+    try:
+        record = service.submit(
+            GenerationRequest(type="fl2va", prompt="prompt")
+        )
+        failed = _wait_for_terminal(store, record.id)
+        assert failed.status == JobStatus.FAILED
+        assert failed.error == "RuntimeError: GPU exploded"
+    finally:
+        service.shutdown()
+
+
+def test_job_service_rejects_ref2va_before_queueing(tmp_path):
+    store = JobStore(tmp_path)
+    service = JobService(object(), resolve_profile("h3-dense", []), store)
+    try:
+        with pytest.raises(Ref2VANotImplemented):
+            service.submit(GenerationRequest(type="ref2va", prompt="prompt"))
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        service.shutdown()
+
+
+def test_job_service_shutdown_cancels_queued_jobs(tmp_path, artifact_result):
+    class BlockingRunner:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            self.started.set()
+            assert self.release.wait(timeout=2)
+            for completed in range(1, num_inference_steps + 1):
+                step_callback(completed, num_inference_steps)
+            return artifact_result
+
+    runner = BlockingRunner()
+    store = JobStore(tmp_path)
+    service = JobService(runner, resolve_profile("h3-dense", []), store)
+    request = GenerationRequest(type="fl2va", prompt="prompt")
+    first = service.submit(request)
+    assert runner.started.wait(timeout=2)
+    second = service.submit(request)
+
+    shutdown = threading.Thread(target=service.shutdown)
+    shutdown.start()
+    time.sleep(0.05)
+    runner.release.set()
+    shutdown.join(timeout=5)
+
+    assert not shutdown.is_alive()
+    assert store.get(first.id).status == JobStatus.SUCCEEDED
+    assert store.get(second.id).status == JobStatus.CANCELLED
