@@ -32,30 +32,42 @@ def _write_tiny_h3_pipeline(root: Path) -> dict[str, dict[str, torch.Tensor]]:
     torch.manual_seed(11)
     states: dict[str, dict[str, torch.Tensor]] = {}
 
-    transformer = root / "transformer"
-    transformer.mkdir()
-    (transformer / "config.json").write_text(
-        json.dumps(
-            {
-                "_class_name": "MiniMaxH3Transformer3DModel",
-                "_diffusers_version": "0.40.0",
-            }
+    for component, blocks in (("transformer", 2), ("transformer_ref", 1)):
+        transformer = root / component
+        transformer.mkdir()
+        (transformer / "config.json").write_text(
+            json.dumps(
+                {
+                    "_class_name": "MiniMaxH3Transformer3DModel",
+                    "_diffusers_version": "0.40.0",
+                }
+            )
         )
-    )
-    state = {"proj_in.weight": torch.randn(HIDDEN, 8, dtype=torch.bfloat16)}
-    for block in range(2):
-        prefix = f"transformer_blocks.{block}"
-        state[f"{prefix}.adaln_proj.linear.weight"] = torch.randn(
-            6 * HIDDEN, HIDDEN, dtype=torch.bfloat16
+        state = {}
+        if component == "transformer":
+            state["proj_in.weight"] = torch.randn(
+                HIDDEN, 8, dtype=torch.bfloat16
+            )
+        for block in range(blocks):
+            prefix = f"transformer_blocks.{block}"
+            state[f"{prefix}.adaln_proj.linear.weight"] = torch.randn(
+                6 * HIDDEN, HIDDEN, dtype=torch.bfloat16
+            )
+            state[f"{prefix}.adaln_proj.linear.bias"] = torch.randn(
+                6 * HIDDEN, dtype=torch.bfloat16
+            )
+            attention_name = (
+                "attn.to_q.weight"
+                if component == "transformer"
+                else "attn.weight"
+            )
+            state[f"{prefix}.{attention_name}"] = torch.randn(
+                HIDDEN, HIDDEN, dtype=torch.bfloat16
+            )
+        save_file(
+            state, str(transformer / "diffusion_pytorch_model.safetensors")
         )
-        state[f"{prefix}.adaln_proj.linear.bias"] = torch.randn(
-            6 * HIDDEN, dtype=torch.bfloat16
-        )
-        state[f"{prefix}.attn.to_q.weight"] = torch.randn(
-            HIDDEN, HIDDEN, dtype=torch.bfloat16
-        )
-    save_file(state, str(transformer / "diffusion_pytorch_model.safetensors"))
-    states["transformer"] = state
+        states[component] = state
 
     vae = root / "vae"
     vae.mkdir()
@@ -85,7 +97,7 @@ def test_synthetic_store_round_trips_byte_exact(tmp_path):
     convert_checkpoint(str(root), str(store_dir))
 
     source = StoreComponentSource(store_dir)
-    assert set(source.components()) == {"transformer", "vae"}
+    assert set(source.components()) == {"transformer", "transformer_ref", "vae"}
 
     for component, expected in states.items():
         loaded = source.load_component_state_dict(component)
@@ -119,6 +131,30 @@ def test_read_adaln_cache_round_trips_byte_exact(tmp_path):
         assert torch.equal(entry.weight, expected[f"{prefix}.weight"])
         assert torch.equal(entry.bias, expected[f"{prefix}.bias"])
         assert entry.scale is None
+
+
+def test_transformer_ref_groups_are_isolated_and_strip_one_prefix(tmp_path):
+    pytest.importorskip("moe_store")
+    from moe_store.convert.convert import convert_checkpoint
+
+    root = tmp_path / "ckpt"
+    store_dir = tmp_path / "store"
+    _write_tiny_h3_pipeline(root)
+    convert_checkpoint(str(root), str(store_dir))
+
+    source = StoreComponentSource(store_dir)
+    source.index.groups[:] = sorted(
+        source.index.groups,
+        key=lambda group: source.stage_name(group).endswith(".adaln"),
+    )
+    groups = source.groups_for("transformer_ref")
+    assert all(
+        source.stage_name(g).startswith("transformer_ref") for g in groups
+    )
+    assert len(source.adaln_groups("transformer_ref")) == 1
+    assert set(source.read_group(groups[0])) == {
+        "transformer_blocks.0.attn.weight"
+    }
 
 
 def test_group_fetch_is_single_read(tmp_path, monkeypatch):

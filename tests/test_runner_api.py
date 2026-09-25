@@ -90,6 +90,24 @@ def test_generate_maps_parameters_into_pipeline_call():
     assert torch.equal(result.audio_latents, torch.zeros(2))
 
 
+def test_generate_passes_references_to_modular_pipeline():
+    calls = {}
+
+    class FakePipeline:
+        def __call__(self, **kwargs):
+            calls.update(kwargs)
+            return type("State", (), {"values": {}})()
+
+    references = [object()]
+    ReferenceRunner(FakePipeline()).generate(
+        "animate this subject",
+        references=references,
+        num_frames=120,
+    )
+    assert calls["references"] is references
+    assert calls["num_frames"] == 120
+
+
 def test_block_streaming_invokes_group_offload_and_requires_offload():
     from omni_infinity import runner as runner_mod
 
