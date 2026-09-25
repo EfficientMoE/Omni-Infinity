@@ -25,7 +25,8 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
 
         def update_components(self, **components):
             self.components.update(components)
-            captured["built_key"] = next(iter(components))
+            if "transformer_ref" in components:
+                captured["built_key"] = "transformer_ref"
 
         def get_component(self, name):
             return self.components[name]
