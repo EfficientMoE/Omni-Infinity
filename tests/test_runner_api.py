@@ -139,6 +139,8 @@ def test_stream_text_encoder_invokes_group_offloading():
         def __init__(self):
             super().__init__()
             self.model = torch.nn.Module()
+            self.model.visual = torch.nn.Module()
+            self.model.visual.patch_embed = torch.nn.Conv3d(3, 4, 1)
             self.model.layers = torch.nn.ModuleList(
                 [torch.nn.Linear(4, 4) for _ in range(4)]
             )
@@ -154,12 +156,13 @@ def test_stream_text_encoder_invokes_group_offloading():
         calls["kwargs"] = kwargs
 
     runner_mod._APPLY_GROUP_OFFLOADING = fake_apply
+    pipeline = FakePipeline()
     try:
-        runner_mod._stream_text_encoder(FakePipeline(), torch.device("cuda"))
+        runner_mod._stream_text_encoder(pipeline, torch.device("cuda"))
     finally:
         runner_mod._APPLY_GROUP_OFFLOADING = original
 
-    assert calls["module"] is not None
+    assert calls["module"] is pipeline.text_encoder
     assert calls["kwargs"]["use_stream"] is True
     assert calls["kwargs"]["offload_device"] == torch.device("cpu")
     assert calls["kwargs"]["offload_type"] in ("block_level", "leaf_level")

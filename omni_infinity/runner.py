@@ -66,30 +66,14 @@ def _APPLY_GROUP_OFFLOADING(module, **kwargs):
     apply_group_offloading(module, **kwargs)
 
 
-def _encoder_layer_host(pipeline):
-    # Submodule whose direct child is the longest ModuleList (the decoder
-    # layers). block_level group offload must target it: the layers are nested
-    # (Qwen3-VL: model.language_model.layers), not a direct child of the top
-    # encoder. Dynamic lookup avoids hardcoding a transformers-version path.
-    encoder = pipeline.text_encoder
-    best_module, best_len = None, -1
-    for _name, module in encoder.named_modules():
-        for child in module.children():
-            if isinstance(child, torch.nn.ModuleList) and len(child) > best_len:
-                best_module, best_len = module, len(child)
-    if best_module is None:
-        raise AttributeError("no decoder-layer ModuleList on the text encoder")
-    return best_module
-
-
 def _stream_text_encoder(pipeline, device):
-    # bf16 leaf-level streaming of the Qwen3-VL decoder subtree: device-only
-    # moves, so the prompt embeds (and thus the latents) stay parity-identical.
-    # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
-    # so each self-onloads when it runs; block_level leaves the embedding on the
-    # offload device and the first token lookup hits a device mismatch.
+    # bf16 leaf-level streaming of the complete Qwen3-VL encoder: device-only
+    # moves, so prompt embeds (and thus latents) stay parity-identical. Ref2VA
+    # also executes the visual patch embedder, so streaming only the decoder
+    # subtree leaves its convolution on CPU. leaf_level hooks every executable
+    # leaf, including visual modules and embed_tokens.
     _APPLY_GROUP_OFFLOADING(
-        _encoder_layer_host(pipeline),
+        pipeline.text_encoder,
         onload_device=torch.device(device),
         offload_device=torch.device("cpu"),
         offload_type="leaf_level",
