@@ -1,16 +1,25 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
+import io
+import json
+import os
+import socket
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
 
 import av
+import httpx
 import numpy as np
 import pytest
 import soundfile
 import torch
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import ValidationError
 
 from omni_infinity.registry import resolve_profile
@@ -499,3 +508,138 @@ def test_http_artifact_is_conflict_until_job_succeeds(
         runner.release.set()
         finished, _ = _poll_http_job(client, job_id)
         assert finished["status"] == "succeeded"
+
+
+def _free_local_port():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+@pytest.mark.timeout(1800)
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="job API integration needs CUDA"
+)
+@pytest.mark.skipif(
+    os.environ.get("OMNI_JOB_API_GPU") != "1",
+    reason="set OMNI_JOB_API_GPU=1 to run the real job API gate",
+)
+def test_real_fl2va_job_api_returns_muxed_mp4(tmp_path):
+    port = _free_local_port()
+    env = os.environ.copy()
+    env.update(
+        {
+            "OMNI_JOBS_DIR": str(tmp_path / "jobs"),
+            "OMNI_HOST": "127.0.0.1",
+            "OMNI_PORT": str(port),
+            "OMNI_DEVICE": "cuda",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        }
+    )
+    log_path = tmp_path / "server.log"
+    log_handle = log_path.open("w", encoding="utf-8")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "omni_infinity.serve"],
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise AssertionError("server exited during startup")
+            try:
+                ready = httpx.get(f"{base_url}/v1/jobs/{'f' * 32}", timeout=5)
+                if ready.status_code == 404:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(2)
+        else:
+            raise AssertionError("server did not become ready")
+
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (16, 16), color="red").save(image_buffer, format="PNG")
+        response = httpx.post(
+            f"{base_url}/v1/jobs",
+            json={
+                "type": "fl2va",
+                "prompt": "a red ball bouncing",
+                "model_arch": "h3-dense",
+                "optimizations": [
+                    "adaln-host-cache",
+                    "block-stream",
+                    "text-encoder-stream",
+                ],
+                "seed": 0,
+                "num_inference_steps": 8,
+                "resolution": "256p",
+                "num_frames": 120,
+                "first_frame_base64": base64.b64encode(
+                    image_buffer.getvalue()
+                ).decode("ascii"),
+            },
+            timeout=30,
+        )
+        assert response.status_code == 202, response.text
+        job_id = response.json()["id"]
+        observed = []
+        while time.monotonic() < deadline:
+            status = httpx.get(
+                f"{base_url}/v1/jobs/{job_id}", timeout=30
+            ).json()
+            observed.append(status["progress"]["completed_steps"])
+            if status["status"] == "succeeded":
+                break
+            if status["status"] in {"failed", "cancelled"}:
+                raise AssertionError(status.get("error") or status["status"])
+            time.sleep(2)
+        else:
+            raise AssertionError("job did not finish")
+        assert observed == sorted(observed)
+        assert status["progress"]["completed_steps"] == 8
+        assert status["progress"]["total_steps"] == 8
+
+        artifact_response = httpx.get(
+            f"{base_url}/v1/jobs/{job_id}/artifacts", timeout=120
+        )
+        assert artifact_response.status_code == 200
+        artifact = tmp_path / "artifact.mp4"
+        artifact.write_bytes(artifact_response.content)
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_streams",
+                "-of",
+                "json",
+                str(artifact),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert probe.returncode == 0, probe.stderr
+        streams = json.loads(probe.stdout)["streams"]
+        assert [stream["codec_type"] for stream in streams].count("video") == 1
+        audio_streams = [
+            stream for stream in streams if stream["codec_type"] == "audio"
+        ]
+        assert len(audio_streams) == 1
+        assert int(audio_streams[0]["channels"]) == 2
+    except Exception as exc:
+        log_handle.flush()
+        logs = log_path.read_text(encoding="utf-8")
+        raise AssertionError(f"{exc}\nserver logs:\n{logs}") from exc
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=15)
+        log_handle.close()
