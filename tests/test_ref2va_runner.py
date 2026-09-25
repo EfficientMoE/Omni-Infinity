@@ -9,6 +9,8 @@ from omni_infinity.runner import ReferenceRunner
 
 
 def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
+    from transformers import AutoProcessor
+
     from omni_infinity import runner as runner_mod
     from omni_infinity import store as store_mod
 
@@ -96,14 +98,14 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     monkeypatch.setattr(
         "diffusers.modular_pipelines.ComponentsManager", FakeComponentsManager
     )
-    monkeypatch.setattr("transformers.AutoProcessor", FakeProcessor)
+    monkeypatch.setattr(
+        AutoProcessor, "from_pretrained", FakeProcessor.from_pretrained
+    )
     monkeypatch.setattr(store_mod, "StoreComponentSource", FakeSource)
     monkeypatch.setattr(
         store_mod, "load_transformer_with_adaln_cache", fake_load_transformer
     )
-    monkeypatch.setattr(
-        runner_mod, "_h3_component_class", lambda name: object
-    )
+    monkeypatch.setattr(runner_mod, "_h3_component_class", lambda name: object)
     monkeypatch.setattr(
         runner_mod, "_enable_block_streaming", fake_block_stream
     )
@@ -137,9 +139,10 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     assert captured["built_key"] == "transformer_ref"
     assert captured["adaln_host_cache"] is True
     assert captured["block_stream_component"] == "transformer_ref"
-    assert captured["step_overlap_transformer"] is pipeline.components[
-        "transformer_ref"
-    ]
+    assert (
+        captured["step_overlap_transformer"]
+        is pipeline.components["transformer_ref"]
+    )
     assert captured["stream_text_encoder"] is True
     assert ordering == [
         "update_components",

@@ -109,9 +109,7 @@ def _observe_onloads(timeline: _Timeline, groups: list):
         start.record(group.stream)
         result = original(group)
         end.record(group.stream)
-        timeline.copies.append(
-            _CopyRecord(index, timeline.step, start, end)
-        )
+        timeline.copies.append(_CopyRecord(index, timeline.step, start, end))
         return result
 
     ModuleGroup.onload_ = observed
@@ -237,8 +235,7 @@ def test_first_group_prefetch_overlaps_previous_step_tail():
         )
         copy.destination_step = (
             copy.source_step + 1
-            if copy.group_index == 0
-            and copy.overlaps_last_group_compute
+            if copy.group_index == 0 and copy.overlaps_last_group_compute
             else copy.source_step
         )
 
