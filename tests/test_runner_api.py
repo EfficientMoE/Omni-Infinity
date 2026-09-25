@@ -170,6 +170,7 @@ def test_stream_text_encoder_invokes_group_offloading():
             self.model.layers = torch.nn.ModuleList(
                 [torch.nn.Linear(4, 4) for _ in range(4)]
             )
+            self.visual = torch.nn.Sequential(torch.nn.Linear(4, 4))
 
     class FakePipeline:
         def __init__(self):
@@ -178,19 +179,24 @@ def test_stream_text_encoder_invokes_group_offloading():
     original = runner_mod._APPLY_GROUP_OFFLOADING
 
     def fake_apply(module, **kwargs):
-        calls["module"] = module
-        calls["kwargs"] = kwargs
+        calls.setdefault("applications", []).append((module, kwargs))
 
     runner_mod._APPLY_GROUP_OFFLOADING = fake_apply
+    pipeline = FakePipeline()
     try:
-        runner_mod._stream_text_encoder(FakePipeline(), torch.device("cuda"))
+        runner_mod._stream_text_encoder(pipeline, torch.device("cuda"))
     finally:
         runner_mod._APPLY_GROUP_OFFLOADING = original
 
-    assert calls["module"] is not None
-    assert calls["kwargs"]["use_stream"] is True
-    assert calls["kwargs"]["offload_device"] == torch.device("cpu")
-    assert calls["kwargs"]["offload_type"] in ("block_level", "leaf_level")
+    applications = calls["applications"]
+    assert [module for module, _ in applications] == [
+        pipeline.text_encoder.model,
+        pipeline.text_encoder.visual,
+    ]
+    for _, kwargs in applications:
+        assert kwargs["use_stream"] is True
+        assert kwargs["offload_device"] == torch.device("cpu")
+        assert kwargs["offload_type"] == "leaf_level"
 
 
 def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):

@@ -109,15 +109,18 @@ def _stream_text_encoder(pipeline, device):
     # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
     # so each self-onloads when it runs; block_level leaves the embedding on the
     # offload device and the first token lookup hits a device mismatch.
-    _APPLY_GROUP_OFFLOADING(
-        _encoder_layer_host(pipeline),
-        onload_device=torch.device(device),
-        offload_device=torch.device("cpu"),
-        offload_type="leaf_level",
-        use_stream=True,
-        record_stream=False,
-        low_cpu_mem_usage=False,
-    )
+    kwargs = {
+        "onload_device": torch.device(device),
+        "offload_device": torch.device("cpu"),
+        "offload_type": "leaf_level",
+        "use_stream": True,
+        "record_stream": False,
+        "low_cpu_mem_usage": False,
+    }
+    _APPLY_GROUP_OFFLOADING(_encoder_layer_host(pipeline), **kwargs)
+    visual = getattr(pipeline.text_encoder, "visual", None)
+    if visual is not None:
+        _APPLY_GROUP_OFFLOADING(visual, **kwargs)
 
 
 RESOLUTIONS = {
