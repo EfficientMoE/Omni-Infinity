@@ -39,7 +39,7 @@ class AdaLNEntry:
     :class:`HostResidentAdaLN` never sees the storage dtype.
     """
 
-    __slots__ = ("weight", "bias", "compute_dtype", "scale")
+    __slots__ = ("weight", "bias", "compute_dtype", "scale", "block_scaled")
 
     def __init__(
         self,
@@ -48,11 +48,13 @@ class AdaLNEntry:
         *,
         compute_dtype: torch.dtype = torch.bfloat16,
         scale: torch.Tensor | None = None,
+        block_scaled: bool = False,
     ):
         self.weight = weight
         self.bias = bias
         self.compute_dtype = compute_dtype
         self.scale = scale
+        self.block_scaled = block_scaled
 
     def materialize(
         self, device: torch.device
@@ -68,6 +70,22 @@ class AdaLNEntry:
         scale = self.scale.to(device, non_blocking=True)
         weight = (weight.to(torch.float32) * scale).to(self.compute_dtype)
         return weight, bias
+
+    def materialize_fp8(
+        self, device: torch.device
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Block-scaled FP8 path: return (weight_fp8, block_scale, bias) on
+        ``device`` WITHOUT dequantizing — the fused kernel dequantizes inside
+        the GEMM. Transfers half the bytes of the bf16 weight (fp8 weight +
+        tiny scale)."""
+        assert (
+            self.scale is not None and self.block_scaled
+        ), "materialize_fp8 requires a block-scaled fp8 entry"
+        return (
+            self.weight.to(device, non_blocking=True),
+            self.scale.to(device, non_blocking=True),
+            self.bias.to(device, non_blocking=True),
+        )
 
 
 class HostResidentAdaLN(nn.Module):
@@ -90,7 +108,22 @@ class HostResidentAdaLN(nn.Module):
         self._entry = entry
 
     def forward(self, temb: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        weight, bias = self._entry.materialize(temb.device)
-        temb = F.linear(F.silu(temb).to(weight.dtype), weight, bias)
+        activated = F.silu(temb)  # at temb's incoming precision (ref-exact)
+        if self._entry.scale is None:
+            # bf16 path — byte-exact host-to-device copy, unchanged
+            weight, bias = self._entry.materialize(temb.device)
+            temb = F.linear(activated.to(weight.dtype), weight, bias)
+        elif not self._entry.block_scaled:
+            # legacy per-row fp8 A/B path — materialize() dequantizes per-row
+            weight, bias = self._entry.materialize(temb.device)
+            temb = F.linear(activated.to(weight.dtype), weight, bias)
+        else:
+            # block-scaled fp8 — fused weight-only GEMM (no bf16 materialize)
+            from omni_infinity.kernels import fused_fp8_gemm
+
+            weight_fp8, scale, bias = self._entry.materialize_fp8(temb.device)
+            temb = fused_fp8_gemm(
+                activated.to(torch.bfloat16), weight_fp8, scale, bias
+            )
         temb = temb.view(-1, 6 * self.hidden_size)
         return temb.chunk(6, dim=-1)

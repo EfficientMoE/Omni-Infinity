@@ -174,6 +174,7 @@ class ReferenceRunner:
         adaln_host_cache: bool = False,
         transformer_fp8: bool = False,
         fp8_skip_last_blocks: int = 0,
+        fp8_scale: str = "block",
         offload_memory_margin: str | None = None,
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
@@ -237,6 +238,7 @@ class ReferenceRunner:
                         torch_dtype,
                         fp8=transformer_fp8,
                         fp8_skip_last_blocks=fp8_skip_last_blocks,
+                        fp8_mode=fp8_scale,
                     )
                 else:
                     built[name] = load_diffusers_component(

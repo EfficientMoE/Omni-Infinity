@@ -80,10 +80,12 @@ class StoreComponentSource:
         component: str = "transformer",
         *,
         fp8: bool = False,
+        fp8_mode: str = "block",
         compute_dtype: torch.dtype = torch.bfloat16,
     ) -> dict:
         from omni_infinity.adaln import AdaLNEntry
         from omni_infinity.fp8 import quantize_per_row_fp8
+        from omni_infinity.kernels import quantize_block_fp8
 
         cache: dict[int, AdaLNEntry] = {}
         for group in self.adaln_groups(component):
@@ -100,10 +102,24 @@ class StoreComponentSource:
                     "{weight, bias} projection bundle"
                 )
             if fp8:
-                quantized, scale = quantize_per_row_fp8(weight)
-                cache[block] = AdaLNEntry(
-                    quantized, bias, compute_dtype=compute_dtype, scale=scale
-                )
+                if fp8_mode == "block":
+                    quantized, scale = quantize_block_fp8(weight)
+                    cache[block] = AdaLNEntry(
+                        quantized,
+                        bias,
+                        compute_dtype=compute_dtype,
+                        scale=scale,
+                        block_scaled=True,
+                    )
+                else:
+                    quantized, scale = quantize_per_row_fp8(weight)
+                    cache[block] = AdaLNEntry(
+                        quantized,
+                        bias,
+                        compute_dtype=compute_dtype,
+                        scale=scale,
+                        block_scaled=False,
+                    )
             else:
                 cache[block] = AdaLNEntry(weight, bias)
         return cache
@@ -166,6 +182,7 @@ def load_transformer_with_adaln_cache(
     fp8: bool = False,
     fp8_skip_last_blocks: int = 0,
     adaln_fp8: bool = False,
+    fp8_mode: str = "block",
 ):
     from omni_infinity.adaln import HostResidentAdaLN
 
@@ -177,7 +194,7 @@ def load_transformer_with_adaln_cache(
     # on the host) and the discarded fp32 init Linears are freed here rather
     # than surviving the load.
     cache = source.read_adaln_cache(
-        component, fp8=adaln_fp8, compute_dtype=torch_dtype
+        component, fp8=adaln_fp8, fp8_mode=fp8_mode, compute_dtype=torch_dtype
     )
     for index, block in enumerate(model.transformer_blocks):
         entry = cache.get(index)
@@ -205,7 +222,10 @@ def load_transformer_with_adaln_cache(
             else frozenset()
         )
         apply_scaled_fp8_casting(
-            model, compute_dtype=torch_dtype, skip_blocks=skip_blocks
+            model,
+            compute_dtype=torch_dtype,
+            skip_blocks=skip_blocks,
+            mode=fp8_mode,
         )
     return model.eval()
 

@@ -1,0 +1,3 @@
+[submodule "third_party/vdn-minimax-h3"]
+	path = third_party/vdn-minimax-h3
+	url = https://github.com/OpenVDN/vdn-minimax-h3.git

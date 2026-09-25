@@ -44,6 +44,36 @@ step-synchronous loop, not shared with MoE-Infinity.
   sparse-attention inference (the H3 open release supports full attention
   only).
 
+## Model archs & optimizations
+
+Two orthogonal category axes (`omni_infinity/registry.py`) describe every
+supported configuration; the smoke CLIs and the ablation harness
+(`benchmarks/ablation_vdn.py`) resolve their flags through the registry.
+
+| model-arch | runner | checkpoint |
+|---|---|---|
+| `h3-dense` | `omni_infinity.runner.ReferenceRunner` | `MiniMaxAI/MiniMax-H3` |
+| `vdn-hybrid` | `omni_infinity.arch.vdn.VdnRunner` | `OpenVDN/vdn-minimax-h3` (Hub repo-id only — see the cross-repo `trust_remote_code` note in [docs/repro_vdn.md](docs/repro_vdn.md)) |
+
+| optimization | h3-dense | vdn-hybrid |
+|---|:---:|:---:|
+| `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
+| `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
+| `block-stream` (transformer block_level group offload) | ✓ | ✓ |
+| `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
+
+`vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
+[OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
+pinned at `third_party/vdn-minimax-h3`): a frame-wise linear-attention
+branch + window softmax + two merged LoRA adapters on the frozen H3
+backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
+[docs/repro_vdn.md](docs/repro_vdn.md) — dense→hybrid+fp8 **2.15×**
+per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
+streaming ~20 GiB peak. Ablation study:
+[docs/ablation_vdn.md](docs/ablation_vdn.md). Speedup attribution study:
+[docs/attribution_vdn.md](docs/attribution_vdn.md). Tracking:
+[#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
+
 ## Status
 
 Bootstrap in progress — see the
@@ -80,6 +110,20 @@ Bootstrap in progress — see the
         peaks at **9.96 GiB** under the emulated 22 GiB offload envelope, with
         `rms_rel=0.0000`, elementwise `allclose(rtol=2e-2)`, and 38.1 s
         wall-clock (inc 7)
+  - [x] Fused block-scaled FP8 weight-only kernel — vendored+hardened
+        Triton GEMM behind an `omni_infinity/kernels/` facade (op-centric,
+        pure-torch reference fallback). `ScaledFp8Linear` and the AdaLN FP8
+        branch dequantize *inside* the GEMM (no bf16 weight
+        materialization); block-wise 128×128 scaling. Benchmark: FP8
+        weight bytes halved and lower peak memory on large Linears (e.g.
+        N=28672: 3330→2600 MB); latency ~matches/trails bf16 at large M
+        (bf16 MMA, no fp8-TC on the weight-only path). **Accuracy gate
+        (256p/120f vs goldens): block `rms_rel=0.2135`, per-row `0.2373` —
+        both FAIL `allclose(rtol=2e-2)`. H3 is not FP8-native; block-wise
+        beats per-row but does not close the gap.** FP8 remains an
+        **opt-in memory/bandwidth tradeoff** (select via `--fp8-scale
+        block`); bf16 block-streaming stays the accuracy-preserving
+        default (inc 5-7). (inc 8)
   - [ ] Confirm the emulated envelope on a true 24 GB card before release
 
 Reference smoke (diffusers >= 0.40; `--offload` runs components
@@ -104,6 +148,24 @@ python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
     --adaln-host-cache --block-stream-blocks-per-group 1 \
     --goldens tests/fixtures/goldens/fl2va_goldens.pt
 ```
+
+## Deferred: shared `moe-kernels` package
+
+> **Deferred — shared `moe-kernels`.** Kernels currently live behind the
+> `omni_infinity/kernels/` facade. **Extract to a standalone `moe-kernels`
+> package (sibling to moe-store, one-way dep) when the first COMPILED
+> CUDA/CUTLASS kernel (e.g. BatchGen's SM120 cutlass GEMM) must be shared
+> across ≥2 EfficientMoE runtimes** (per-arch prebuilt wheels are the real
+> cost driver; pure-Triton copy-paste is nearly free). Layout: flat
+> op-centric API (`moe_kernels.fused_fp8_gemm`, `.mxfp4_gemm`, …); internal
+> `_impls/<op>/{triton,cutlass_sm120,…}.py` self-registering into a
+> `(op, qtype, backend, arch)` registry with a pure-torch reference as
+> lowest-priority fallback; base wheel pure-Python (Triton + reference +
+> registry, universal), compiled CUTLASS in optional `[cutlass-cuXYZ]`
+> extras (flash-attn/sgl-kernel-style per-(torch,cuda) wheels, multi-arch
+> fatbin). Consumers pin ranges (`>=0.x,<0.y`); the reference fallback is
+> the forward-compat valve (no lockstep releases). **Extraction = `git mv`
+> impls + swap the facade's imports; call sites are already stable.**
 
 ## License
 

@@ -145,3 +145,67 @@ def test_stream_text_encoder_invokes_group_offloading():
     assert calls["kwargs"]["use_stream"] is True
     assert calls["kwargs"]["offload_device"] == torch.device("cpu")
     assert calls["kwargs"]["offload_type"] in ("block_level", "leaf_level")
+
+
+def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
+    pytest.importorskip("diffusers")
+    from omni_infinity import runner as runner_mod
+
+    captured = {}
+
+    class FakePipeline:
+        def load_components(self, **kwargs):
+            pass
+
+        def update_components(self, **kwargs):
+            captured["built"] = kwargs
+
+        def to(self, device):
+            return self
+
+    class FakeModularPipeline:
+        @classmethod
+        def from_pretrained(cls, checkpoint, components_manager=None):
+            return FakePipeline()
+
+    def fake_load_transformer(
+        component_cls,
+        checkpoint,
+        source,
+        torch_dtype,
+        component="transformer",
+        **kwargs,
+    ):
+        captured["fp8_mode"] = kwargs.get("fp8_mode")
+        return "fake-transformer"
+
+    # from_pretrained imports from diffusers / omni_infinity.store at call time,
+    # so patching the source-module attributes wins.
+    monkeypatch.setattr(
+        "diffusers.MiniMaxH3ModularPipeline", FakeModularPipeline, raising=False
+    )
+    monkeypatch.setattr(
+        "omni_infinity.store.StoreComponentSource",
+        lambda store_dir: object(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "omni_infinity.store.load_transformer_with_adaln_cache",
+        fake_load_transformer,
+        raising=False,
+    )
+    monkeypatch.setattr(runner_mod, "_h3_component_class", lambda name: object)
+
+    runner_mod.ReferenceRunner.from_pretrained(
+        checkpoint="dummy",
+        device="cpu",
+        offload=False,
+        components=("transformer",),
+        store_dir="/tmp/fake-store",
+        store_components=("transformer",),
+        transformer_fp8=True,
+        fp8_scale="per_row",
+    )
+
+    assert captured["fp8_mode"] == "per_row"
+    assert captured["built"]["transformer"] == "fake-transformer"

@@ -1,0 +1,16 @@
+.git
+.sisyphus
+.pytest_cache
+.ruff_cache
+.venv
+venv
+__pycache__
+*.egg-info
+*.py[cod]
+build
+dist
+results
+ckpts
+third_party
+generated_latents.pt
+out.*

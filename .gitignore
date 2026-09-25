@@ -10,3 +10,4 @@ venv/
 *.safetensors
 out.mp4
 out.flac
+results/
