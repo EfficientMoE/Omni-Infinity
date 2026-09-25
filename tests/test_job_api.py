@@ -10,11 +10,13 @@ import numpy as np
 import pytest
 import soundfile
 import torch
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from omni_infinity.registry import resolve_profile
 from omni_infinity.runner import GenerationResult
 from omni_infinity.serve import artifacts as artifact_module
+from omni_infinity.serve.app import ServerSettings, create_app
 from omni_infinity.serve.artifacts import write_artifacts
 from omni_infinity.serve.models import (
     TERMINAL_STATUSES,
@@ -366,3 +368,134 @@ def test_job_service_shutdown_cancels_queued_jobs(tmp_path, artifact_result):
     assert not shutdown.is_alive()
     assert store.get(first.id).status == JobStatus.SUCCEEDED
     assert store.get(second.id).status == JobStatus.CANCELLED
+
+
+def _poll_http_job(client, job_id, timeout=5):
+    deadline = time.monotonic() + timeout
+    observed = []
+    while time.monotonic() < deadline:
+        response = client.get(f"/v1/jobs/{job_id}")
+        assert response.status_code == 200
+        body = response.json()
+        observed.append(body["progress"]["completed_steps"])
+        if body["status"] in {"succeeded", "failed", "cancelled"}:
+            return body, observed
+        time.sleep(0.01)
+    raise AssertionError(f"job {job_id} did not finish")
+
+
+def test_http_job_lifecycle_artifact_and_single_runner_load(
+    tmp_path, artifact_result
+):
+    calls = {"factory": 0, "generate": 0}
+
+    class FakeRunner:
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            calls["generate"] += 1
+            for completed in range(1, num_inference_steps + 1):
+                time.sleep(0.005)
+                step_callback(completed, num_inference_steps)
+            return artifact_result
+
+    runner = FakeRunner()
+
+    def factory():
+        calls["factory"] += 1
+        return runner
+
+    settings = ServerSettings(jobs_dir=tmp_path, optimizations=())
+    with TestClient(create_app(settings, factory)) as client:
+        response = client.post(
+            "/v1/jobs", json={"type": "fl2va", "prompt": "prompt"}
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+        assert response.headers["location"] == f"/v1/jobs/{job_id}"
+        assert response.json()["status"] in {"queued", "running"}
+
+        finished, observed = _poll_http_job(client, job_id)
+        assert finished["status"] == "succeeded"
+        assert finished["progress"] == {
+            "completed_steps": 8,
+            "total_steps": 8,
+            "percent": 100.0,
+        }
+        assert observed == sorted(observed)
+
+        artifact = client.get(f"/v1/jobs/{job_id}/artifacts")
+        assert artifact.status_code == 200
+        assert artifact.headers["content-type"] == "video/mp4"
+        downloaded = tmp_path / "downloaded.mp4"
+        downloaded.write_bytes(artifact.content)
+        with av.open(downloaded) as container:
+            assert len(container.streams.video) == 1
+            assert len(container.streams.audio) == 1
+            assert container.streams.audio[0].layout.name == "stereo"
+
+        second = client.post(
+            "/v1/jobs", json={"type": "fl2va", "prompt": "again"}
+        )
+        assert second.status_code == 202
+        second_done, _ = _poll_http_job(client, second.json()["id"])
+        assert second_done["status"] == "succeeded"
+
+        assert client.get(f"/v1/jobs/{'f' * 32}").status_code == 404
+        assert client.post("/v1/jobs", json={}).status_code == 422
+        ref2va = client.post(
+            "/v1/jobs", json={"type": "ref2va", "prompt": "prompt"}
+        )
+        assert ref2va.status_code == 501
+        assert "issue #8" in ref2va.json()["detail"]
+        conflict = client.post(
+            "/v1/jobs",
+            json={
+                "type": "fl2va",
+                "prompt": "prompt",
+                "model_arch": "vdn-hybrid",
+            },
+        )
+        assert conflict.status_code == 409
+        invalid_media = client.post(
+            "/v1/jobs",
+            json={
+                "type": "fl2va",
+                "prompt": "prompt",
+                "first_frame_base64": "not base64!",
+            },
+        )
+        assert invalid_media.status_code == 422
+
+    assert calls == {"factory": 1, "generate": 2}
+
+
+def test_http_artifact_is_conflict_until_job_succeeds(
+    tmp_path, artifact_result
+):
+    class BlockingRunner:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            self.started.set()
+            assert self.release.wait(timeout=2)
+            for completed in range(1, num_inference_steps + 1):
+                step_callback(completed, num_inference_steps)
+            return artifact_result
+
+    runner = BlockingRunner()
+    settings = ServerSettings(jobs_dir=tmp_path, optimizations=())
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        response = client.post(
+            "/v1/jobs", json={"type": "fl2va", "prompt": "prompt"}
+        )
+        job_id = response.json()["id"]
+        assert runner.started.wait(timeout=2)
+        assert client.get(f"/v1/jobs/{job_id}/artifacts").status_code == 409
+        runner.release.set()
+        finished, _ = _poll_http_job(client, job_id)
+        assert finished["status"] == "succeeded"
