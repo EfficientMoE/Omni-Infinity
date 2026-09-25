@@ -21,10 +21,10 @@ from typing import Any
 import torch
 
 
-def _transformer_component(pipeline):
+def _transformer_component(pipeline, component_name="transformer"):
     for accessor in (
-        lambda: pipeline.get_component("transformer"),
-        lambda: pipeline.transformer,
+        lambda: pipeline.get_component(component_name),
+        lambda: getattr(pipeline, component_name),
     ):
         try:
             component = accessor()
@@ -35,13 +35,19 @@ def _transformer_component(pipeline):
     raise AttributeError("could not locate the transformer on the pipeline")
 
 
-def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
+def _enable_block_streaming(
+    pipeline,
+    device,
+    blocks_per_group,
+    to_disk,
+    component_name="transformer",
+):
     # Native diffusers block-level group offload: streams one block's attn/ff
     # weights at a time with CUDA-stream prefetch (use_stream forces
     # num_blocks_per_group=1). The param-less HostResidentAdaLN is skipped, so
     # the 26 GB of AdaLN branches are never streamed. bf16 device-only moves
     # keep the latents bitwise-identical to the full-resident reference.
-    transformer = _transformer_component(pipeline)
+    transformer = _transformer_component(pipeline, component_name)
     transformer.enable_group_offload(
         onload_device=torch.device(device),
         offload_device=torch.device("cpu"),
@@ -60,30 +66,14 @@ def _APPLY_GROUP_OFFLOADING(module, **kwargs):
     apply_group_offloading(module, **kwargs)
 
 
-def _encoder_layer_host(pipeline):
-    # Submodule whose direct child is the longest ModuleList (the decoder
-    # layers). block_level group offload must target it: the layers are nested
-    # (Qwen3-VL: model.language_model.layers), not a direct child of the top
-    # encoder. Dynamic lookup avoids hardcoding a transformers-version path.
-    encoder = pipeline.text_encoder
-    best_module, best_len = None, -1
-    for _name, module in encoder.named_modules():
-        for child in module.children():
-            if isinstance(child, torch.nn.ModuleList) and len(child) > best_len:
-                best_module, best_len = module, len(child)
-    if best_module is None:
-        raise AttributeError("no decoder-layer ModuleList on the text encoder")
-    return best_module
-
-
 def _stream_text_encoder(pipeline, device):
-    # bf16 leaf-level streaming of the Qwen3-VL decoder subtree: device-only
-    # moves, so the prompt embeds (and thus the latents) stay parity-identical.
-    # leaf_level (not block_level) hooks EVERY leaf -- including embed_tokens --
-    # so each self-onloads when it runs; block_level leaves the embedding on the
-    # offload device and the first token lookup hits a device mismatch.
+    # bf16 leaf-level streaming of the complete Qwen3-VL encoder: device-only
+    # moves, so prompt embeds (and thus latents) stay parity-identical. Ref2VA
+    # also executes the visual patch embedder, so streaming only the decoder
+    # subtree leaves its convolution on CPU. leaf_level hooks every executable
+    # leaf, including visual modules and embed_tokens.
     _APPLY_GROUP_OFFLOADING(
-        _encoder_layer_host(pipeline),
+        pipeline.text_encoder,
         onload_device=torch.device(device),
         offload_device=torch.device("cpu"),
         offload_type="leaf_level",
@@ -110,6 +100,19 @@ FL2VA_COMPONENTS = (
     "transformer",
 )
 
+REF2VA_COMPONENTS = (
+    "text_encoder",
+    "tokenizer",
+    "processor",
+    "vae",
+    "audio_vae",
+    "scheduler",
+    "audio_scheduler",
+    "transformer_ref",
+)
+
+TRANSFORMER_COMPONENTS = {"fl2va": "transformer", "ref2va": "transformer_ref"}
+
 _OUTPUT_KEYS = (
     "videos",
     "audio",
@@ -135,6 +138,7 @@ def _h3_component_class(name: str):
         "vae": "AutoencoderKLMiniMaxH3",
         "audio_vae": "AutoencoderKLMiniMaxH3Audio",
         "transformer": "MiniMaxH3Transformer3DModel",
+        "transformer_ref": "MiniMaxH3Transformer3DModel",
     }
     try:
         return getattr(diffusers, classes[name])
@@ -157,8 +161,9 @@ def resolve_resolution(resolution: str) -> tuple[int, int]:
 class ReferenceRunner:
     """Full-resident H3-Base FL2VA text-to-audio/video reference path."""
 
-    def __init__(self, pipeline):
+    def __init__(self, pipeline, overlap_controller=None):
         self.pipeline = pipeline
+        self.overlap_controller = overlap_controller
 
     @classmethod
     def from_pretrained(
@@ -168,7 +173,8 @@ class ReferenceRunner:
         device: str | torch.device = "cuda",
         torch_dtype: torch.dtype = torch.bfloat16,
         offload: bool = False,
-        components: tuple[str, ...] = FL2VA_COMPONENTS,
+        workflow: str = "fl2va",
+        components: tuple[str, ...] | None = None,
         store_dir: str | None = None,
         store_components: tuple[str, ...] = ("vae", "audio_vae"),
         adaln_host_cache: bool = False,
@@ -179,7 +185,10 @@ class ReferenceRunner:
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
         stream_text_encoder: bool = False,
+        step_overlap: bool = False,
     ) -> "ReferenceRunner":
+        if step_overlap and not block_stream_blocks_per_group:
+            raise ValueError("step_overlap requires bf16 block streaming")
         try:
             from diffusers import MiniMaxH3ModularPipeline
         except ImportError as exc:
@@ -187,6 +196,12 @@ class ReferenceRunner:
                 "diffusers >= 0.40 with MiniMaxH3ModularPipeline is required "
                 "for the reference runner"
             ) from exc
+
+        transformer_component = TRANSFORMER_COMPONENTS[workflow]
+        if components is None:
+            components = (
+                REF2VA_COMPONENTS if workflow == "ref2va" else FL2VA_COMPONENTS
+            )
 
         components_manager = None
         if offload:
@@ -202,7 +217,9 @@ class ReferenceRunner:
 
         substituted = tuple(store_components) if store_dir else ()
         pipeline = MiniMaxH3ModularPipeline.from_pretrained(
-            checkpoint, components_manager=components_manager
+            checkpoint,
+            workflow=workflow,
+            components_manager=components_manager,
         )
         # The Qwen3-VL processor's component spec resolves by repo id, which
         # fails under HF offline mode (a sub-tokenizer config lookup raises
@@ -228,7 +245,7 @@ class ReferenceRunner:
 
             source = StoreComponentSource(store_dir)
             for name in substituted:
-                if name == "transformer" and (
+                if name == transformer_component and (
                     adaln_host_cache or transformer_fp8
                 ):
                     built[name] = load_transformer_with_adaln_cache(
@@ -236,6 +253,7 @@ class ReferenceRunner:
                         checkpoint,
                         source,
                         torch_dtype,
+                        component=name,
                         fp8=transformer_fp8,
                         fp8_skip_last_blocks=fp8_skip_last_blocks,
                         fp8_mode=fp8_scale,
@@ -250,6 +268,7 @@ class ReferenceRunner:
                     )
         if built:
             pipeline.update_components(**built)
+        overlap_controller = None
         if block_stream_blocks_per_group:
             if not offload:
                 raise ValueError(
@@ -262,6 +281,13 @@ class ReferenceRunner:
                 device,
                 block_stream_blocks_per_group,
                 block_stream_to_disk,
+                transformer_component,
+            )
+        if step_overlap:
+            from omni_infinity.step_overlap import enable_step_overlap
+
+            overlap_controller = enable_step_overlap(
+                _transformer_component(pipeline, transformer_component)
             )
         if stream_text_encoder:
             if not offload:
@@ -277,7 +303,7 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
-        return cls(pipeline)
+        return cls(pipeline, overlap_controller=overlap_controller)
 
     def generate(
         self,
@@ -288,10 +314,11 @@ class ReferenceRunner:
         resolution: str = "256p",
         num_frames: int = 8,
         output_type: str = "np",
+        references: list[Any] | None = None,
     ) -> GenerationResult:
         height, width = resolve_resolution(resolution)
         generator = torch.Generator(device="cpu").manual_seed(seed)
-        state = self.pipeline(
+        pipeline_kwargs = dict(
             prompt=prompt,
             height=height,
             width=width,
@@ -300,6 +327,9 @@ class ReferenceRunner:
             generator=generator,
             output_type=output_type,
         )
+        if references is not None:
+            pipeline_kwargs["references"] = references
+        state = self.pipeline(**pipeline_kwargs)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

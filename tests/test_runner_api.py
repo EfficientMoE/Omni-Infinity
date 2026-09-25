@@ -90,6 +90,24 @@ def test_generate_maps_parameters_into_pipeline_call():
     assert torch.equal(result.audio_latents, torch.zeros(2))
 
 
+def test_generate_passes_references_to_modular_pipeline():
+    calls = {}
+
+    class FakePipeline:
+        def __call__(self, **kwargs):
+            calls.update(kwargs)
+            return type("State", (), {"values": {}})()
+
+    references = [object()]
+    ReferenceRunner(FakePipeline()).generate(
+        "animate this subject",
+        references=references,
+        num_frames=120,
+    )
+    assert calls["references"] is references
+    assert calls["num_frames"] == 120
+
+
 def test_block_streaming_invokes_group_offload_and_requires_offload():
     from omni_infinity import runner as runner_mod
 
@@ -121,6 +139,8 @@ def test_stream_text_encoder_invokes_group_offloading():
         def __init__(self):
             super().__init__()
             self.model = torch.nn.Module()
+            self.model.visual = torch.nn.Module()
+            self.model.visual.patch_embed = torch.nn.Conv3d(3, 4, 1)
             self.model.layers = torch.nn.ModuleList(
                 [torch.nn.Linear(4, 4) for _ in range(4)]
             )
@@ -136,12 +156,13 @@ def test_stream_text_encoder_invokes_group_offloading():
         calls["kwargs"] = kwargs
 
     runner_mod._APPLY_GROUP_OFFLOADING = fake_apply
+    pipeline = FakePipeline()
     try:
-        runner_mod._stream_text_encoder(FakePipeline(), torch.device("cuda"))
+        runner_mod._stream_text_encoder(pipeline, torch.device("cuda"))
     finally:
         runner_mod._APPLY_GROUP_OFFLOADING = original
 
-    assert calls["module"] is not None
+    assert calls["module"] is pipeline.text_encoder
     assert calls["kwargs"]["use_stream"] is True
     assert calls["kwargs"]["offload_device"] == torch.device("cpu")
     assert calls["kwargs"]["offload_type"] in ("block_level", "leaf_level")
