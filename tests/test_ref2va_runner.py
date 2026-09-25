@@ -3,6 +3,8 @@
 
 # EfficientMoE Team
 
+import pytest
+
 from omni_infinity.runner import ReferenceRunner
 
 
@@ -11,6 +13,7 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     from omni_infinity import store as store_mod
 
     captured = {}
+    ordering = []
 
     class FakeTransformer:
         adaln_host_cache = True
@@ -24,6 +27,7 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
             captured["load_dtype"] = torch_dtype
 
         def update_components(self, **components):
+            ordering.append("update_components")
             self.components.update(components)
             if "transformer_ref" in components:
                 captured["built_key"] = "transformer_ref"
@@ -44,6 +48,7 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
 
     class FakeComponentsManager:
         def enable_auto_cpu_offload(self, **kwargs):
+            ordering.append("components_manager_offload")
             captured["auto_offload"] = kwargs
 
     class FakeProcessor:
@@ -71,9 +76,18 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     def fake_block_stream(
         pipeline, device, blocks_per_group, to_disk, component_name
     ):
+        ordering.append("block_streaming")
         captured["block_stream_component"] = component_name
 
+    overlap_controller = object()
+
+    def fake_step_overlap(transformer):
+        ordering.append("step_overlap")
+        captured["step_overlap_transformer"] = transformer
+        return overlap_controller
+
     def fake_text_stream(pipeline, device):
+        ordering.append("text_encoder_streaming")
         captured["stream_text_encoder"] = True
 
     monkeypatch.setattr(
@@ -93,9 +107,12 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     monkeypatch.setattr(
         runner_mod, "_enable_block_streaming", fake_block_stream
     )
+    monkeypatch.setattr(
+        "omni_infinity.step_overlap.enable_step_overlap", fake_step_overlap
+    )
     monkeypatch.setattr(runner_mod, "_stream_text_encoder", fake_text_stream)
 
-    ReferenceRunner.from_pretrained(
+    runner = ReferenceRunner.from_pretrained(
         "/checkpoint",
         workflow="ref2va",
         offload=True,
@@ -104,6 +121,7 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
         adaln_host_cache=True,
         block_stream_blocks_per_group=1,
         stream_text_encoder=True,
+        step_overlap=True,
     )
 
     assert captured["workflow"] == "ref2va"
@@ -119,7 +137,25 @@ def test_ref2va_routes_transformer_ref_through_task2_path(monkeypatch):
     assert captured["built_key"] == "transformer_ref"
     assert captured["adaln_host_cache"] is True
     assert captured["block_stream_component"] == "transformer_ref"
+    assert captured["step_overlap_transformer"] is pipeline.components[
+        "transformer_ref"
+    ]
     assert captured["stream_text_encoder"] is True
+    assert ordering == [
+        "update_components",
+        "block_streaming",
+        "step_overlap",
+        "text_encoder_streaming",
+        "components_manager_offload",
+    ]
+    assert runner.overlap_controller is overlap_controller
+
+
+def test_step_overlap_requires_bf16_block_streaming():
+    with pytest.raises(
+        ValueError, match="^step_overlap requires bf16 block streaming$"
+    ):
+        ReferenceRunner.from_pretrained(step_overlap=True)
 
 
 def test_ref2va_smoke_issue_command_uses_optimized_defaults(monkeypatch):

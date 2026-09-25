@@ -177,8 +177,9 @@ def resolve_resolution(resolution: str) -> tuple[int, int]:
 class ReferenceRunner:
     """Full-resident H3-Base FL2VA text-to-audio/video reference path."""
 
-    def __init__(self, pipeline):
+    def __init__(self, pipeline, overlap_controller=None):
         self.pipeline = pipeline
+        self.overlap_controller = overlap_controller
 
     @classmethod
     def from_pretrained(
@@ -201,6 +202,8 @@ class ReferenceRunner:
         stream_text_encoder: bool = False,
         step_overlap: bool = False,
     ) -> "ReferenceRunner":
+        if step_overlap and not block_stream_blocks_per_group:
+            raise ValueError("step_overlap requires bf16 block streaming")
         try:
             from diffusers import MiniMaxH3ModularPipeline
         except ImportError as exc:
@@ -279,6 +282,7 @@ class ReferenceRunner:
                     )
         if built:
             pipeline.update_components(**built)
+        overlap_controller = None
         if block_stream_blocks_per_group:
             if not offload:
                 raise ValueError(
@@ -292,6 +296,12 @@ class ReferenceRunner:
                 block_stream_blocks_per_group,
                 block_stream_to_disk,
                 transformer_component,
+            )
+        if step_overlap:
+            from omni_infinity.step_overlap import enable_step_overlap
+
+            overlap_controller = enable_step_overlap(
+                _transformer_component(pipeline, transformer_component)
             )
         if stream_text_encoder:
             if not offload:
@@ -307,7 +317,7 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
-        return cls(pipeline)
+        return cls(pipeline, overlap_controller=overlap_controller)
 
     def generate(
         self,

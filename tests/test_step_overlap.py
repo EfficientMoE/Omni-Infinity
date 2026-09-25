@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 
 HIDDEN = 11520
-BOTTLENECK = 2912
+BOTTLENECK = HIDDEN
 
 
 @dataclasses.dataclass
@@ -160,6 +160,8 @@ def _intersection_ms(
 def test_first_group_prefetch_overlaps_previous_step_tail():
     from diffusers.hooks import apply_group_offloading
 
+    from omni_infinity.step_overlap import enable_step_overlap
+
     timeline = _Timeline()
     transformer = _SyntheticTransformer(timeline)
     apply_group_offloading(
@@ -173,6 +175,18 @@ def test_first_group_prefetch_overlaps_previous_step_tail():
         low_cpu_mem_usage=False,
     )
     groups = _block_groups(transformer)
+    first_group = groups[0]
+    last_hook = transformer.transformer_blocks[-1]._diffusers_hook.get_hook(
+        "group_offloading"
+    )
+    top_hook = transformer._diffusers_hook.get_hook("group_offloading")
+    original_values = (
+        first_group.onload_self,
+        first_group.non_blocking,
+        last_hook.next_group,
+        top_hook.next_group,
+    )
+    controller = enable_step_overlap(transformer)
     streams = {group.stream for group in groups}
     assert None not in streams
 
@@ -187,6 +201,13 @@ def test_first_group_prefetch_overlaps_previous_step_tail():
             timeline.step = step
             hidden_states = transformer(hidden_states)
     torch.cuda.synchronize()
+    controller.close()
+    assert (
+        first_group.onload_self,
+        first_group.non_blocking,
+        last_hook.next_group,
+        top_hook.next_group,
+    ) == original_values
 
     compute_intervals = {
         step: [
@@ -241,8 +262,12 @@ def test_first_group_prefetch_overlaps_previous_step_tail():
         ]
         copy_intervals = [_interval(origin, copy) for copy in copies]
         total_h2d_ms = sum(end - start for start, end in copy_intervals)
+        compute_windows = [
+            last_compute[destination_step - 1],
+            *compute_intervals[destination_step],
+        ]
         overlapped_h2d_ms = sum(
-            _intersection_ms(interval, compute_intervals[destination_step])
+            _intersection_ms(interval, compute_windows)
             for interval in copy_intervals
         )
         ratio = overlapped_h2d_ms / total_h2d_ms
