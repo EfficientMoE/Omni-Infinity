@@ -24,11 +24,15 @@ pipeline to 17n+5).
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 from omni_infinity.runner import (
     _OUTPUT_KEYS,
     GenerationResult,
+    StepCallback,
+    _denoising_progress,
     _state_value,
 )
 
@@ -127,16 +131,25 @@ class VdnRunner:
         num_evaluations: int | None = None,
         num_frames: int = 120,
         output_type: str = "np",
+        image: Any = None,
+        last_image: Any = None,
+        step_callback: StepCallback | None = None,
     ) -> GenerationResult:
         evaluations = num_evaluations or self.default_evaluations
         generator = torch.Generator(device="cpu").manual_seed(seed)
-        state = self.pipeline(
-            prompt=prompt,
-            num_frames=num_frames,
-            num_inference_steps=_sigma_grid_points(evaluations),
-            generator=generator,
-            output_type=output_type,
-        )
+        call_kwargs = {
+            "prompt": prompt,
+            "num_frames": num_frames,
+            "num_inference_steps": _sigma_grid_points(evaluations),
+            "generator": generator,
+            "output_type": output_type,
+        }
+        if image is not None:
+            call_kwargs["image"] = image
+        if last_image is not None:
+            call_kwargs["last_image"] = last_image
+        with _denoising_progress(self.pipeline, evaluations, step_callback):
+            state = self.pipeline(**call_kwargs)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

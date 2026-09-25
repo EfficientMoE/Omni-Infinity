@@ -76,3 +76,50 @@ def test_unknown_variant_raises(fake):
 def test_sigma_grid_points_are_evals_plus_one():
     assert vdn._sigma_grid_points(8) == 9
     assert vdn._sigma_grid_points(50) == 51
+
+
+def test_generate_reports_each_denoising_step_and_removes_hook():
+    calls = {}
+
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class FakeState:
+        values = {
+            "videos": ["video"],
+            "audio": torch.zeros(2, 4),
+            "sampling_rate": 48000,
+            "latents": torch.zeros(1),
+            "audio_latents": torch.zeros(2),
+        }
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer = FakeTransformer()
+
+        def __call__(self, **kwargs):
+            calls.update(kwargs)
+            for _ in range(3):
+                self.transformer(torch.ones(1))
+            return FakeState()
+
+    pipeline = FakePipeline()
+    progress = []
+    first = object()
+    last = object()
+    vdn.VdnRunner(pipeline, default_evaluations=8).generate(
+        "prompt",
+        num_evaluations=3,
+        image=first,
+        last_image=last,
+        step_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+
+    assert calls["num_inference_steps"] == 4
+    assert calls["image"] is first
+    assert calls["last_image"] is last
+    assert progress == [(1, 3), (2, 3), (3, 3)]
+    assert pipeline.transformer._forward_hooks == {}

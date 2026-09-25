@@ -16,9 +16,13 @@ fixtures for the parity gate in ``tests/test_reference_parity.py``.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
+from contextlib import contextmanager
 from typing import Any
 
 import torch
+
+StepCallback = Callable[[int, int], None]
 
 
 def _transformer_component(pipeline):
@@ -33,6 +37,29 @@ def _transformer_component(pipeline):
         if component is not None:
             return component
     raise AttributeError("could not locate the transformer on the pipeline")
+
+
+@contextmanager
+def _denoising_progress(
+    pipeline, total_steps: int, callback: StepCallback | None
+):
+    if callback is None:
+        yield
+        return
+    completed = 0
+
+    def after_transformer_forward(module, args, output):
+        nonlocal completed
+        completed += 1
+        callback(min(completed, total_steps), total_steps)
+
+    handle = _transformer_component(pipeline).register_forward_hook(
+        after_transformer_forward
+    )
+    try:
+        yield
+    finally:
+        handle.remove()
 
 
 def _enable_block_streaming(pipeline, device, blocks_per_group, to_disk):
@@ -288,18 +315,29 @@ class ReferenceRunner:
         resolution: str = "256p",
         num_frames: int = 8,
         output_type: str = "np",
+        image: Any = None,
+        last_image: Any = None,
+        step_callback: StepCallback | None = None,
     ) -> GenerationResult:
         height, width = resolve_resolution(resolution)
         generator = torch.Generator(device="cpu").manual_seed(seed)
-        state = self.pipeline(
-            prompt=prompt,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            num_inference_steps=num_inference_steps,
-            generator=generator,
-            output_type=output_type,
-        )
+        call_kwargs = {
+            "prompt": prompt,
+            "height": height,
+            "width": width,
+            "num_frames": num_frames,
+            "num_inference_steps": num_inference_steps,
+            "generator": generator,
+            "output_type": output_type,
+        }
+        if image is not None:
+            call_kwargs["image"] = image
+        if last_image is not None:
+            call_kwargs["last_image"] = last_image
+        with _denoising_progress(
+            self.pipeline, num_inference_steps, step_callback
+        ):
+            state = self.pipeline(**call_kwargs)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

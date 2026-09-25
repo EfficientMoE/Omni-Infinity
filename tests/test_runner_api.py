@@ -90,6 +90,52 @@ def test_generate_maps_parameters_into_pipeline_call():
     assert torch.equal(result.audio_latents, torch.zeros(2))
 
 
+def test_generate_reports_each_denoising_step_and_removes_hook():
+    calls = {}
+
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, value):
+            return value
+
+    class FakeState:
+        values = {
+            "videos": ["video"],
+            "audio": torch.zeros(2, 4),
+            "sampling_rate": 48000,
+            "latents": torch.zeros(1),
+            "audio_latents": torch.zeros(2),
+        }
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer = FakeTransformer()
+
+        def __call__(self, **kwargs):
+            calls.update(kwargs)
+            for _ in range(kwargs["num_inference_steps"]):
+                self.transformer(torch.ones(1))
+            return FakeState()
+
+    pipeline = FakePipeline()
+    progress = []
+    first = object()
+    last = object()
+    ReferenceRunner(pipeline).generate(
+        "prompt",
+        num_inference_steps=3,
+        image=first,
+        last_image=last,
+        step_callback=lambda completed, total: progress.append(
+            (completed, total)
+        ),
+    )
+
+    assert calls["image"] is first
+    assert calls["last_image"] is last
+    assert progress == [(1, 3), (2, 3), (3, 3)]
+    assert pipeline.transformer._forward_hooks == {}
+
+
 def test_block_streaming_invokes_group_offload_and_requires_offload():
     from omni_infinity import runner as runner_mod
 
