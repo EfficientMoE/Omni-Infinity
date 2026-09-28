@@ -1,0 +1,145 @@
+# Copyright (c) EfficientMoE.
+# SPDX-License-Identifier: Apache-2.0
+
+import io
+from dataclasses import dataclass
+from fractions import Fraction
+
+import av
+import numpy as np
+import torch
+
+CODEC: str = 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"'
+
+
+@dataclass(frozen=True)
+class MediaFragment:
+    index: int
+    pts: float
+    duration: float
+    keyframe: bool
+    video_bytes: bytes
+
+
+def _box_end(data: bytes, offset: int) -> int:
+    size = int.from_bytes(data[offset:offset + 4], "big")
+    if size == 1:
+        return offset + int.from_bytes(data[offset + 8:offset + 16], "big")
+    if size == 0:
+        return len(data)
+    return offset + size
+
+
+def _find_box(data: bytes, box_type: bytes, start: int = 0) -> int:
+    offset = start
+    while offset + 8 <= len(data):
+        if data[offset + 4:offset + 8] == box_type:
+            return offset
+        next_offset = _box_end(data, offset)
+        if next_offset <= offset:
+            break
+        offset = next_offset
+    raise ValueError(f"MP4 box {box_type!r} not found")
+
+
+def _split_fragments(
+    data: bytes, frame_count: int, chunk_frames: int, fps: int
+) -> tuple[bytes, tuple[MediaFragment, ...]]:
+    moov = _find_box(data, b"moov")
+    init_end = _box_end(data, moov)
+    fragment_starts = []
+    offset = init_end
+    while offset < len(data):
+        moof = _find_box(data, b"moof", offset)
+        fragment_starts.append(moof)
+        offset = _box_end(data, moof)
+        try:
+            offset = _find_box(data, b"moof", offset)
+        except ValueError:
+            break
+
+    fragments = []
+    for index, start in enumerate(fragment_starts):
+        end = (
+            fragment_starts[index + 1]
+            if index + 1 < len(fragment_starts)
+            else len(data)
+        )
+        frames_in_fragment = min(
+            chunk_frames, frame_count - index * chunk_frames
+        )
+        fragments.append(
+            MediaFragment(
+                index=index,
+                pts=index * chunk_frames / fps,
+                duration=frames_in_fragment / fps,
+                keyframe=True,
+                video_bytes=data[start:end],
+            )
+        )
+    return data[:init_end], tuple(fragments)
+
+
+def fragment_clip(
+    frames: np.ndarray,
+    audio: torch.Tensor,
+    sample_rate: int,
+    *,
+    fps: int = 24,
+    chunk_frames: int = 24,
+) -> tuple[bytes, tuple[MediaFragment, ...]]:
+    frame_count, height, width, _ = frames.shape
+    output = io.BytesIO()
+    container = av.open(
+        output,
+        mode="w",
+        format="mp4",
+        options={"movflags": "frag_keyframe+empty_moov+default_base_moof"},
+    )
+    video_stream = container.add_stream("libx264", rate=fps)
+    video_stream.width = width
+    video_stream.height = height
+    video_stream.pix_fmt = "yuv420p"
+    video_stream.time_base = Fraction(1, fps)
+    video_stream.gop_size = chunk_frames
+    video_stream.codec_context.max_b_frames = 0
+    video_stream.options = {
+        "g": str(chunk_frames),
+        "keyint_min": str(chunk_frames),
+        "sc_threshold": "0",
+    }
+
+    audio_stream = container.add_stream("aac", rate=sample_rate)
+    audio_stream.layout = "stereo"
+    audio_stream.sample_rate = sample_rate
+
+    packets = []
+    for index, frame in enumerate(frames):
+        video_frame = av.VideoFrame.from_ndarray(
+            np.clip(frame * 255, 0, 255).astype(np.uint8), format="rgb24"
+        )
+        video_frame.pts = index
+        video_frame.time_base = Fraction(1, fps)
+        packets.extend(video_stream.encode(video_frame))
+
+    audio_array = audio.detach().cpu().numpy()
+    audio_frame = av.AudioFrame.from_ndarray(
+        audio_array, format="fltp", layout="stereo"
+    )
+    audio_frame.sample_rate = sample_rate
+    packets.extend(audio_stream.encode(audio_frame))
+    packets.extend(video_stream.encode())
+    packets.extend(audio_stream.encode())
+    packets.sort(
+        key=lambda packet: (
+            (packet.dts if packet.dts is not None else packet.pts)
+            * packet.time_base
+            if packet.dts is not None or packet.pts is not None
+            else float("inf")
+        )
+    )
+    for packet in packets:
+        container.mux(packet)
+    container.close()
+
+    return _split_fragments(output.getvalue(), frame_count, chunk_frames, fps)
