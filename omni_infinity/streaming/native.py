@@ -66,7 +66,7 @@ class NativeChunker:
             if incoming is not None:
                 if incoming.prompt is not None:
                     prompt = incoming.prompt
-                if incoming.action is not None:
+                if incoming.down and incoming.action is not None:
                     action = instruction = incoming.action
             yield MediaChunk(
                 index=fragment.index,
