@@ -7,10 +7,10 @@ shows no frames until the whole MP4 exists, and progress is only a step
 counter. There is also no player, and no place to show the prompt or
 per-interval instruction next to the video.
 
-This document is the implementation design and the deliverable list. It does
-not land the feature. The H3-World model itself (LoRA, directed attention,
-`h3-world` registry entry, native chunk production) is a follow-up that this
-layer is shaped to accept.
+This document is the behavior contract for the streaming layer implemented
+on this branch. The operator quickstart is the README Streaming playback
+section. The H3-World model itself (LoRA, directed attention, an `h3-world`
+registry entry, and native chunk production) remains a follow-up.
 
 ## What stays
 
@@ -69,7 +69,8 @@ New package `omni_infinity/streaming/`.
 
 - `index`, `pts`, `duration`, `keyframe`
 - `video_bytes`: one fMP4 media fragment, or `None` before media exists
-- `audio_bytes`: optional AAC fragment for the same interval
+- `audio_bytes` is null on the wire; audio is muxed into the fMP4 fragment
+  carried by `video_bytes`
 - `prompt`: the active prompt string
 - `instruction`, `action`: optional, `None` for a static FL2VA prompt
 - `done`: true on the last chunk of the session
@@ -137,6 +138,7 @@ the GPU worker remains free for the next job.
 Optional passive fallback, only if `OMNI_STREAM_FALLBACK_HLS` is set:
 
 - `GET /v1/streams/{id}/playlist.m3u8`
+- `GET /v1/streams/{id}/init.mp4`
 - `GET /v1/streams/{id}/seg/{n}.m4s`
 - `GET /v1/streams/{id}/prompts.json` (sidecar timeline of prompt /
   instruction per fragment)
@@ -158,6 +160,7 @@ Added on `ServerSettings.from_env`:
 | --- | --- | --- |
 | `OMNI_STREAM_ENABLED` | off | Register stream routes and `/` |
 | `OMNI_STREAM_MAX_SESSIONS` | 1 | Cap concurrent streams |
+| `OMNI_STREAM_SESSION_TTL` | 30 | Seconds before an unconnected session can be cancelled. It is checked when the next session is created. |
 | `OMNI_STREAM_CHUNK_FRAMES` | 24 | Frames per fMP4 fragment (about 1 s at 24 fps) |
 | `OMNI_STREAM_QUEUE_CHUNKS` | 8 | Bounded async sender queue capacity |
 | `OMNI_STREAM_FALLBACK_HLS` | off | Publish the playlist / segment / prompt sidecar |
@@ -169,9 +172,9 @@ Added on `ServerSettings.from_env`:
 Local player: `omni_infinity/client/` plus `examples/stream_play.py`. A
 WebSocket client appends fMP4 fragments and plays them with PyAV, or pipes
 the same byte stream to `ffplay` / `mpv`. It prints or overlays the active
-prompt and instruction. Phase 2 reads the keyboard and sends `input`. No new
-heavy dependency is needed beyond the lightweight `websockets` runtime added
-to `serve`; `av` is already present.
+prompt and instruction. `examples/stream_play.py --interactive` sends
+`input`. `websockets>=12,<16` is already listed in the `serve` and `dev`
+extras; `av` is already present.
 
 Browser player: `omni_infinity/serve/webui/`, static files, no build step.
 Served at `/` when streaming is enabled. A `<video>` element plus an MSE
@@ -209,7 +212,8 @@ matches the existing job artifact for the same generation result.
 
 ### Phase 2 — interactive control
 
-Still this issue, still without the H3-World model.
+`source="native"` selects `NativeChunker`, which applies one queued `input`
+to the next chunk. This is the synthetic stub, not an H3-World forward.
 
 - The same WebSocket accepts `input`.
 - The `NativeChunker` stub changes the next chunk from a key or action.
@@ -222,8 +226,9 @@ prompt panel shows that chunk's instruction.
 
 ## Tests
 
-CPU CI already installs `.[dev]`; its dependency list mirrors `serve` and
-must add `websockets` with it. New tests follow `tests/test_job_api.py`:
+CPU CI already installs `.[dev]`; its dependency list mirrors `serve`, and
+`websockets` is already listed in the `serve` and `dev` extras. New tests
+follow `tests/test_job_api.py`:
 inject a fake runner or fake `ChunkSource`, drive the app with `httpx` and a
 WebSocket test client, and do not load weights. One CPU test also starts a
 live Uvicorn server and connects through `websockets` to cover the real
