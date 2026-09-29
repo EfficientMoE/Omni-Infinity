@@ -350,8 +350,7 @@ def dry_run_text() -> str:
     ]
     for run in GRID:
         lines.append(
-            f"run={run.name} axis={run.axis} "
-            f"restart={restart_command(run)}"
+            f"run={run.name} axis={run.axis} " f"restart={restart_command(run)}"
         )
     return "\n".join(lines) + "\n"
 
@@ -390,9 +389,7 @@ def measure_rows(repo_root: Path) -> list[dict]:
             {
                 "track": "ablation",
                 "stack": (
-                    "omni-native"
-                    if run.chunker == "native"
-                    else "omni-clip"
+                    "omni-native" if run.chunker == "native" else "omni-clip"
                 ),
                 "arch": run.arch,
                 "chunk_frames": run.chunk_frames,
