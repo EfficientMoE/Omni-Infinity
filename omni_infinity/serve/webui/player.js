@@ -3,6 +3,9 @@ const panel = document.querySelector("#prompt-panel");
 const status = document.querySelector("#status");
 const form = document.querySelector("#stream-form");
 const prompt = document.querySelector("#prompt");
+const source = document.querySelector("#source");
+const artifactLink = document.querySelector("#artifact");
+const cueCount = document.querySelector("#cue-count");
 const demoPrompt = [
   "[Shot 1] 2D-animated wide shot in an infinite black void. Thick grey smoke, black ink haze, and glowing red embers drift around a pale ronin assassin in layered black silk robes with red waist cords. A black katana rests at her hip. She stands still, right hand on the hilt, while cold white light cuts through the smoke. Low wind, ember crackle, distant taiko.",
   "[Shot 2] At 00:01.500 the camera pushes into a close-up. Her eyes narrow and she quickdraws the katana. A crimson slash tears the smoke. Robes and hair snap backward. A metallic scrape and a tearing whoosh.",
@@ -31,6 +34,8 @@ let sourceBuffer = null;
 let appendQueue = [];
 let cues = [];
 let endRequested = false;
+let generation = 0;
+let activeIndex = null;
 
 function bytes(encoded) {
   const raw = atob(encoded);
@@ -43,19 +48,55 @@ function activeCue(items, time) {
   );
 }
 
+function streamState(text) {
+  if (text === "offline") return "idle";
+  if (text === "opening") return "connecting";
+  if (text === "connected") return "waiting";
+  if (text.startsWith("chunk ")) return "live";
+  if (text === "complete") return "done";
+  return "alert";
+}
+
+function setStatus(text) {
+  status.textContent = text;
+  document.body.dataset.state = streamState(text);
+}
+
+// Resubmission replaces the MediaSource; a detached buffer must not append.
+function bufferIsLive() {
+  return (
+    mediaSource &&
+    sourceBuffer &&
+    Array.prototype.includes.call(mediaSource.sourceBuffers, sourceBuffer)
+  );
+}
+
 function appendNext() {
   if (!sourceBuffer || sourceBuffer.updating || appendQueue.length === 0) {
     if (
       endRequested &&
       sourceBuffer &&
       !sourceBuffer.updating &&
-      mediaSource?.readyState === "open"
+      mediaSource &&
+      mediaSource.readyState === "open"
     ) {
-      mediaSource.endOfStream();
+      try {
+        mediaSource.endOfStream();
+      } catch (error) {
+        /* already ended, or the MediaSource was replaced — ignore */
+      }
     }
     return;
   }
-  sourceBuffer.appendBuffer(appendQueue.shift());
+  if (!bufferIsLive()) {
+    return;
+  }
+  const segment = appendQueue.shift();
+  try {
+    sourceBuffer.appendBuffer(segment);
+  } catch (error) {
+    /* stale SourceBuffer from a superseded stream — drop the append */
+  }
 }
 
 function renderCues() {
@@ -65,11 +106,19 @@ function renderCues() {
       item.className = "cue";
       item.dataset.index = String(cue.index);
       const label = cue.instruction || cue.prompt;
-      item.innerHTML = `<time>${cue.pts.toFixed(3)}s</time><p></p>`;
-      item.querySelector("p").textContent = label;
+      const stamp = document.createElement("time");
+      stamp.textContent = `${cue.pts.toFixed(3)}s`;
+      const body = document.createElement("p");
+      body.textContent = label;
+      item.append(stamp, body);
       return item;
     }),
   );
+  if (cueCount) {
+    cueCount.textContent = cues.length
+      ? `${String(cues.length).padStart(2, "0")} cues`
+      : "";
+  }
 }
 
 function highlightCue() {
@@ -80,17 +129,40 @@ function highlightCue() {
       active !== undefined && item.dataset.index === String(active.index),
     );
   }
+  const nextIndex = active === undefined ? null : active.index;
+  if (nextIndex !== activeIndex) {
+    activeIndex = nextIndex;
+    if (nextIndex !== null) {
+      const target = panel.querySelector(`.cue[data-index="${nextIndex}"]`);
+      if (target) {
+        target.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
 }
 
 function openMedia(codec, init) {
-  mediaSource = new MediaSource();
-  video.src = URL.createObjectURL(mediaSource);
-  mediaSource.addEventListener(
+  const myGeneration = generation;
+  const media = new MediaSource();
+  mediaSource = media;
+  video.src = URL.createObjectURL(media);
+  media.addEventListener(
     "sourceopen",
     () => {
-      sourceBuffer = mediaSource.addSourceBuffer(codec);
-      sourceBuffer.addEventListener("updateend", appendNext);
-      appendQueue.push(bytes(init));
+      if (myGeneration !== generation) {
+        return;
+      }
+      sourceBuffer = media.addSourceBuffer(codec);
+      sourceBuffer.addEventListener("updateend", () => {
+        if (myGeneration !== generation) {
+          return;
+        }
+        appendNext();
+      });
+      // Server sends init + every chunk + end in one burst, so chunk
+      // payloads may already be queued. The init segment must be appended
+      // first — put it at the head of the queue before draining.
+      appendQueue.unshift(bytes(init));
       appendNext();
     },
     { once: true },
@@ -107,23 +179,35 @@ function receive(message) {
     cues.push(message);
     renderCues();
     appendNext();
-    status.textContent = `chunk ${message.index}`;
+    setStatus(`chunk ${message.index}`);
     return;
   }
   if (message.type === "end") {
     endRequested = true;
+    // Latch the terminal status first; a late append/flush must not stop
+    // the monitor from reading "complete".
+    setStatus("complete");
+    if (message.artifact_url && artifactLink) {
+      artifactLink.href = message.artifact_url;
+      artifactLink.hidden = false;
+    }
     appendNext();
-    status.textContent = "complete";
     return;
   }
   if (message.type === "error") {
-    status.textContent = message.detail;
+    setStatus(message.detail);
   }
 }
 
 async function createStream(event) {
   event.preventDefault();
-  status.textContent = "opening";
+  // Drop focus off the submit button so the Space "jump" key can never
+  // re-trigger a hidden submit once the stream has ended.
+  if (document.activeElement && document.activeElement.blur) {
+    document.activeElement.blur();
+  }
+  generation += 1;
+  setStatus("opening");
   if (socket) {
     socket.close();
   }
@@ -131,10 +215,15 @@ async function createStream(event) {
   appendQueue = [];
   endRequested = false;
   cues = [];
+  activeIndex = null;
   renderCues();
+  if (artifactLink) {
+    artifactLink.hidden = true;
+    artifactLink.removeAttribute("href");
+  }
   const firstFrame = await fetch("/demo-first.png");
   if (!firstFrame.ok) {
-    status.textContent = `HTTP ${firstFrame.status}`;
+    setStatus(`HTTP ${firstFrame.status}`);
     return;
   }
   const firstFrameBytes = new Uint8Array(await firstFrame.arrayBuffer());
@@ -150,7 +239,7 @@ async function createStream(event) {
     body: JSON.stringify({
       type: "fl2va",
       prompt: prompt.value,
-      source: document.querySelector("#source").value,
+      source: source.value,
       model_arch: "h3-dense",
       optimizations: [
         "adaln-host-cache",
@@ -166,28 +255,34 @@ async function createStream(event) {
     }),
   });
   if (!response.ok) {
-    status.textContent = `HTTP ${response.status}`;
+    setStatus(`HTTP ${response.status}`);
     return;
   }
   const { stream_id: streamId } = await response.json();
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(
+  const connection = new WebSocket(
     `${protocol}://${location.host}/v1/streams/${streamId}/ws`,
   );
-  socket.addEventListener("open", () => {
-    status.textContent = "connected";
+  socket = connection;
+  connection.addEventListener("open", () => {
+    setStatus("connected");
   });
-  socket.addEventListener("message", (item) => {
+  connection.addEventListener("message", (item) => {
     receive(JSON.parse(item.data));
   });
-  socket.addEventListener("close", () => {
-    if (status.textContent !== "complete") {
-      status.textContent = "closed";
+  connection.addEventListener("close", () => {
+    if (socket === connection && status.textContent !== "complete") {
+      setStatus("closed");
     }
   });
 }
 
 function sendKey(event, down) {
+  // Never steal keys or preventDefault while the prompt or source has focus.
+  const focused = document.activeElement;
+  if (focused === prompt || focused === source) {
+    return;
+  }
   const action = keyActions[event.key];
   if (!action || !socket || socket.readyState !== WebSocket.OPEN) {
     return;
@@ -203,6 +298,7 @@ function sendKey(event, down) {
   );
 }
 
+setStatus("offline");
 form.addEventListener("submit", createStream);
 video.addEventListener("timeupdate", highlightCue);
 window.addEventListener("keydown", (event) => sendKey(event, true));
