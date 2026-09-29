@@ -119,9 +119,7 @@ def measure_run(
         num_frames=legal_frames(REQUESTED_FRAMES),
         source="clip",
     )
-    run = BenchmarkClient(
-        transport, fragment_probe=fragment_probe
-    ).run(request)
+    run = BenchmarkClient(transport, fragment_probe=fragment_probe).run(request)
     init, chunks, end = _media_events(run)
     end_ns = next(
         timed.received_ns for timed in run.events if timed.event is end
@@ -159,9 +157,7 @@ def measure_run(
             "quality_vs_job": parity,
             "e2e_ms": e2e_ms,
             "video_duration_s": duration_s,
-            "e2e_rtf": (
-                e2e_ms / (duration_s * 1000.0) if duration_s else ""
-            ),
+            "e2e_rtf": (e2e_ms / (duration_s * 1000.0) if duration_s else ""),
             "resolution": resolution,
             "decoded_parity": parity,
             "notes": notes,
@@ -322,8 +318,7 @@ def _media_events(
 
 def _csv_values(values: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        key: "" if value is None else value
-        for key, value in values.items()
+        key: "" if value is None else value for key, value in values.items()
     }
 
 

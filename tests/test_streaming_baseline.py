@@ -130,9 +130,7 @@ def test_measure_run_uses_typed_client_for_post_websocket_and_metrics():
             fragment_probe=lambda _init, _fragment: (0.0, 0.020),
             artifact_fetcher=lambda url: fetched.append(url) or b"artifact",
             parity_checker=lambda init, chunks, artifact: (
-                init == b"init"
-                and len(chunks) == 2
-                and artifact == b"artifact"
+                init == b"init" and len(chunks) == 2 and artifact == b"artifact"
             ),
         )
 
