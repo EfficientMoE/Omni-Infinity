@@ -147,6 +147,7 @@ def _unmeasured(notes: str) -> bool:
     return (
         "weights-absent" in notes
         or "issue-14-absent" in notes
+        or "server-down" in notes
         or notes == "api-absent"
     )
 

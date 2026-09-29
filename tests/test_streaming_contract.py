@@ -121,6 +121,9 @@ def test_unmeasured_notes_skip_before_numeric_gates():
         verdict_for({"stack": "vllm-helios", "notes": "weights-absent"})
         == "SKIP"
     )
+    assert (
+        verdict_for({"stack": "omni-clip", "notes": "server-down"}) == "SKIP"
+    )
 
 
 def test_sglang_rejects_only_cookbook_controls():
