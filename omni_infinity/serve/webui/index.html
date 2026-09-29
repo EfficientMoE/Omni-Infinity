@@ -80,7 +80,7 @@
         margin-top: 18px;
       }
 
-      input, select, button {
+      textarea, select, button {
         min-height: 42px;
         border: 1px solid var(--line);
         color: var(--ink);
@@ -88,7 +88,13 @@
         font: inherit;
       }
 
-      input { min-width: 0; padding: 0 13px; }
+      textarea {
+        grid-column: 1 / -1;
+        min-height: 148px;
+        padding: 12px 13px;
+        resize: vertical;
+        line-height: 1.45;
+      }
       select, button { padding: 0 14px; }
       button {
         border-color: var(--signal);
@@ -152,12 +158,7 @@
       <section class="stage">
         <video id="video" controls autoplay muted></video>
         <form id="stream-form">
-          <input
-            id="prompt"
-            aria-label="Prompt"
-            value="a red ball bouncing"
-            required
-          />
+          <textarea id="prompt" aria-label="Prompt" required></textarea>
           <select id="source" aria-label="Chunk source">
             <option value="clip">clip</option>
             <option value="native">native stub</option>

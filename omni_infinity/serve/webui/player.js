@@ -2,6 +2,21 @@ const video = document.querySelector("#video");
 const panel = document.querySelector("#prompt-panel");
 const status = document.querySelector("#status");
 const form = document.querySelector("#stream-form");
+const prompt = document.querySelector("#prompt");
+const demoPrompt = [
+  "[Shot 1] 2D-animated wide shot in an infinite black void. Thick grey smoke, black ink haze, and glowing red embers drift around a pale ronin assassin in layered black silk robes with red waist cords. A black katana rests at her hip. She stands still, right hand on the hilt, while cold white light cuts through the smoke. Low wind, ember crackle, distant taiko.",
+  "[Shot 2] At 00:01.500 the camera pushes into a close-up. Her eyes narrow and she quickdraws the katana. A crimson slash tears the smoke. Robes and hair snap backward. A metallic scrape and a tearing whoosh.",
+  "[Shot 3] At 00:03.000 a medium-wide shot pans as she leaps and spins. Overlapping crimson arcs scatter embers. Fabric snaps and the blade whistles.",
+  "[Shot 4] At 00:04.200 she lands and cuts a jagged crimson arc that freezes the smoke and debris in slow motion. A deep impact boom rings out, then a sustained high tone over a shamisen hit.",
+].join(" ");
+const demoScript = [
+  { t: 0.2, action: "hold", instruction: "Still stance in rolling smoke, hand on the katana." },
+  { t: 1.2, action: "draw", instruction: "Eyes narrow; quickdraw leaves a crimson slash." },
+  { t: 2.2, action: "dash", instruction: "Robes and hair snap back as she drives forward." },
+  { t: 3.2, action: "leap", instruction: "Airborne spins scatter red embers." },
+  { t: 4.2, action: "finish", instruction: "Finishing arc freezes smoke and debris." },
+];
+prompt.value = demoPrompt;
 const keyActions = {
   ArrowUp: "forward",
   ArrowDown: "back",
@@ -122,8 +137,19 @@ async function createStream(event) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "fl2va",
-      prompt: document.querySelector("#prompt").value,
+      prompt: prompt.value,
       source: document.querySelector("#source").value,
+      model_arch: "h3-dense",
+      optimizations: [
+        "adaln-host-cache",
+        "block-stream",
+        "text-encoder-stream",
+      ],
+      seed: 0,
+      num_inference_steps: 8,
+      resolution: "256p",
+      num_frames: 120,
+      action_script: demoScript,
     }),
   });
   if (!response.ok) {
