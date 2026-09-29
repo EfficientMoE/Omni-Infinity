@@ -32,8 +32,12 @@ No model weights are needed:
 
 ```bash
 docker run --rm omni-infinity-vdn:latest \
-  python -m pytest tests/ -k "not parity"
+  python -m pytest tests/ -m "not gpu and not weights" -q
 ```
+
+The image installs pytest and pytest-timeout, and does not install
+pytest-cov. The coverage floor and Ruff gate live in
+`.github/workflows/ci.yml`.
 
 ## Model cache and license
 
