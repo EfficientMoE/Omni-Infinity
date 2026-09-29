@@ -273,6 +273,73 @@ issue #9: the v0.1 contract is polling because callback authentication,
 signing, delivery persistence, and retry semantics have not yet been
 specified.
 
+## Streaming playback
+
+Streaming is opt-in and sits beside the job API. Set
+`OMNI_STREAM_ENABLED=1` before starting the same
+`python -m omni_infinity.serve` process. The browser player is then served at
+`http://127.0.0.1:8000/`.
+
+`POST /v1/streams` creates a passive stream with the same generation fields
+as a job:
+
+```bash
+curl http://127.0.0.1:8000/v1/streams \
+  -H 'content-type: application/json' \
+  -d '{
+    "type": "fl2va",
+    "prompt": "a red ball bouncing",
+    "model_arch": "h3-dense",
+    "optimizations": [
+      "adaln-host-cache", "block-stream", "text-encoder-stream"
+    ],
+    "resolution": "256p",
+    "num_frames": 120,
+    "source": "clip",
+    "action_script": [
+      {"t": 0, "action": "forward", "instruction": "move forward"}
+    ]
+  }'
+
+# HTTP 202: {"stream_id":"0123456789abcdef0123456789abcdef"}
+```
+
+Connect a WebSocket player to `WS /v1/streams/{id}/ws`. The server sends an
+`init` message containing the fMP4 initialization segment and MSE codec,
+followed by `chunk` messages carrying base64 fMP4 fragments plus their PTS,
+prompt, and optional instruction, then `end`. The `source="native"` test stub
+also accepts client `input` messages on that socket. Arrow keys map to
+forward/back/left/right and space maps to jump. The real H3-World native
+chunk producer is not included.
+
+`source="clip"` runs the existing one-shot dense or VDN runner, then fragments
+the decoded result. ClipChunker does not overlap generation with playback.
+It provides the player and prompt-timeline contract without changing model
+execution. GPU generation still shares the job API's single serialized
+worker.
+
+Every completed stream publishes the ordinary job artifact. Download it from
+`GET /v1/jobs/{id}/artifacts`; the existing status and artifact endpoints are
+unchanged. The local reference client is:
+
+```bash
+python examples/stream_play.py \
+  --url ws://127.0.0.1:8000/v1/streams/<id>/ws \
+  --player av
+```
+
+Streaming settings:
+
+- `OMNI_STREAM_ENABLED` defaults off and controls all stream routes and `/`.
+- `OMNI_STREAM_MAX_SESSIONS` defaults to `1`.
+- `OMNI_STREAM_SESSION_TTL` defaults to `30` seconds and releases sessions
+  whose WebSocket or HLS client never connects.
+- `OMNI_STREAM_CHUNK_FRAMES` defaults to `24`.
+- `OMNI_STREAM_QUEUE_CHUNKS` defaults to `8` and bounds socket buffering.
+- `OMNI_STREAM_FALLBACK_HLS` defaults off. When enabled, it adds
+  `/v1/streams/{id}/playlist.m3u8`, `init.mp4`, `seg/{n}.m4s`, and
+  `prompts.json` for passive clients.
+
 ## Deferred: shared `moe-kernels` package
 
 > **Deferred — shared `moe-kernels`.** Kernels currently live behind the
