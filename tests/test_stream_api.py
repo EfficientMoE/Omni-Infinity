@@ -11,6 +11,7 @@ import logging
 import socket
 import threading
 import time
+from pathlib import Path
 
 import av
 import httpx
@@ -597,6 +598,18 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
         "activeCue",
     ):
         assert needle in script.text
+
+
+def test_readme_documents_pseudo_streaming():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "ClipChunker does not overlap generation with playback." in readme
+    for needle in (
+        "OMNI_STREAM_ENABLED",
+        "POST /v1/streams",
+        "WS /v1/streams/{id}/ws",
+        "OMNI_STREAM_FALLBACK_HLS",
+    ):
+        assert needle in readme
 
 
 def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
