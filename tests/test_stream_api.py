@@ -573,6 +573,32 @@ def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
     assert prompts.json()["cues"][0]["prompt"] == "a red ball bouncing"
 
 
+def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
+    dark = ServerSettings(jobs_dir=tmp_path, optimizations=())
+    with TestClient(create_app(dark, lambda: object())) as client:
+        assert client.get("/").status_code == 404
+
+    live = ServerSettings(
+        jobs_dir=tmp_path, optimizations=(), stream_enabled=True
+    )
+    with TestClient(create_app(live, lambda: object())) as client:
+        page = client.get("/")
+        script = client.get("/player.js")
+
+    assert page.status_code == 200
+    assert 'id="prompt-panel"' in page.text
+    assert "<video" in page.text
+    for needle in (
+        "SourceBuffer",
+        "currentTime",
+        "keydown",
+        "keyup",
+        "forward",
+        "activeCue",
+    ):
+        assert needle in script.text
+
+
 def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
     tmp_path, artifact_result, monkeypatch
 ):

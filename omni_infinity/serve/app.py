@@ -34,6 +34,7 @@ _VRAM_UNITS = (
     ("mib", 1024**2),
     ("mb", 10**6),
 )
+_WEBUI_DIR = Path(__file__).with_name("webui")
 
 
 def parse_bytes(value: str) -> int:
@@ -224,6 +225,16 @@ def create_app(
         )
 
     if configured.stream_enabled:
+
+        @app.get("/", include_in_schema=False)
+        def stream_player():
+            return FileResponse(_WEBUI_DIR / "index.html")
+
+        @app.get("/player.js", include_in_schema=False)
+        def stream_player_script():
+            return FileResponse(
+                _WEBUI_DIR / "player.js", media_type="text/javascript"
+            )
 
         def create_stream(request: StreamRequest):
             try:
