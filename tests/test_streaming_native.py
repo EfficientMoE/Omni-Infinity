@@ -24,3 +24,14 @@ def test_native_input_changes_only_the_next_chunk():
     assert chunker.init
     with pytest.raises(StopIteration):
         next(iterator)
+
+
+def test_native_key_release_does_not_repeat_the_action():
+    request = StreamRequest(type="fl2va", prompt="idle", source="native")
+    chunker = NativeChunker(chunk_frames=2, chunks=2)
+    iterator = chunker.iter_chunks(request)
+    next(iterator)
+    chunker.push_input(StreamInput(action="forward", down=False))
+    released = next(iterator)
+    assert released.action is None
+    assert released.instruction is None

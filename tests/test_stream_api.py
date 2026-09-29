@@ -133,6 +133,24 @@ def test_streams_are_absent_unless_enabled(tmp_path):
         assert client.post("/v1/streams", json=_body()).status_code == 404
 
 
+def test_stream_request_omitting_profile_uses_the_loaded_default(tmp_path):
+    settings = ServerSettings(jobs_dir=tmp_path, stream_enabled=True)
+    with TestClient(create_app(settings, lambda: object())) as client:
+        response = client.post(
+            "/v1/streams",
+            json={
+                "type": "fl2va",
+                "prompt": "a red ball bouncing",
+                "source": "native",
+            },
+        )
+        assert response.status_code == 202, response.text
+        stream_id = response.json()["stream_id"]
+        request = client.get(f"/v1/jobs/{stream_id}").json()["request"]
+    assert request["model_arch"] == settings.model_arch
+    assert request["optimizations"] == list(settings.optimizations)
+
+
 def test_open_session_caps_and_reuses_job_errors(tmp_path):
     settings = ServerSettings(
         jobs_dir=tmp_path, optimizations=(), stream_enabled=True
@@ -168,6 +186,16 @@ def test_finish_releases_stream_session_slot(tmp_path):
 
         second = client.post("/v1/streams", json=_body())
         assert second.status_code == 202
+
+
+def test_unconnected_session_expires_and_releases_its_slot(tmp_path):
+    settings = _stream_settings(tmp_path, stream_session_ttl=0)
+    with TestClient(create_app(settings, lambda: object())) as client:
+        first = _open_stream(client)
+        second = client.post("/v1/streams", json=_body())
+        first_status = client.get(f"/v1/jobs/{first}").json()["status"]
+    assert second.status_code == 202
+    assert first_status == "cancelled"
 
 
 def test_stream_persists_only_generation_request_fields(tmp_path):
@@ -534,6 +562,26 @@ def test_malformed_native_input_reports_error_and_continues(
     assert end["type"] == "end"
 
 
+def test_non_json_native_input_reports_error_and_continues(
+    tmp_path, artifact_result
+):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path, stream_chunk_frames=2)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        stream_id = _open_stream(client, source="native", prompt="idle")
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            assert socket.receive_json()["type"] == "init"
+            assert socket.receive_json()["index"] == 0
+            socket.send_text("not json")
+            error = socket.receive_json()
+            second = socket.receive_json()
+            end = socket.receive_json()
+    assert error["type"] == "error"
+    assert error["detail"] == "invalid stream input"
+    assert second["index"] == 1
+    assert end["type"] == "end"
+
+
 def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
     runner = _FakeRunner(artifact_result)
     disabled = _stream_settings(tmp_path, stream_fallback_hls=False)
@@ -551,11 +599,15 @@ def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
         before = client.get(playlist_url)
         assert before.status_code == 409
         assert before.json()["detail"] == "stream media is not ready"
-
-        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
-            messages = _read_until_end(socket)
-
-        playlist = client.get(playlist_url)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            playlist = client.get(playlist_url)
+            if (
+                playlist.status_code == 200
+                and "#EXT-X-ENDLIST" in playlist.text
+            ):
+                break
+            time.sleep(0.01)
         assert playlist.status_code == 200
         assert '#EXT-X-MAP:URI="init.mp4"' in playlist.text
         assert "seg/0.m4s" in playlist.text
@@ -567,11 +619,54 @@ def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
 
     assert init.status_code == 200
     assert b"moov" in init.content
-    first_chunk = next(
-        message for message in messages if message["type"] == "chunk"
-    )
-    assert segment.content == base64.b64decode(first_chunk["video_b64"])
+    assert b"moof" in segment.content
     assert prompts.json()["cues"][0]["prompt"] == "a red ball bouncing"
+
+
+def test_media_cache_is_disabled_or_bounded(tmp_path, artifact_result):
+    runner = _FakeRunner(artifact_result)
+    disabled = _stream_settings(tmp_path / "off", stream_fallback_hls=False)
+    with TestClient(create_app(disabled, lambda: runner)) as client:
+        stream_id = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            _read_until_end(socket)
+        assert client.app.state.stream_service._media == {}
+
+    enabled = _stream_settings(tmp_path / "on", stream_fallback_hls=True)
+    with TestClient(create_app(enabled, lambda: runner)) as client:
+        first = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{first}/ws") as socket:
+            _read_until_end(socket)
+        second = _open_stream(client)
+        media = client.app.state.stream_service._media
+        assert first not in media
+        assert second in media
+
+
+def test_disconnect_after_generation_still_publishes_artifact(
+    tmp_path, artifact_result, monkeypatch
+):
+    original_send = WebSocket.send_json
+
+    async def disconnect_on_second_chunk(self, data, mode="text"):
+        if data.get("type") == "chunk" and data["index"] == 1:
+            raise WebSocketDisconnect()
+        await original_send(self, data, mode)
+
+    monkeypatch.setattr(WebSocket, "send_json", disconnect_on_second_chunk)
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        stream_id = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            assert socket.receive_json()["type"] == "init"
+            assert socket.receive_json()["index"] == 0
+            with pytest.raises(WebSocketDisconnect):
+                socket.receive_json()
+        status = client.get(f"/v1/jobs/{stream_id}").json()["status"]
+        artifact = tmp_path / stream_id / "output.mp4"
+    assert status == "succeeded"
+    assert artifact.is_file()
 
 
 def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):

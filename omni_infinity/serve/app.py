@@ -68,6 +68,7 @@ class ServerSettings:
     workers: int = 1
     stream_enabled: bool = False
     stream_max_sessions: int = 1
+    stream_session_ttl: float = 30.0
     stream_chunk_frames: int = 24
     stream_queue_chunks: int = 8
     stream_fallback_hls: bool = False
@@ -106,6 +107,9 @@ class ServerSettings:
             ),
             stream_max_sessions=int(
                 os.environ.get("OMNI_STREAM_MAX_SESSIONS", "1")
+            ),
+            stream_session_ttl=float(
+                os.environ.get("OMNI_STREAM_SESSION_TTL", "30")
             ),
             stream_chunk_frames=int(
                 os.environ.get("OMNI_STREAM_CHUNK_FRAMES", "24")
@@ -173,6 +177,7 @@ def create_app(
         stream_service = StreamService(
             service,
             max_sessions=configured.stream_max_sessions,
+            session_ttl=configured.stream_session_ttl,
             chunk_frames=configured.stream_chunk_frames,
             hls=configured.stream_fallback_hls,
             queue_chunks=configured.stream_queue_chunks,
@@ -266,6 +271,7 @@ def create_app(
 
             def stream_media(stream_id: str):
                 try:
+                    app.state.stream_service.start_hls(stream_id)
                     init, chunks, ended = (
                         app.state.stream_service.media_snapshot(stream_id)
                     )
