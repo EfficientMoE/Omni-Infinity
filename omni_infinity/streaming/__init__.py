@@ -9,6 +9,7 @@ from omni_infinity.streaming.chunks import (
     StreamRequest,
     active_cue,
 )
+from omni_infinity.streaming.clip import ClipChunker
 from omni_infinity.streaming.fragment import CODEC, MediaFragment, fragment_clip
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "StreamInput",
     "StreamRequest",
     "active_cue",
+    "ClipChunker",
     "CODEC",
     "MediaFragment",
     "fragment_clip",
