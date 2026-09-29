@@ -25,9 +25,9 @@ def test_fragment_clip_keyframes_and_round_trips():
     assert fragments[1].pts == pytest.approx(2 / 24)
     assert fragments[2].duration == pytest.approx(1 / 24)
     assert all(item.video_bytes.startswith(b"\x00\x00") for item in fragments)
-    container = av.open(io.BytesIO(init + b"".join(
-        item.video_bytes for item in fragments
-    )))
+    container = av.open(
+        io.BytesIO(init + b"".join(item.video_bytes for item in fragments))
+    )
     decoded = sum(1 for _ in container.decode(video=0))
     container.close()
     assert decoded == 5

@@ -22,9 +22,9 @@ class MediaFragment:
 
 
 def _box_end(data: bytes, offset: int) -> int:
-    size = int.from_bytes(data[offset:offset + 4], "big")
+    size = int.from_bytes(data[offset : offset + 4], "big")
     if size == 1:
-        return offset + int.from_bytes(data[offset + 8:offset + 16], "big")
+        return offset + int.from_bytes(data[offset + 8 : offset + 16], "big")
     if size == 0:
         return len(data)
     return offset + size
@@ -33,7 +33,7 @@ def _box_end(data: bytes, offset: int) -> int:
 def _find_box(data: bytes, box_type: bytes, start: int = 0) -> int:
     offset = start
     while offset + 8 <= len(data):
-        if data[offset + 4:offset + 8] == box_type:
+        if data[offset + 4 : offset + 8] == box_type:
             return offset
         next_offset = _box_end(data, offset)
         if next_offset <= offset:
@@ -109,8 +109,9 @@ def fragment_clip(
         raise ValueError("frames must have positive dimensions")
     if frames.shape[3] != 3 or frames.dtype != np.float32:
         raise ValueError("frames must be float32 with shape (N, H, W, 3)")
-    if not np.isfinite(frames).all() or not ((0 <= frames).all() and
-                                             (frames <= 1).all()):
+    if not np.isfinite(frames).all() or not (
+        (0 <= frames).all() and (frames <= 1).all()
+    ):
         raise ValueError("frames must contain finite values in [0, 1]")
     if not isinstance(audio, torch.Tensor) or audio.ndim != 2:
         raise ValueError("audio must have shape (2, samples)")
