@@ -23,8 +23,10 @@ from omni_infinity.serve.service import (
     JobService,
     ProfileConflict,
     Ref2VANotImplemented,
+    SessionLimit,
 )
 from omni_infinity.serve.store import JobNotFound, JobStore
+from omni_infinity.serve.stream import StreamRequest, StreamService
 
 _VRAM_UNITS = (
     ("gib", 1024**3),
@@ -40,6 +42,10 @@ def parse_bytes(value: str) -> int:
         if lowered.endswith(suffix):
             return int(float(lowered[: -len(suffix)]) * multiplier)
     return int(lowered)
+
+
+def parse_bool(value: str) -> bool:
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,10 @@ class ServerSettings:
     host: str = "127.0.0.1"
     port: int = 8000
     workers: int = 1
+    stream_enabled: bool = False
+    stream_max_sessions: int = 1
+    stream_chunk_frames: int = 24
+    stream_fallback_hls: bool = False
 
     @classmethod
     def from_env(cls) -> ServerSettings:
@@ -89,6 +99,18 @@ class ServerSettings:
             host=os.environ.get("OMNI_HOST", "127.0.0.1"),
             port=int(os.environ.get("OMNI_PORT", "8000")),
             workers=int(os.environ.get("OMNI_WORKERS", "1")),
+            stream_enabled=parse_bool(
+                os.environ.get("OMNI_STREAM_ENABLED", "false")
+            ),
+            stream_max_sessions=int(
+                os.environ.get("OMNI_STREAM_MAX_SESSIONS", "1")
+            ),
+            stream_chunk_frames=int(
+                os.environ.get("OMNI_STREAM_CHUNK_FRAMES", "24")
+            ),
+            stream_fallback_hls=parse_bool(
+                os.environ.get("OMNI_STREAM_FALLBACK_HLS", "false")
+            ),
         )
 
 
@@ -141,8 +163,15 @@ def create_app(
         store.recover_interrupted()
         runner = runner_factory() if runner_factory else load_runner(configured)
         service = JobService(runner, profile, store)
+        stream_service = StreamService(
+            service,
+            max_sessions=configured.stream_max_sessions,
+            chunk_frames=configured.stream_chunk_frames,
+            hls=configured.stream_fallback_hls,
+        )
         app.state.store = store
         app.state.service = service
+        app.state.stream_service = stream_service
         app.state.profile = profile
         try:
             yield
@@ -185,5 +214,21 @@ def create_app(
             media_type="video/mp4",
             filename=f"{job_id}.mp4",
         )
+
+    if configured.stream_enabled:
+
+        @app.post("/v1/streams", status_code=202)
+        def create_stream(request: StreamRequest):
+            try:
+                stream_id = app.state.stream_service.open_session(request)
+            except SessionLimit as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except Ref2VANotImplemented as exc:
+                raise HTTPException(status_code=501, detail=str(exc)) from exc
+            except ProfileConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except InvalidMedia as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return {"stream_id": stream_id}
 
     return app
