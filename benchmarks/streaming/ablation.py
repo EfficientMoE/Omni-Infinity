@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmarks.streaming.client import build_request, detect_native_chunker
 from benchmarks.streaming.contract import (
+    ARCH_COMPARISON_RESOLUTION,
     BASELINE_ARCH,
     BASELINE_CHUNK_FRAMES,
     BASELINE_OPTS,
@@ -28,7 +31,6 @@ from benchmarks.streaming.contract import (
     SEED,
     SHORT_EDGE,
     WARMUP_DISCARD,
-    verdict_for,
 )
 
 REFERENCE_NAMES = (
@@ -39,20 +41,61 @@ REFERENCE_NAMES = (
 )
 CHUNK_FRAMES = (24, 48, 72, 120)
 VARIANCE_LIMIT = 0.03
+_ARCH_COMMON_OPTS = tuple(
+    opt for opt in BASELINE_OPTS if opt != "adaln-host-cache"
+)
+
+
+@dataclass(frozen=True)
+class ServerProfile:
+    """Settings fixed when the model-serving process starts."""
+
+    model_arch: str
+    optimizations: tuple[str, ...]
+    chunk_frames: int
+    stream_enabled: bool
+    fallback_hls: bool
+
+    def environment(self) -> tuple[tuple[str, str], ...]:
+        return (
+            ("OMNI_MODEL_ARCH", self.model_arch),
+            ("OMNI_OPTIMIZATIONS", ",".join(self.optimizations)),
+            ("OMNI_STREAM_ENABLED", _bool_text(self.stream_enabled)),
+            ("OMNI_STREAM_CHUNK_FRAMES", str(self.chunk_frames)),
+            ("OMNI_STREAM_FALLBACK_HLS", _bool_text(self.fallback_hls)),
+        )
+
+    def restart_command(self) -> tuple[str, ...]:
+        assignments = tuple(
+            f"{key}={value}" for key, value in self.environment()
+        )
+        return (
+            "env",
+            *assignments,
+            "python",
+            "-m",
+            "omni_infinity.serve",
+        )
 
 
 @dataclass(frozen=True)
 class AblationRun:
     name: str
+    axis: str
     chunk_frames: int = BASELINE_CHUNK_FRAMES
     transport: str = BASELINE_TRANSPORT
     arch: str = BASELINE_ARCH
     opts: tuple[str, ...] = BASELINE_OPTS
     chunker: str = "clip"
+    resolution: str = f"{SHORT_EDGE}p"
+
+
+def _bool_text(value: bool) -> str:
+    return "true" if value else "false"
 
 
 def baseline_profile() -> AblationRun:
-    return AblationRun("baseline")
+    return axis_baseline("chunk")
 
 
 def _without(opt: str) -> tuple[str, ...]:
@@ -60,35 +103,114 @@ def _without(opt: str) -> tuple[str, ...]:
 
 
 GRID: tuple[AblationRun, ...] = (
-    AblationRun("chunk-24"),
-    AblationRun("chunk-48", chunk_frames=48),
-    AblationRun("chunk-72", chunk_frames=72),
-    AblationRun("chunk-120", chunk_frames=120),
-    AblationRun("transport-ws"),
-    AblationRun("transport-hls", transport="hls"),
-    AblationRun("arch-dense"),
-    AblationRun("arch-vdn", arch="vdn-hybrid"),
-    AblationRun("opt-no-block-stream", opts=_without("block-stream")),
-    AblationRun("opt-fp8", opts=BASELINE_OPTS + ("fp8",)),
-    AblationRun("opt-no-text-stream", opts=_without("text-encoder-stream")),
-    AblationRun("chunker-clip"),
-    AblationRun("chunker-native", chunker="native"),
+    AblationRun("chunk-24", axis="chunk"),
+    AblationRun("chunk-48", axis="chunk", chunk_frames=48),
+    AblationRun("chunk-72", axis="chunk", chunk_frames=72),
+    AblationRun("chunk-120", axis="chunk", chunk_frames=120),
+    AblationRun("transport-ws", axis="transport"),
+    AblationRun("transport-hls", axis="transport", transport="hls"),
+    AblationRun(
+        "arch-dense",
+        axis="arch",
+        opts=_ARCH_COMMON_OPTS,
+        resolution=ARCH_COMPARISON_RESOLUTION,
+    ),
+    AblationRun(
+        "arch-vdn",
+        axis="arch",
+        arch="vdn-hybrid",
+        opts=_ARCH_COMMON_OPTS,
+        resolution=ARCH_COMPARISON_RESOLUTION,
+    ),
+    AblationRun(
+        "opt-no-block-stream",
+        axis="optimizations",
+        opts=_without("block-stream"),
+    ),
+    AblationRun(
+        "opt-fp8",
+        axis="optimizations",
+        opts=BASELINE_OPTS + ("fp8",),
+    ),
+    AblationRun(
+        "opt-no-text-stream",
+        axis="optimizations",
+        opts=_without("text-encoder-stream"),
+    ),
+    AblationRun("chunker-clip", axis="chunker"),
+    AblationRun("chunker-native", axis="chunker", chunker="native"),
 )
 
 
+def axis_baseline(axis: str) -> AblationRun:
+    if axis == "arch":
+        return AblationRun(
+            "arch-dense",
+            axis=axis,
+            opts=_ARCH_COMMON_OPTS,
+            resolution=ARCH_COMPARISON_RESOLUTION,
+        )
+    names = {
+        "chunk": "chunk-24",
+        "transport": "transport-ws",
+        "optimizations": "opt-baseline",
+        "chunker": "chunker-clip",
+    }
+    try:
+        return AblationRun(names[axis], axis=axis)
+    except KeyError:
+        raise ValueError(f"unknown ablation axis: {axis!r}") from None
+
+
+def startup_profile(run: AblationRun) -> ServerProfile:
+    return ServerProfile(
+        model_arch=run.arch,
+        optimizations=run.opts,
+        chunk_frames=run.chunk_frames,
+        stream_enabled=True,
+        fallback_hls=run.transport == "hls",
+    )
+
+
+def restart_command(run: AblationRun) -> str:
+    """Return the shell command for the required fresh server process."""
+
+    return shlex.join(startup_profile(run).restart_command())
+
+
+def request_for(run: AblationRun) -> dict:
+    """Build the matching wire request without encoding startup settings."""
+
+    return build_request(
+        model_arch=run.arch,
+        resolution=run.resolution,
+        prompt=PROMPT,
+        source=run.chunker,
+        optimizations=list(run.opts),
+        seed=SEED,
+        num_frames=REQUESTED_FRAMES,
+    )
+
+
 def diff_keys(run: AblationRun, base: AblationRun | None = None) -> list[str]:
-    pinned = baseline_profile() if base is None else base
+    pinned = axis_baseline(run.axis) if base is None else base
+    profile = startup_profile(run)
+    pinned_profile = startup_profile(pinned)
     changed = []
-    if run.chunk_frames != pinned.chunk_frames:
+    if profile.chunk_frames != pinned_profile.chunk_frames:
         changed.append("chunk_frames")
-    if run.transport != pinned.transport:
-        changed.append("transport")
-    if run.arch != pinned.arch:
+    if profile.fallback_hls != pinned_profile.fallback_hls:
+        changed.append("fallback_hls")
+    if profile.stream_enabled != pinned_profile.stream_enabled:
+        changed.append("stream_enabled")
+    if profile.model_arch != pinned_profile.model_arch:
         changed.append("arch")
-    if run.opts != pinned.opts:
+    if profile.optimizations != pinned_profile.optimizations:
         changed.append("opts")
     if run.chunker != pinned.chunker:
         changed.append("chunker")
+    if run.resolution != pinned.resolution:
+        changed.append("resolution")
     return changed
 
 
@@ -103,7 +225,8 @@ def measured_reps(first_e2e: float, second_e2e: float) -> int:
 
 
 def should_retry(notes: str) -> bool:
-    return "OOM" not in notes
+    lowered = notes.casefold()
+    return "oom" not in lowered and "out of memory" not in lowered
 
 
 def _by_name(rows: list[dict]) -> dict[str, dict]:
@@ -137,13 +260,10 @@ def choose_chunk_frames(rows: list[dict]) -> tuple[int, str]:
 
 
 def choose_transport(rows: list[dict]) -> tuple[str, str]:
-    found = _by_name(rows)
-    ws = found.get("transport-ws")
-    hls = found.get("transport-hls")
-    if ws is None or hls is None or _unmeasured(ws) or _unmeasured(hls):
-        return "ws", "REPORT"
-    if float(ws["ttff_ms"]) <= float(hls["ttff_ms"]):
-        return "ws", "PASS"
+    # HLS media is populated by the primary WebSocket generation. Its first
+    # retrieval therefore happens after generation and is not a live TTFF
+    # sample comparable with WebSocket playback.
+    del rows
     return "ws", "REPORT"
 
 
@@ -214,24 +334,26 @@ def score_block_stream(rows: list[dict]) -> str:
 def dry_run_text() -> str:
     lines = [
         "streaming ablation dry-run",
-        f"shape={SHORT_EDGE}p/{REQUESTED_FRAMES}f",
+        f"dense-baseline-shape={SHORT_EDGE}p/{REQUESTED_FRAMES}f",
+        (
+            "architecture-comparison-shape="
+            f"{ARCH_COMPARISON_RESOLUTION}/{REQUESTED_FRAMES}f"
+        ),
         f"seed={SEED}",
         f"prompt={PROMPT}",
         f"warmup-discard={WARMUP_DISCARD}",
-        "reps=1",
+        "measured-reps=2; third-if-e2e-variability>3%",
+        (
+            "transport-comparison=unsupported; "
+            "hls-retrieval=post-generation-only"
+        ),
     ]
-    lines.extend(f"run={run.name}" for run in GRID)
+    for run in GRID:
+        lines.append(
+            f"run={run.name} axis={run.axis} "
+            f"restart={restart_command(run)}"
+        )
     return "\n".join(lines) + "\n"
-
-
-def stream_api_present(repo_root: Path) -> bool:
-    serve = repo_root / "omni_infinity" / "serve"
-    if not serve.is_dir():
-        return False
-    for path in sorted(serve.glob("*.py")):
-        if "/v1/streams" in path.read_text(encoding="utf-8"):
-            return True
-    return False
 
 
 ABLATION_FIELDS: tuple[str, ...] = FIELDS + (
@@ -239,21 +361,29 @@ ABLATION_FIELDS: tuple[str, ...] = FIELDS + (
     "opts",
     "chunker",
     "s_per_eval",
+    "restart_command",
+    "transport_comparison_support",
 )
 
 
 def measure_rows(repo_root: Path) -> list[dict]:
-    if stream_api_present(repo_root):
-        notes = "server-down"
-    else:
-        notes = "issue-14-absent"
+    """Create a restart manifest; GPU collection is run one profile at a time.
+
+    The API rejects profile mismatches, so a single live process cannot execute
+    this grid. The rows intentionally remain skipped until an external runner
+    restarts the server with each row's ``restart_command`` and measures the
+    matching request from :func:`request_for`.
+    """
+
+    del repo_root
     rows = []
     for run in GRID:
         if run.chunker == "native":
-            row_notes = notes + "; native-runner-absent"
-            native = False
+            native_support = detect_native_chunker()
+            row_notes = native_support.reason
+            native = native_support.supported
         else:
-            row_notes = notes
+            row_notes = "restart-required"
             native = None
         row = {field: "" for field in FIELDS}
         row.update(
@@ -275,11 +405,18 @@ def measure_rows(repo_root: Path) -> list[dict]:
                 "opts": ",".join(run.opts),
                 "chunker": run.chunker,
                 "s_per_eval": "",
+                "resolution": run.resolution,
+                "restart_command": restart_command(run),
+                "transport_comparison_support": (
+                    "unsupported"
+                    if run.axis == "transport"
+                    else "not-applicable"
+                ),
             }
         )
         if native is not None:
             row["native_runner"] = native
-        row["verdict"] = verdict_for(row)
+        row["verdict"] = "SKIP"
         rows.append(row)
     return rows
 

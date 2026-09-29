@@ -10,17 +10,23 @@ from pathlib import Path
 from benchmarks.streaming.ablation import (
     GRID,
     REFERENCE_NAMES,
+    ServerProfile,
+    axis_baseline,
     choose_arch,
     choose_chunk_frames,
     choose_transport,
     diff_keys,
     dry_run_text,
     main,
+    measure_rows,
     measured_reps,
+    request_for,
+    restart_command,
     score_block_stream,
     score_fp8,
     score_text_stream,
     should_retry,
+    startup_profile,
 )
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -61,6 +67,8 @@ def test_dry_run_lists_every_name(tmp_path: Path):
     text = dry_run_text()
     for name in _NAMES:
         assert f"run={name}" in text
+    assert text.count("restart=env ") == len(GRID)
+    assert "OMNI_STREAM_ENABLED=true" in text
     out = tmp_path / "ablation.csv"
     assert main(["--dry-run", "--out", str(out)]) == 0
     assert not out.exists()
@@ -86,11 +94,66 @@ def test_dry_run_does_not_import_torch():
 def test_each_variant_changes_one_factor():
     assert [run.name for run in GRID] == list(_NAMES)
     for run in GRID:
-        count = len(diff_keys(run))
+        count = len(diff_keys(run, axis_baseline(run.axis)))
         if run.name in REFERENCE_NAMES:
             assert count == 0, run.name
         else:
             assert count == 1, run.name
+
+
+def test_startup_profiles_and_requests_match_the_real_server_contract():
+    by_name = {run.name: run for run in GRID}
+
+    dense = by_name["arch-dense"]
+    hybrid = by_name["arch-vdn"]
+    assert dense.resolution == hybrid.resolution == "768p"
+    assert startup_profile(dense).model_arch == "h3-dense"
+    assert startup_profile(hybrid).model_arch == "vdn-hybrid"
+
+    hls = by_name["transport-hls"]
+    assert startup_profile(hls).fallback_hls is True
+    assert "OMNI_STREAM_FALLBACK_HLS=true" in restart_command(hls)
+
+    chunk = by_name["chunk-72"]
+    profile = startup_profile(chunk)
+    assert profile.chunk_frames == 72
+    assert "OMNI_STREAM_CHUNK_FRAMES=72" in restart_command(chunk)
+
+    for run in GRID:
+        request = request_for(run)
+        profile = startup_profile(run)
+        assert request["model_arch"] == profile.model_arch
+        assert tuple(request["optimizations"]) == profile.optimizations
+        assert "chunk_frames" not in request
+        assert "transport" not in request
+        assert "stream_enabled" not in request
+
+
+def test_server_profile_command_contains_every_startup_setting():
+    profile = ServerProfile(
+        model_arch="h3-dense",
+        optimizations=("fp8",),
+        chunk_frames=48,
+        stream_enabled=True,
+        fallback_hls=False,
+    )
+    command = profile.restart_command()
+    assert command[:2] == ("env", "OMNI_MODEL_ARCH=h3-dense")
+    assert "OMNI_OPTIMIZATIONS=fp8" in command
+    assert "OMNI_STREAM_ENABLED=true" in command
+    assert "OMNI_STREAM_CHUNK_FRAMES=48" in command
+    assert "OMNI_STREAM_FALLBACK_HLS=false" in command
+    assert command[-3:] == ("python", "-m", "omni_infinity.serve")
+
+
+def test_manifest_keeps_synthetic_native_and_hls_comparison_unmeasured():
+    rows = {row["name"]: row for row in measure_rows(_REPO)}
+    assert rows["chunker-native"]["verdict"] == "SKIP"
+    assert "synthetic 16x16 stub" in rows["chunker-native"]["notes"]
+    assert rows["transport-hls"]["transport_comparison_support"] == (
+        "unsupported"
+    )
+    assert rows["transport-hls"]["verdict"] == "SKIP"
 
 
 def test_chunk_choice_is_the_smallest_faster_than_120():
@@ -110,20 +173,25 @@ def test_chunk_choice_is_the_smallest_faster_than_120():
     assert choose_chunk_frames(slower) == (24, "REPORT")
 
 
-def test_transport_and_arch_targets():
+def test_transport_is_not_scored_as_a_live_ttff_comparison():
     ok = [
         _row("transport-ws", ttff_ms=10),
         _row("transport-hls", ttff_ms=12),
-        _row("arch-dense", e2e_ms=100, peak_gib=20),
-        _row("arch-vdn", e2e_ms=80, peak_gib=20),
     ]
-    assert choose_transport(ok) == ("ws", "PASS")
-    assert choose_arch(ok) == ("vdn-hybrid", "PASS")
-    missed = [
+    assert choose_transport(ok) == ("ws", "REPORT")
+    reversed_ttff = [
         _row("transport-ws", ttff_ms=12),
         _row("transport-hls", ttff_ms=10),
     ]
-    assert choose_transport(missed) == ("ws", "REPORT")
+    assert choose_transport(reversed_ttff) == ("ws", "REPORT")
+
+
+def test_arch_target_uses_common_768p_rows():
+    ok = [
+        _row("arch-dense", e2e_ms=100, peak_gib=20),
+        _row("arch-vdn", e2e_ms=80, peak_gib=20),
+    ]
+    assert choose_arch(ok) == ("vdn-hybrid", "PASS")
 
 
 def test_opt_targets_and_oom_is_not_retried():
@@ -137,7 +205,9 @@ def test_opt_targets_and_oom_is_not_retried():
     assert score_text_stream(rows) == "PASS"
     assert score_block_stream(rows) == "REPORT"
     assert should_retry("OOM") is False
+    assert should_retry("CUDA out of memory") is False
     assert measured_reps(100.0, 102.0) == 2
+    assert measured_reps(100.0, 103.0) == 2
     assert measured_reps(100.0, 104.0) == 3
 
 
