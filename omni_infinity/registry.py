@@ -128,6 +128,40 @@ OPTIMIZATIONS = {
             }
         ),
     ),
+    # Issue #24 caches. Both are exact and opt-in; neither runs in the
+    # bitwise parity gates. The approximate C5 denoise-step cache is
+    # deliberately NOT an optimization entry: it needs H3-calibrated
+    # coefficients that a static registry row cannot carry (see
+    # omni_infinity/caches/denoise.py).
+    "condition-cache": OptimizationSpec(
+        name="condition-cache",
+        description=(
+            "C1: exact cross-request condition cache — layer-50 prompt "
+            "embeds, token tags and keyframe VAE latents keyed by the "
+            "hash of the whole prompt + image bytes (issue #24)."
+        ),
+        supported_archs=("h3-dense", "vdn-hybrid"),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(condition_cache=True),
+                "vdn-hybrid": _kw(condition_cache=True),
+            }
+        ),
+    ),
+    "vision-cache": OptimizationSpec(
+        name="vision-cache",
+        description=(
+            "C3: content-hash cache of the Qwen3-VL vision-tower "
+            "output, the vLLM-Omni encoder-cache rule (issue #24)."
+        ),
+        supported_archs=("h3-dense", "vdn-hybrid"),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(vision_cache=True),
+                "vdn-hybrid": _kw(vision_cache=True),
+            }
+        ),
+    ),
 }
 
 

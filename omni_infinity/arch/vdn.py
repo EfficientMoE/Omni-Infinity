@@ -32,6 +32,9 @@ from omni_infinity.runner import (
     _OUTPUT_KEYS,
     GenerationResult,
     StepCallback,
+    _capture_condition,
+    _consult_condition_cache,
+    _denoise_cache_context,
     _denoising_progress,
     _state_value,
 )
@@ -59,9 +62,25 @@ def _load_modular_pipeline(checkpoint: str, workflow: str):
 class VdnRunner:
     """VDN-H3 T2VA runner over the published diffusers component."""
 
-    def __init__(self, pipeline, default_evaluations: int):
+    transformer_component = "transformer"
+
+    def __init__(
+        self,
+        pipeline,
+        default_evaluations: int,
+        condition_cache=None,
+        condition_namespace: str = "",
+        vision_cache_controller=None,
+        device=None,
+    ):
         self.pipeline = pipeline
         self.default_evaluations = default_evaluations
+        self.condition_cache = condition_cache
+        self.condition_namespace = condition_namespace
+        self.vision_cache_controller = vision_cache_controller
+        self.device = device
+        self._conditioned_pipeline = None
+        self._conditioned_pipeline_built = False
 
     @classmethod
     def from_pretrained(
@@ -77,6 +96,11 @@ class VdnRunner:
         offload: bool = False,
         block_stream_blocks_per_group: int = 0,
         stream_text_encoder: bool = False,
+        condition_cache: bool = False,
+        condition_cache_dir: str | None = None,
+        condition_cache_entries: int = 8,
+        vision_cache: bool = False,
+        vision_cache_entries: int = 4,
     ) -> "VdnRunner":
         try:
             spec = _VARIANTS[variant]
@@ -121,7 +145,32 @@ class VdnRunner:
             )
         else:
             pipeline.to(device)
-        return cls(pipeline, spec["evaluations"])
+        # Issue #24 opt-in caches (off by default, off the parity gates).
+        cache = None
+        if condition_cache:
+            from omni_infinity.caches.condition import ConditionCache
+
+            cache = ConditionCache(
+                max_entries=condition_cache_entries,
+                cache_dir=condition_cache_dir,
+            )
+        vision_controller = None
+        if vision_cache:
+            from omni_infinity.caches.vision import enable_vision_cache
+
+            vision_controller = enable_vision_cache(
+                pipeline.text_encoder, max_entries=vision_cache_entries
+            )
+        return cls(
+            pipeline,
+            spec["evaluations"],
+            condition_cache=cache,
+            condition_namespace=(
+                f"vdn-hybrid|{checkpoint}|{variant}|{workflow}|{torch_dtype}"
+            ),
+            vision_cache_controller=vision_controller,
+            device=device,
+        )
 
     def generate(
         self,
@@ -134,6 +183,7 @@ class VdnRunner:
         image: Any = None,
         last_image: Any = None,
         step_callback: StepCallback | None = None,
+        denoise_cache=None,
     ) -> GenerationResult:
         evaluations = num_evaluations or self.default_evaluations
         generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -148,8 +198,18 @@ class VdnRunner:
             call_kwargs["image"] = image
         if last_image is not None:
             call_kwargs["last_image"] = last_image
-        with _denoising_progress(self.pipeline, evaluations, step_callback):
-            state = self.pipeline(**call_kwargs)
+        # The whole condition (issue #24 C1): prompt, image slots, frame
+        # count (the VDN canvas is fixed, so no height/width knob).
+        media = (image, last_image, num_frames)
+        pipeline, capture_key = _consult_condition_cache(
+            self, prompt, media, call_kwargs
+        )
+        with (
+            _denoise_cache_context(self, denoise_cache, evaluations),
+            _denoising_progress(self.pipeline, evaluations, step_callback),
+        ):
+            state = pipeline(**call_kwargs)
+        _capture_condition(self, capture_key, state)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

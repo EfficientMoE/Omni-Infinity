@@ -61,6 +61,8 @@ supported configuration; the smoke CLIs and the ablation harness
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
+| `condition-cache` (issue #24 C1: exact cross-request condition reuse) | ✓ | ✓ |
+| `vision-cache` (issue #24 C3: content-hash vision-tower cache) | ✓ | ✓ |
 
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
 [OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
@@ -168,6 +170,32 @@ python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
     --adaln-host-cache --block-stream-blocks-per-group 1 \
     --goldens tests/fixtures/goldens/fl2va_goldens.pt
 ```
+
+## Opt-in caches (issue #24)
+
+[docs/caches.md](docs/caches.md) implements the cache survey in
+[#24](https://github.com/EfficientMoE/Omni-Infinity/issues/24). Shipped
+and **off by default** (the bitwise parity gates never enable them):
+
+- **C1 `condition-cache`** — exact cross-request reuse of the layer-50
+  `prompt_embeds`, `text_token_tags`, and keyframe/reference VAE
+  latents, keyed by the hash of the whole prompt + image bytes + canvas.
+  A hit skips the `text_encoder`/`vae_encoder` blocks entirely (the
+  modular-diffusers split-blocks pattern) and replays bitwise; a shared
+  `[Shot 1]` opener is *not* a hit — no prefix semantics, no reordering
+  (#23). Optional `.pt` disk tier (`OMNI_CONDITION_CACHE_DIR`).
+- **C3 `vision-cache`** — vLLM-Omni's encoder-cache rule: content hash
+  of the Qwen3-VL vision-tower inputs → tower output, so repeated images
+  skip the tower even when the prompt text changes.
+- **C5 denoise-step cache** — TeaCache-style step skipping as a
+  transformer-forward wrapper (`omni_infinity/caches/denoise.py`).
+  Approximate, so it is not a registry/profile flag: it refuses to run
+  without H3-calibrated coefficients and needs its own quality gate.
+  Delegation to the `cache-dit` library is available where installed.
+
+C2 (encoder prefix cache) is deferred until a resident-encoder
+deployment exists; C4 (VDN's shape caches) stays untouched upstream —
+both are documented in [docs/caches.md](docs/caches.md).
 
 ## Job-serving API
 

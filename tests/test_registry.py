@@ -17,6 +17,8 @@ def test_categories_are_disjoint_and_complete():
         "fp8",
         "block-stream",
         "text-encoder-stream",
+        "condition-cache",
+        "vision-cache",
     }
     assert not arch_names & opt_names
 
@@ -58,6 +60,32 @@ def test_runner_kwargs_for_uses_arch_specific_fp8_names():
     hybrid = registry.runner_kwargs_for("vdn-hybrid", ["fp8"])
     assert dense == {"transformer_fp8": True}
     assert hybrid == {"fp8": True}
+
+
+def test_issue24_caches_are_opt_in_on_both_archs():
+    # Issue #24: C1/C3 are optimizations on both archs; the approximate
+    # C5 denoise-step cache is not a registry entry at all (it needs
+    # per-model calibration a static row cannot carry).
+    for name, kwarg in (
+        ("condition-cache", "condition_cache"),
+        ("vision-cache", "vision_cache"),
+    ):
+        spec = registry.OPTIMIZATIONS[name]
+        assert spec.supported_archs == ("h3-dense", "vdn-hybrid")
+        for arch in spec.supported_archs:
+            assert registry.runner_kwargs_for(arch, [name]) == {kwarg: True}
+    assert "denoise-cache" not in registry.OPTIMIZATIONS
+
+
+def test_default_profiles_leave_the_caches_off():
+    # The parity gates and the documented serving profile run without
+    # any issue #24 cache; their kwargs must stay untouched.
+    kwargs = registry.runner_kwargs_for(
+        "h3-dense",
+        ["adaln-host-cache", "block-stream", "text-encoder-stream"],
+    )
+    assert "condition_cache" not in kwargs
+    assert "vision_cache" not in kwargs
 
 
 def test_resolve_profile_returns_runner_checkpoint_and_merged_kwargs():

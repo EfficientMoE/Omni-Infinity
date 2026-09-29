@@ -30,7 +30,12 @@ class GenerationRequest(BaseModel):
     model_arch: Literal["h3-dense", "vdn-hybrid"] = "h3-dense"
     optimizations: list[
         Literal[
-            "adaln-host-cache", "fp8", "block-stream", "text-encoder-stream"
+            "adaln-host-cache",
+            "fp8",
+            "block-stream",
+            "text-encoder-stream",
+            "condition-cache",
+            "vision-cache",
         ]
     ] = Field(default_factory=list)
     seed: int = 0

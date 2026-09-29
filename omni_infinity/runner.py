@@ -219,10 +219,20 @@ class ReferenceRunner:
         pipeline,
         overlap_controller=None,
         transformer_component: str = "transformer",
+        condition_cache=None,
+        condition_namespace: str = "",
+        vision_cache_controller=None,
+        device: str | torch.device | None = None,
     ):
         self.pipeline = pipeline
         self.overlap_controller = overlap_controller
         self.transformer_component = transformer_component
+        self.condition_cache = condition_cache
+        self.condition_namespace = condition_namespace
+        self.vision_cache_controller = vision_cache_controller
+        self.device = device
+        self._conditioned_pipeline = None
+        self._conditioned_pipeline_built = False
 
     @classmethod
     def from_pretrained(
@@ -245,6 +255,11 @@ class ReferenceRunner:
         block_stream_to_disk: str | None = None,
         stream_text_encoder: bool = False,
         step_overlap: bool = False,
+        condition_cache: bool = False,
+        condition_cache_dir: str | None = None,
+        condition_cache_entries: int = 8,
+        vision_cache: bool = False,
+        vision_cache_entries: int = 4,
     ) -> "ReferenceRunner":
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
@@ -362,10 +377,33 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
+        # Issue #24 opt-in caches. Neither is on by default and neither
+        # runs in the parity gates.
+        cache = None
+        if condition_cache:
+            from omni_infinity.caches.condition import ConditionCache
+
+            cache = ConditionCache(
+                max_entries=condition_cache_entries,
+                cache_dir=condition_cache_dir,
+            )
+        vision_controller = None
+        if vision_cache:
+            from omni_infinity.caches.vision import enable_vision_cache
+
+            vision_controller = enable_vision_cache(
+                pipeline.text_encoder, max_entries=vision_cache_entries
+            )
         return cls(
             pipeline,
             overlap_controller=overlap_controller,
             transformer_component=transformer_component,
+            condition_cache=cache,
+            condition_namespace=(
+                f"h3-dense|{checkpoint}|{workflow}|{torch_dtype}"
+            ),
+            vision_cache_controller=vision_controller,
+            device=device,
         )
 
     def generate(
@@ -381,6 +419,7 @@ class ReferenceRunner:
         image: Any = None,
         last_image: Any = None,
         step_callback: StepCallback | None = None,
+        denoise_cache=None,
     ) -> GenerationResult:
         height, width = resolve_resolution(resolution)
         generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -399,13 +438,30 @@ class ReferenceRunner:
             call_kwargs["last_image"] = last_image
         if references is not None:
             call_kwargs["references"] = references
-        with _denoising_progress(
-            self.pipeline,
-            num_inference_steps,
-            step_callback,
-            self.transformer_component,
+        # The whole condition, in order (issue #24 C1): the prompt, then
+        # every image slot, then the canvas the keyframes are resized to.
+        media = (
+            image,
+            last_image,
+            tuple(references or ()),
+            height,
+            width,
+            num_frames,
+        )
+        pipeline, capture_key = _consult_condition_cache(
+            self, prompt, media, call_kwargs
+        )
+        with (
+            _denoise_cache_context(self, denoise_cache, num_inference_steps),
+            _denoising_progress(
+                self.pipeline,
+                num_inference_steps,
+                step_callback,
+                self.transformer_component,
+            ),
         ):
-            state = self.pipeline(**call_kwargs)
+            state = pipeline(**call_kwargs)
+        _capture_condition(self, capture_key, state)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 
@@ -423,3 +479,81 @@ def _state_value(state, key: str):
     if isinstance(values, dict):
         return values.get(key)
     return getattr(state, key, None)
+
+
+def _consult_condition_cache(runner, prompt: str, media, call_kwargs):
+    """Issue #24 C1: route one generation through the condition cache.
+
+    Returns ``(pipeline, capture_key)``. On a hit the cached condition
+    tensors are injected into *call_kwargs* and the runner's conditioned
+    (encoder-less) pipeline is returned; on a miss the full pipeline is
+    returned with the key to capture under. Any failure falls open to
+    the uncached path: ``(runner.pipeline, None)``.
+    """
+    from omni_infinity.caches.condition import (
+        condition_key,
+        declared_inputs,
+    )
+
+    cache = runner.condition_cache
+    if cache is None:
+        return runner.pipeline, None
+    try:
+        key = condition_key(runner.condition_namespace, prompt, media)
+    except TypeError:
+        # A condition object we cannot canonically hash (fail open).
+        return runner.pipeline, None
+    entry = cache.get(key)
+    if entry is None:
+        return runner.pipeline, key
+    conditioned = _conditioned_pipeline(runner)
+    if conditioned is None:
+        # No encoder-less pipeline: the hit saves nothing; run as usual
+        # (the entry already exists, so nothing is re-captured either).
+        return runner.pipeline, None
+    call_kwargs.update(entry.to(runner.device))
+    allowed = declared_inputs(conditioned)
+    if allowed is not None:
+        for name in [k for k in call_kwargs if k not in allowed]:
+            del call_kwargs[name]
+    return conditioned, None
+
+
+def _capture_condition(runner, key, state) -> None:
+    """Store the encode intermediates of a full run under *key*."""
+    if key is None or runner.condition_cache is None:
+        return
+    runner.condition_cache.put(
+        key,
+        {
+            name: _state_value(state, name)
+            for name in runner.condition_cache.capture
+        },
+    )
+
+
+def _conditioned_pipeline(runner):
+    if not runner._conditioned_pipeline_built:
+        from omni_infinity.caches.condition import (
+            build_conditioned_pipeline,
+        )
+
+        runner._conditioned_pipeline = build_conditioned_pipeline(
+            runner.pipeline
+        )
+        runner._conditioned_pipeline_built = True
+    return runner._conditioned_pipeline
+
+
+def _denoise_cache_context(runner, config, total_steps):
+    """Issue #24 C5: per-generation denoise-step cache context."""
+    if config is None:
+        from contextlib import nullcontext
+
+        return nullcontext()
+    from omni_infinity.caches.denoise import denoise_step_cache
+
+    transformer = _transformer_component(
+        runner.pipeline, runner.transformer_component
+    )
+    return denoise_step_cache(transformer, config, total_steps)

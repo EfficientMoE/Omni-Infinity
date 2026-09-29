@@ -77,6 +77,23 @@ def parse_args() -> argparse.Namespace:
         help="bf16 layer-stream the Qwen3-VL text encoder (requires --offload)",
     )
     parser.add_argument(
+        "--condition-cache",
+        action="store_true",
+        help="issue #24 C1: exact cross-request condition cache (opt-in; "
+        "never part of the parity gates)",
+    )
+    parser.add_argument(
+        "--condition-cache-dir",
+        default=None,
+        help="persist condition-cache entries as <key>.pt under this dir",
+    )
+    parser.add_argument(
+        "--vision-cache",
+        action="store_true",
+        help="issue #24 C3: content-hash cache of the Qwen3-VL vision "
+        "tower output",
+    )
+    parser.add_argument(
         "--vram-window",
         choices=("denoise", "full"),
         default="denoise",
@@ -256,6 +273,9 @@ def main() -> int:
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
         block_stream_to_disk=args.block_stream_to_disk,
         stream_text_encoder=args.stream_text_encoder,
+        condition_cache=args.condition_cache,
+        condition_cache_dir=args.condition_cache_dir,
+        vision_cache=args.vision_cache,
     )
     probe = None
     if args.max_vram is not None and args.vram_window == "denoise":

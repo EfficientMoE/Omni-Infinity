@@ -56,6 +56,7 @@ class ServerSettings:
     store_dir: str | None = None
     store_components: tuple[str, ...] = ("transformer", "vae", "audio_vae")
     max_vram: str | None = None
+    condition_cache_dir: str | None = None
     host: str = "127.0.0.1"
     port: int = 8000
     workers: int = 1
@@ -86,6 +87,9 @@ class ServerSettings:
                 if value.strip()
             ),
             max_vram=os.environ.get("OMNI_MAX_VRAM") or None,
+            condition_cache_dir=(
+                os.environ.get("OMNI_CONDITION_CACHE_DIR") or None
+            ),
             host=os.environ.get("OMNI_HOST", "127.0.0.1"),
             port=int(os.environ.get("OMNI_PORT", "8000")),
             workers=int(os.environ.get("OMNI_WORKERS", "1")),
@@ -97,6 +101,11 @@ def load_runner(settings: ServerSettings):
         settings.model_arch, settings.optimizations, settings.checkpoint
     )
     kwargs = dict(profile.runner_kwargs)
+    if (
+        "condition-cache" in profile.optimizations
+        and settings.condition_cache_dir is not None
+    ):
+        kwargs["condition_cache_dir"] = settings.condition_cache_dir
     if profile.model_arch == "h3-dense":
         if settings.store_dir is not None:
             kwargs["store_dir"] = settings.store_dir
