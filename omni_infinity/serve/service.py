@@ -64,9 +64,9 @@ class JobService:
         first, last = self.decode_inputs(request)
         record = self.store.create(request)
         if first is not None:
-            self._save_image(record.id, "input-first.png", first)
+            self.save_image(record.id, "input-first.png", first)
         if last is not None:
-            self._save_image(record.id, "input-last.png", last)
+            self.save_image(record.id, "input-last.png", last)
         future = self.executor.submit(self._execute, record.id)
         with self._lock:
             self._futures[record.id] = future
@@ -182,7 +182,7 @@ class JobService:
             raise InvalidMedia(f"invalid image for {label}") from exc
         return payload
 
-    def _save_image(self, job_id: str, name: str, payload: bytes) -> None:
+    def save_image(self, job_id: str, name: str, payload: bytes) -> None:
         path = self.store.input_path(job_id, name)
         try:
             with Image.open(io.BytesIO(payload)) as image:

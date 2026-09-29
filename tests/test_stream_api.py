@@ -1,3 +1,6 @@
+# Copyright (c) EfficientMoE.
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
@@ -58,6 +61,46 @@ def test_finish_releases_stream_session_slot(tmp_path):
 
         second = client.post("/v1/streams", json=_body())
         assert second.status_code == 202
+
+
+def test_stream_persists_only_generation_request_fields(tmp_path):
+    settings = ServerSettings(
+        jobs_dir=tmp_path, optimizations=(), stream_enabled=True
+    )
+    with TestClient(create_app(settings, lambda: object())) as client:
+        response = client.post(
+            "/v1/streams",
+            json=_body(
+                source="native",
+                action_script=[
+                    {"t": 0, "action": "forward", "instruction": "go"}
+                ],
+            ),
+        )
+        assert response.status_code == 202
+        stream_id = response.json()["stream_id"]
+
+        request = client.get(f"/v1/jobs/{stream_id}").json()["request"]
+        assert request["prompt"] == "a red ball bouncing"
+        assert "action_script" not in request
+        assert "source" not in request
+
+
+def test_stream_validates_typed_action_script(tmp_path):
+    settings = ServerSettings(
+        jobs_dir=tmp_path, optimizations=(), stream_enabled=True
+    )
+    with TestClient(create_app(settings, lambda: object())) as client:
+        response = client.post(
+            "/v1/streams",
+            json=_body(
+                action_script=[
+                    {"t": 0, "action": "forward", "instruction": "go"}
+                ]
+                * 65
+            ),
+        )
+        assert response.status_code == 422
 
 
 def test_stream_enabled_env_parses_bools(monkeypatch):

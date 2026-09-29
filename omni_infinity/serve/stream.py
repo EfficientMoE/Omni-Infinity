@@ -1,16 +1,13 @@
+# Copyright (c) EfficientMoE.
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import threading
-from typing import Any
-
-from pydantic import Field
 
 from omni_infinity.serve.models import GenerationRequest
 from omni_infinity.serve.service import JobService, SessionLimit
-
-
-class StreamRequest(GenerationRequest):
-    action_script: list[dict[str, Any]] = Field(default_factory=list)
+from omni_infinity.streaming import StreamRequest
 
 
 class StreamService:
@@ -36,13 +33,13 @@ class StreamService:
             if len(self._active) >= self.max_sessions:
                 raise SessionLimit("stream session limit reached")
             generation_request = GenerationRequest.model_validate(
-                request.model_dump(exclude={"action_script"})
+                request.model_dump(exclude={"action_script", "source"})
             )
             record = self.jobs.store.create(generation_request)
             if first is not None:
-                self.jobs._save_image(record.id, "input-first.png", first)
+                self.jobs.save_image(record.id, "input-first.png", first)
             if last is not None:
-                self.jobs._save_image(record.id, "input-last.png", last)
+                self.jobs.save_image(record.id, "input-last.png", last)
             self._active.add(record.id)
             return record.id
 

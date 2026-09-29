@@ -26,7 +26,6 @@ from omni_infinity.serve.service import (
     SessionLimit,
 )
 from omni_infinity.serve.store import JobNotFound, JobStore
-from omni_infinity.serve.stream import StreamRequest, StreamService
 
 _VRAM_UNITS = (
     ("gib", 1024**3),
@@ -150,6 +149,8 @@ def create_app(
     settings: ServerSettings | None = None,
     runner_factory: Callable[[], object] | None = None,
 ) -> FastAPI:
+    from omni_infinity.serve.stream import StreamRequest, StreamService
+
     configured = settings or ServerSettings.from_env()
     profile = resolve_profile(
         configured.model_arch,
@@ -217,7 +218,6 @@ def create_app(
 
     if configured.stream_enabled:
 
-        @app.post("/v1/streams", status_code=202)
         def create_stream(request: StreamRequest):
             try:
                 stream_id = app.state.stream_service.open_session(request)
@@ -230,5 +230,13 @@ def create_app(
             except InvalidMedia as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             return {"stream_id": stream_id}
+
+        create_stream.__annotations__["request"] = StreamRequest
+        app.add_api_route(
+            "/v1/streams",
+            create_stream,
+            methods=["POST"],
+            status_code=202,
+        )
 
     return app
