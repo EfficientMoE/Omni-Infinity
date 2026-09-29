@@ -23,13 +23,16 @@ The job API in `omni_infinity/serve/` is unchanged:
   share that worker, so the GPU never runs two generations at once.
 - `GenerationRequest` remains the generation schema. `POST /v1/streams` uses
   the same fields plus an optional `action_script`.
-- `write_artifacts` still publishes `jobs/<uuid>/output.wav` and
-  `jobs/<uuid>/output.mp4` through `diffusers.utils.export_utils.encode_video`.
-  A finished stream is also a normal job artifact, so download-the-file keeps
-  working and stays comparable to `/v1/jobs`.
+- `write_artifacts` still publishes `jobs/<uuid>/output.wav` with SoundFile
+  and `jobs/<uuid>/output.mp4` with
+  `diffusers.utils.export_utils.encode_video`. A finished stream is also a
+  normal job artifact, so download-the-file keeps working and stays
+  comparable to `/v1/jobs`.
 - `type="ref2va"` stays HTTP 501.
-- `av`, FastAPI, and Uvicorn already ship in the `serve` extra. Fragmented
-  MP4 is new code on `av`; it does not replace the finished-file muxer.
+- `av`, FastAPI, and Uvicorn already ship in the `serve` extra. Add
+  `websockets` to both `serve` and the mirrored `dev` dependency list for the
+  live Uvicorn transport and local player. Fragmented MP4 is new code on
+  `av`; it does not replace the finished-file muxer.
 
 ## Shape
 
@@ -98,12 +101,16 @@ Extend `omni_infinity/serve/`. Routes exist only when `OMNI_STREAM_ENABLED`
 is set. Default is off, so current servers keep today's surface: no `/`, no
 `/v1/streams`.
 
-`POST /v1/streams` creates a session. Body is `GenerationRequest` plus
-optional `action_script` (ordered `{t, action, instruction}` entries for
-scripted Phase 1). Response is `{stream_id}`. Profile mismatch is HTTP 409,
-invalid media is HTTP 422, `ref2va` is HTTP 501, matching jobs. A second
-session while one is active returns HTTP 409 when `OMNI_STREAM_MAX_SESSIONS`
-is 1 (the default, matching the single worker).
+`POST /v1/streams` creates a session and a corresponding `JobRecord` through
+`JobStore.create`; its generated 32-hex job id is also the `stream_id`. The
+record follows the existing `queued -> running -> succeeded|failed|cancelled`
+state machine, and progress callbacks run only after it reaches `running`.
+Body is `GenerationRequest` plus optional `action_script` (ordered
+`{t, action, instruction}` entries for scripted Phase 1). Response is
+`{stream_id}`. Profile mismatch is HTTP 409, invalid media is HTTP 422,
+`ref2va` is HTTP 501, matching jobs. A second session while one is active
+returns HTTP 409 when `OMNI_STREAM_MAX_SESSIONS` is 1 (the default, matching
+the single worker).
 
 `WS /v1/streams/{id}/ws` is the primary transport.
 
@@ -121,10 +128,12 @@ Client to server, Phase 2:
   and ignores these messages. `NativeChunker` consumes them when the stub
   (and later H3-World) is selected.
 
-Backpressure is WebSocket flow control: the server does not queue an
-unbounded fragment list ahead of a slow client. If the client falls behind
-a keyframe boundary, the next fragment it appends is a keyframe so MSE can
-resync without a custom timeline.
+The GPU worker writes fragments to a bounded per-session queue. A separate
+async WebSocket sender drains that queue, so a slow network client cannot
+block the sole GPU executor thread and prevent queued jobs from running.
+When the queue fills, the session drops through the next keyframe boundary
+and resumes with a keyframe; it never accumulates an unbounded fragment list.
+The MSE client can therefore resync without a custom timeline.
 
 Optional passive fallback, only if `OMNI_STREAM_FALLBACK_HLS` is set:
 
@@ -136,9 +145,10 @@ Optional passive fallback, only if `OMNI_STREAM_FALLBACK_HLS` is set:
 That path is for a plain `<video>` element, hls.js, or a CDN. It is not the
 interactive channel. Timed metadata inside the media is not required.
 
-When the stream finishes, `StreamService` calls `write_artifacts` into
-`jobs/<stream_id>/` and records the same artifact metadata the job API
-already returns. `GET /v1/jobs/{id}/artifacts` on that id returns the MP4.
+When the stream finishes, `StreamService` calls `write_artifacts` in the
+directory of the existing `JobRecord`, then transitions that record to
+`succeeded` with the artifact metadata the job API already returns.
+`GET /v1/jobs/{id}/artifacts` on the shared stream/job id returns the MP4.
 Existing job routes are not rewritten.
 
 ## Settings
@@ -160,7 +170,8 @@ Local player: `omni_infinity/client/` plus `examples/stream_play.py`. A
 WebSocket client appends fMP4 fragments and plays them with PyAV, or pipes
 the same byte stream to `ffplay` / `mpv`. It prints or overlays the active
 prompt and instruction. Phase 2 reads the keyboard and sends `input`. No new
-heavy dependency; `av` is already in `serve`.
+heavy dependency is needed beyond the lightweight `websockets` runtime added
+to `serve`; `av` is already present.
 
 Browser player: `omni_infinity/serve/webui/`, static files, no build step.
 Served at `/` when streaming is enabled. A `<video>` element plus an MSE
@@ -182,8 +193,11 @@ segment highlighted. Phase 2 maps `keydown` / `keyup` to `input` messages.
 - `omni_infinity/serve/webui/`: static page, MSE playback, prompt panel.
 - CPU tests with a fake chunk source: session create, WS `init` / `chunk` /
   `end`, HTTP 409 on profile mismatch and on session overflow, jobs API
-  behavior unchanged, muxed artifact byte-identical to the job-path MP4 for
-  the same frames and audio.
+  behavior unchanged, and equivalent video/audio streams in the stream and
+  job-path artifacts for the same frames and audio.
+- A live-socket integration test launches Uvicorn and connects with
+  `websockets`, proving the installed `serve` extra can complete a real
+  WebSocket upgrade rather than only an in-process ASGI test.
 - README section next to Job-serving API: enable flag, `POST /v1/streams`,
   WebSocket message types, artifact download, and the statement that
   `ClipChunker` does not overlap generation with playback.
@@ -208,11 +222,13 @@ prompt panel shows that chunk's instruction.
 
 ## Tests
 
-CPU CI already installs `.[dev]`, which includes the `serve` extra. New tests
-follow `tests/test_job_api.py`: inject a fake runner or fake `ChunkSource`,
-drive the app with `httpx` and a WebSocket test client, and do not load
-weights. A real FL2VA stream gate, if added, stays `pytest.mark.skipif` on
-CUDA plus an explicit env flag, same pattern as
+CPU CI already installs `.[dev]`; its dependency list mirrors `serve` and
+must add `websockets` with it. New tests follow `tests/test_job_api.py`:
+inject a fake runner or fake `ChunkSource`, drive the app with `httpx` and a
+WebSocket test client, and do not load weights. One CPU test also starts a
+live Uvicorn server and connects through `websockets` to cover the real
+upgrade path. A real FL2VA stream gate, if added, stays `pytest.mark.skipif`
+on CUDA plus an explicit env flag, same pattern as
 `test_real_fl2va_job_api_returns_muxed_mp4`.
 
 Default `OMNI_STREAM_ENABLED` unset must leave `POST /v1/streams` unregistered
