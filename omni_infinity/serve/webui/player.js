@@ -105,7 +105,6 @@ async function createStream(event) {
     body: JSON.stringify({
       type: "fl2va",
       prompt: document.querySelector("#prompt").value,
-      optimizations: [],
       source: document.querySelector("#source").value,
     }),
   });
