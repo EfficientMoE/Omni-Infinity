@@ -11,6 +11,7 @@ tolerance (latents within allclose(rtol=2e-2) of the goldens) is asserted by
 the real-store GPU run and by ``fl2va_smoke.py --transformer-fp8 --goldens``.
 """
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -21,6 +22,20 @@ from omni_infinity.fp8 import (
     quantize_per_row_fp8,
 )
 from omni_infinity.kernels import dequant_block_fp8, quantize_block_fp8
+
+
+def test_per_row_zero_weight_keeps_a_finite_positive_scale():
+    quantized, scale = quantize_per_row_fp8(torch.zeros(4, 8))
+    assert quantized.dtype == torch.float8_e4m3fn
+    assert tuple(scale.shape) == (4, 1)
+    assert torch.isfinite(scale).all()
+    assert float(scale.min()) > 0.0
+
+
+def test_scaled_fp8_linear_rejects_an_unknown_mode():
+    linear = nn.Linear(8, 4, bias=False)
+    with pytest.raises(AssertionError):
+        ScaledFp8Linear(linear, torch.bfloat16, mode="row")
 
 
 def test_quantize_adaln_fp8_shapes_and_dtype():

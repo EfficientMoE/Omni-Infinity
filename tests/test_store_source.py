@@ -193,6 +193,7 @@ def test_group_fetch_is_single_read(tmp_path, monkeypatch):
 _REAL_STORE = os.environ.get("OMNI_H3_STORE")
 
 
+@pytest.mark.weights
 @pytest.mark.skipif(
     not (_REAL_STORE and Path(_REAL_STORE).is_dir()),
     reason="OMNI_H3_STORE not set",

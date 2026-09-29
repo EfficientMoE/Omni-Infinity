@@ -1006,6 +1006,8 @@ def test_live_uvicorn_socket_upgrade_streams_chunks(tmp_path, artifact_result):
         thread.join(timeout=30)
 
 
+@pytest.mark.gpu
+@pytest.mark.weights
 @pytest.mark.timeout(1800)
 @pytest.mark.skipif(
     not torch.cuda.is_available(), reason="stream API integration needs CUDA"

@@ -516,6 +516,8 @@ def _free_local_port():
         return listener.getsockname()[1]
 
 
+@pytest.mark.gpu
+@pytest.mark.weights
 @pytest.mark.timeout(1800)
 @pytest.mark.skipif(
     not torch.cuda.is_available(), reason="job API integration needs CUDA"

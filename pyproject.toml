@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-cov",
     "pytest-timeout",
     "ruff",
     "fastapi>=0.115,<1",
@@ -45,6 +46,22 @@ RFC = "https://github.com/EfficientMoE/MoE-Infinity/issues/222"
 include = ["omni_infinity*"]
 
 [tool.setuptools_scm]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: needs a CUDA device; GitHub-hosted CI excludes this mark",
+    "weights: needs a local checkpoint or moe-store; GitHub-hosted CI excludes this mark",
+]
+
+[tool.coverage.run]
+source = ["omni_infinity"]
+omit = ["omni_infinity/kernels/_fused_fp8_gemm.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+fail_under = 80
 
 [tool.ruff]
 line-length = 80
