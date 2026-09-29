@@ -332,6 +332,8 @@ Streaming settings:
 
 - `OMNI_STREAM_ENABLED` defaults off and controls all stream routes and `/`.
 - `OMNI_STREAM_MAX_SESSIONS` defaults to `1`.
+- `OMNI_STREAM_SESSION_TTL` defaults to `30` seconds and releases sessions
+  whose WebSocket or HLS client never connects.
 - `OMNI_STREAM_CHUNK_FRAMES` defaults to `24`.
 - `OMNI_STREAM_QUEUE_CHUNKS` defaults to `8` and bounds socket buffering.
 - `OMNI_STREAM_FALLBACK_HLS` defaults off. When enabled, it adds

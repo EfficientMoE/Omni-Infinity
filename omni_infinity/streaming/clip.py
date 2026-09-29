@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from omni_infinity.runner import GenerationResult
+from omni_infinity.serve.artifacts import _stereo_audio, _video_frames
 from omni_infinity.streaming.chunks import MediaChunk, StreamRequest
 from omni_infinity.streaming.fragment import MediaFragment, fragment_clip
 
@@ -47,9 +48,9 @@ class ClipChunker:
 
         self.result = self.runner.generate(request.prompt, **kwargs)
         self.init, fragments = fragment_clip(
-            self.result.videos[0],
-            self.result.audio[0],
-            self.result.sampling_rate,
+            _video_frames(self.result.videos),
+            _stereo_audio(self.result.audio),
+            int(self.result.sampling_rate or 48_000),
             chunk_frames=self.chunk_frames,
         )
 

@@ -74,3 +74,19 @@ def test_clip_chunker_rejects_vdn_below_768p(artifact_result):
     chunker = ClipChunker(FakeRunner(), arch="vdn-hybrid", chunk_frames=4)
     with pytest.raises(ValueError, match="768p"):
         next(chunker.iter_chunks(request))
+
+
+@pytest.mark.parametrize("transpose", [False, True])
+def test_clip_chunker_normalizes_unbatched_stereo_audio(
+    artifact_result, transpose
+):
+    audio = artifact_result.audio.squeeze(0)
+    artifact_result.audio = audio.transpose(0, 1) if transpose else audio
+
+    class FakeRunner:
+        def generate(self, *args, **kwargs):
+            return artifact_result
+
+    chunker = ClipChunker(FakeRunner(), arch="h3-dense", chunk_frames=4)
+    chunks = list(chunker.iter_chunks(_short_request()))
+    assert chunks[-1].done is True
