@@ -3,9 +3,9 @@
 
 """Client-observed baseline for the video-streaming workload.
 
-``--dry-run`` prints the protocol and does not import torch or write a CSV.
-A measurement pass records SKIP when ``/v1/streams`` is absent, the server
-is unreachable, or an external checkpoint is not on disk.
+``--dry-run`` remains dependency-light and does not import torch or write a
+CSV. Measurements use the shared typed stream client against a real localhost
+server and record only values observable from the documented wire protocol.
 """
 
 from __future__ import annotations
@@ -14,22 +14,41 @@ import argparse
 import csv
 import os
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
-from benchmarks.streaming.contract import (
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from benchmarks.streaming.client import (  # noqa: E402
+    BenchmarkClient,
+    ChunkEvent,
+    EndEvent,
+    FragmentProbe,
+    InitEvent,
+    LocalhostConfig,
+    LocalhostTransport,
+    MetricSupport,
+    StreamRun,
+    StreamTransport,
+    build_request,
+    decoded_parity,
+    detect_native_chunker,
+)
+from benchmarks.streaming.contract import (  # noqa: E402
+    ARCH_COMPARISON_RESOLUTION,
     BASELINE_CHUNK_FRAMES,
     BASELINE_REPS,
     BASELINE_TRANSPORT,
+    DENSE_DEFAULT_RESOLUTION,
     FIELDS,
     FPS,
     PROMPT,
     REQUESTED_FRAMES,
     SEED,
-    SHORT_EDGE,
     STACKS,
     WARMUP_DISCARD,
-    chunk_rtf_from_produce,
     legal_frames,
     verdict_for,
 )
@@ -47,26 +66,17 @@ _ARCHES = {
     "sglang-sana-wm": ("sana-wm",),
 }
 
-
-@dataclass(frozen=True)
-class Fragment:
-    """One media fragment observed by the client."""
-
-    index: int
-    arrive_ms: float
-    produce_ms: float
-    video_pts_ms: float
-    audio_pts_ms: float
-    prompt_index: int
-    decoded: bool
+ArtifactFetcher = Callable[[str], bytes]
+ParityChecker = Callable[[bytes, Sequence[ChunkEvent], bytes], bool]
 
 
 def dry_run_text() -> str:
     frames = legal_frames(REQUESTED_FRAMES)
     lines = [
         "streaming baseline dry-run",
-        f"shape={SHORT_EDGE}p/{frames}f",
-        "requested-frames=120",
+        f"shape={DENSE_DEFAULT_RESOLUTION}/{frames}f",
+        f"vdn-shape={ARCH_COMPARISON_RESOLUTION}/{frames}f",
+        f"requested-frames={REQUESTED_FRAMES}",
         f"seed={SEED}",
         f"prompt={PROMPT}",
         f"warmup-discard={WARMUP_DISCARD}",
@@ -79,16 +89,6 @@ def dry_run_text() -> str:
     return "\n".join(lines) + "\n"
 
 
-def stream_api_present(repo_root: Path) -> bool:
-    serve = repo_root / "omni_infinity" / "serve"
-    if not serve.is_dir():
-        return False
-    for path in sorted(serve.glob("*.py")):
-        if "/v1/streams" in path.read_text(encoding="utf-8"):
-            return True
-    return False
-
-
 def weights_ready(stack: str, env: dict[str, str] | None = None) -> bool:
     key = _WEIGHT_ENV.get(stack)
     if key is None:
@@ -98,128 +98,190 @@ def weights_ready(stack: str, env: dict[str, str] | None = None) -> bool:
     return bool(raw) and Path(raw).is_dir()
 
 
-def compare_decoded(
-    left: tuple[tuple[bytes, ...], bytes],
-    right: tuple[tuple[bytes, ...], bytes],
-) -> str:
-    """Bitwise equality of decoded video frames and stereo audio samples."""
-    if left == right:
-        return "bitwise"
-    return "mismatch"
-
-
-def metrics_from_timeline(
+def measure_run(
     *,
-    fragments: list[Fragment],
-    stall_count: int,
-    job_ready_ms: float | None,
-    e2e_ms: float,
-    peak_gib: float | None,
-    frames_decoded: int,
-    playback_wall_ms: float,
-    chunk_frames: int,
+    transport: StreamTransport,
     stack: str,
     arch: str,
     rep: int,
-    quality_vs_job: str,
-    fps: float = FPS,
-    transport: str = BASELINE_TRANSPORT,
-    notes: str = "",
-    native_runner: bool | None = None,
-    camera_accepted: bool | None = None,
-    prompt_update_accepted: bool | None = None,
+    fragment_probe: FragmentProbe | None = None,
+    artifact_fetcher: ArtifactFetcher | None = None,
+    parity_checker: ParityChecker = decoded_parity,
 ) -> dict:
-    """Build one contract row from client timestamps. Accept time is 0."""
-    decoded = [frag for frag in fragments if frag.decoded]
-    ttff = decoded[0].arrive_ms if decoded else None
-    produce = [frag.produce_ms for frag in fragments]
-    summary = chunk_rtf_from_produce(produce, chunk_frames / fps)
-    if fragments:
-        offset = max(
-            abs(frag.audio_pts_ms - frag.video_pts_ms) for frag in fragments
-        )
-        prompt_match = int(
-            all(frag.prompt_index == frag.index for frag in fragments)
-        )
-    else:
-        offset = None
-        prompt_match = 0
-    video_s = (frames_decoded / fps) if frames_decoded else 0.0
-    if playback_wall_ms > 0 and frames_decoded:
-        sustained = frames_decoded / (playback_wall_ms / 1000.0)
-    else:
-        sustained = None
-    e2e_rtf = (e2e_ms / (video_s * 1000.0)) if video_s else None
+    """Run one stream and serialize client-observable metrics."""
+
+    resolution = _resolution_for(arch)
+    request = build_request(
+        model_arch=arch,
+        resolution=resolution,
+        prompt=PROMPT,
+        seed=SEED,
+        num_frames=legal_frames(REQUESTED_FRAMES),
+        source="clip",
+    )
+    run = BenchmarkClient(
+        transport, fragment_probe=fragment_probe
+    ).run(request)
+    init, chunks, end = _media_events(run)
+    end_ns = next(
+        timed.received_ns for timed in run.events if timed.event is end
+    )
+    e2e_ms = (end_ns - run.accepted_ns) / 1_000_000.0
+    duration_s = max(
+        (chunk.pts + chunk.duration for chunk in chunks), default=0.0
+    )
+    parity = "unsupported"
+    notes = ""
+    if artifact_fetcher is not None:
+        try:
+            artifact = artifact_fetcher(end.artifact_url)
+            parity = (
+                "bitwise"
+                if parity_checker(init.init_bytes, chunks, artifact)
+                else "mismatch"
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            notes = f"decoded-parity-unsupported: {exc}"
+
     row = {field: "" for field in FIELDS}
     row.update(
         {
             "track": "baseline",
             "stack": stack,
             "arch": arch,
-            "chunk_frames": chunk_frames,
-            "transport": transport,
+            "chunk_frames": BASELINE_CHUNK_FRAMES,
+            "transport": BASELINE_TRANSPORT,
             "rep": rep,
-            "ttff_ms": "" if ttff is None else ttff,
-            "t_job_ready_ms": "" if job_ready_ms is None else job_ready_ms,
-            "chunk_produce_ms": produce,
-            "chunk_rtf_p50": "" if summary.p50 is None else summary.p50,
-            "chunk_rtf_p95": "" if summary.p95 is None else summary.p95,
-            "stall_count": stall_count,
-            "av_offset_ms": "" if offset is None else offset,
-            "prompt_index_match": prompt_match,
-            "quality_vs_job": quality_vs_job,
+            "t_job_ready_ms": e2e_ms,
+            "prompt_index_match": run.metrics.contract_fields()[
+                "cue_alignment"
+            ],
+            "quality_vs_job": parity,
             "e2e_ms": e2e_ms,
-            "video_duration_s": video_s,
-            "e2e_rtf": "" if e2e_rtf is None else e2e_rtf,
-            "peak_gib": "" if peak_gib is None else peak_gib,
-            "sustained_fps": "" if sustained is None else sustained,
+            "video_duration_s": duration_s,
+            "e2e_rtf": (
+                e2e_ms / (duration_s * 1000.0) if duration_s else ""
+            ),
+            "resolution": resolution,
+            "decoded_parity": parity,
             "notes": notes,
         }
     )
-    if native_runner is not None:
-        row["native_runner"] = native_runner
-    if camera_accepted is not None:
-        row["camera_accepted"] = camera_accepted
-    if prompt_update_accepted is not None:
-        row["prompt_update_accepted"] = prompt_update_accepted
+    row.update(_csv_values(run.metrics.contract_fields()))
     row["verdict"] = verdict_for(row)
     return row
 
 
-def skip_rows(stack: str, notes: str) -> list[dict]:
+def skip_rows(
+    stack: str,
+    notes: str,
+    *,
+    arches: Sequence[str] | None = None,
+    native_support: MetricSupport | None = None,
+) -> list[dict]:
     rows = []
-    native = False if stack == "omni-native" else None
-    for arch in _ARCHES[stack]:
+    selected_arches = tuple(arches) if arches is not None else _ARCHES[stack]
+    for arch in selected_arches:
         for rep in range(BASELINE_REPS):
-            row = metrics_from_timeline(
-                fragments=[],
-                stall_count=0,
-                job_ready_ms=None,
-                e2e_ms=0.0,
-                peak_gib=None,
-                frames_decoded=0,
-                playback_wall_ms=0.0,
-                chunk_frames=BASELINE_CHUNK_FRAMES,
-                stack=stack,
-                arch=arch,
-                rep=rep,
-                quality_vs_job="skipped",
-                notes=notes,
-                native_runner=native,
+            row = {field: "" for field in FIELDS}
+            row.update(
+                {
+                    "track": "baseline",
+                    "stack": stack,
+                    "arch": arch,
+                    "chunk_frames": BASELINE_CHUNK_FRAMES,
+                    "transport": BASELINE_TRANSPORT,
+                    "rep": rep,
+                    "quality_vs_job": "skipped",
+                    "verdict": "SKIP",
+                    "notes": notes,
+                    "resolution": _resolution_for(arch),
+                    "production_latency_support": "unsupported",
+                    "production_latency_reason": (
+                        "wire protocol has no server production timestamps"
+                    ),
+                    "detailed_spans_support": "unsupported",
+                    "detailed_spans_reason": (
+                        "wire protocol has no denoise, VAE, audio, or fMP4 "
+                        "telemetry"
+                    ),
+                    "hls_ttff_support": "unsupported",
+                    "hls_ttff_reason": (
+                        "HLS playlist is available only after generation "
+                        "completes"
+                    ),
+                }
             )
+            if native_support is not None:
+                row["native_performance_support"] = native_support.value
+                row["native_performance_reason"] = native_support.reason
             rows.append(row)
     return rows
 
 
-def measure_stack(stack: str, repo_root: Path) -> list[dict]:
-    """One discarded warmup is the caller's job. Here we only record reps."""
-    if stack in ("omni-clip", "omni-native"):
-        if not stream_api_present(repo_root):
-            return skip_rows(stack, "issue-14-absent")
-        return skip_rows(stack, "server-down")
-    if not weights_ready(stack):
+def measure_stack(
+    stack: str,
+    *,
+    transport: StreamTransport | None,
+    env: dict[str, str] | None = None,
+    arches: Sequence[str] | None = None,
+    fragment_probe: FragmentProbe | None = None,
+    artifact_fetcher: ArtifactFetcher | None = None,
+    parity_checker: ParityChecker = decoded_parity,
+) -> list[dict]:
+    """Discard one warmup per arch, then record the configured repetitions."""
+
+    selected_arches = tuple(arches) if arches is not None else _ARCHES[stack]
+    if stack == "omni-native":
+        support = detect_native_chunker()
+        return skip_rows(
+            stack,
+            support.reason,
+            arches=selected_arches,
+            native_support=support,
+        )
+    if stack not in ("omni-clip", "omni-native") and not weights_ready(
+        stack, env
+    ):
         return skip_rows(stack, "weights-absent")
-    return skip_rows(stack, "server-down")
+    if stack != "omni-clip":
+        return skip_rows(
+            stack,
+            f"stream-api-unsupported: no {stack} adapter",
+            arches=selected_arches,
+        )
+    if transport is None:
+        raise ValueError("omni-clip measurements require a stream transport")
+
+    rows: list[dict] = []
+    for arch in selected_arches:
+        try:
+            for _ in range(WARMUP_DISCARD):
+                measure_run(
+                    transport=transport,
+                    stack=stack,
+                    arch=arch,
+                    rep=-1,
+                    fragment_probe=fragment_probe,
+                    artifact_fetcher=artifact_fetcher,
+                    parity_checker=parity_checker,
+                )
+            for rep in range(BASELINE_REPS):
+                rows.append(
+                    measure_run(
+                        transport=transport,
+                        stack=stack,
+                        arch=arch,
+                        rep=rep,
+                        fragment_probe=fragment_probe,
+                        artifact_fetcher=artifact_fetcher,
+                        parity_checker=parity_checker,
+                    )
+                )
+        except Exception as exc:
+            reason = f"server-down: {type(exc).__name__}: {exc}"
+            rows.extend(skip_rows(stack, reason, arches=(arch,)))
+    return rows
 
 
 def write_csv(path: Path, rows: list[dict]) -> None:
@@ -233,6 +295,52 @@ def write_csv(path: Path, rows: list[dict]) -> None:
             writer.writerow({key: row.get(key, "") for key in FIELDS})
 
 
+def _resolution_for(arch: str) -> str:
+    if arch == "vdn-hybrid":
+        return ARCH_COMPARISON_RESOLUTION
+    return DENSE_DEFAULT_RESOLUTION
+
+
+def _media_events(
+    run: StreamRun,
+) -> tuple[InitEvent, tuple[ChunkEvent, ...], EndEvent]:
+    init = next(
+        event.event
+        for event in run.events
+        if isinstance(event.event, InitEvent)
+    )
+    chunks = tuple(
+        event.event
+        for event in run.events
+        if isinstance(event.event, ChunkEvent)
+    )
+    end = next(
+        event.event for event in run.events if isinstance(event.event, EndEvent)
+    )
+    return init, chunks, end
+
+
+def _csv_values(values: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: "" if value is None else value
+        for key, value in values.items()
+    }
+
+
+def _artifact_fetcher(config: LocalhostConfig) -> ArtifactFetcher:
+    def fetch(path: str) -> bytes:
+        import httpx
+
+        response = httpx.get(
+            f"{config.origin}{path}",
+            timeout=config.request_timeout_s,
+        )
+        response.raise_for_status()
+        return response.content
+
+    return fetch
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
@@ -242,18 +350,32 @@ def main(argv: list[str] | None = None) -> int:
         default="results/streaming/baseline.csv",
     )
     parser.add_argument(
-        "--repo-root",
-        default=str(Path(__file__).resolve().parents[2]),
+        "--base-url",
+        default="http://127.0.0.1:8000",
     )
+    parser.add_argument("--request-timeout", type=float, default=30.0)
+    parser.add_argument("--websocket-timeout", type=float, default=600.0)
     args = parser.parse_args(argv)
     if args.dry_run:
         sys.stdout.write(dry_run_text())
         return 0
     selected = tuple(args.stack) if args.stack else STACKS
     rows: list[dict] = []
-    root = Path(args.repo_root)
+    config = LocalhostConfig(
+        base_url=args.base_url,
+        request_timeout_s=args.request_timeout,
+        websocket_timeout_s=args.websocket_timeout,
+    )
+    transport = LocalhostTransport(config)
+    fetch_artifact = _artifact_fetcher(config)
     for stack in selected:
-        rows.extend(measure_stack(stack, root))
+        rows.extend(
+            measure_stack(
+                stack,
+                transport=transport,
+                artifact_fetcher=fetch_artifact,
+            )
+        )
     write_csv(Path(args.out), rows)
     return 0
 
