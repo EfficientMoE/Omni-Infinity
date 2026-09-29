@@ -128,14 +128,11 @@ Client to server, Phase 2:
   and ignores these messages. `NativeChunker` consumes them when the stub
   (and later H3-World) is selected.
 
-The GPU worker writes fragments to a bounded per-session queue. A separate
-async WebSocket sender drains that queue, so a slow network client cannot
-block the sole GPU executor thread and prevent queued jobs from running.
-`ClipChunker` materializes the request-bounded clip before delivery. The
-socket hand-off queue is bounded and applies backpressure without dropping
-fragments, so slow clients receive every fragment in order while the GPU
-worker remains free for the next job.
-The MSE client can therefore resync without a custom timeline.
+`ClipChunker` finishes generation on the sole GPU executor and materializes
+the request-bounded clip before delivery. After that worker is released, a
+separate async sender drains a bounded socket hand-off queue. Backpressure
+does not drop fragments: slow clients receive every fragment in order while
+the GPU worker remains free for the next job.
 
 Optional passive fallback, only if `OMNI_STREAM_FALLBACK_HLS` is set:
 
