@@ -6,6 +6,7 @@ from omni_infinity.client.player import (
     decode_fragmented,
     key_to_input,
     prompts_from_messages,
+    read_stdin_line,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "decode_fragmented",
     "key_to_input",
     "prompts_from_messages",
+    "read_stdin_line",
 ]

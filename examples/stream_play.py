@@ -12,7 +12,11 @@ import sys
 
 import websockets
 
-from omni_infinity.client import decode_fragmented, key_to_input
+from omni_infinity.client import (
+    decode_fragmented,
+    key_to_input,
+    read_stdin_line,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,7 +53,7 @@ def _media_bytes(message: dict) -> bytes:
 
 async def _send_inputs(socket, stopped: asyncio.Event) -> None:
     while not stopped.is_set():
-        line = await asyncio.to_thread(sys.stdin.readline)
+        line = await read_stdin_line(sys.stdin)
         if not line:
             return
         key = line.rstrip("\n")

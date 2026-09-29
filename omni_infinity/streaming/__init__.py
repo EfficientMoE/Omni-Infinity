@@ -4,6 +4,7 @@
 from omni_infinity.streaming.chunks import (
     ActionCue,
     ChunkSource,
+    InteractiveChunkSource,
     MediaChunk,
     StreamInput,
     StreamRequest,
@@ -16,6 +17,7 @@ from omni_infinity.streaming.native import NativeChunker
 __all__ = [
     "ActionCue",
     "ChunkSource",
+    "InteractiveChunkSource",
     "MediaChunk",
     "StreamInput",
     "StreamRequest",
