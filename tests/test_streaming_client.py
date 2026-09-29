@@ -122,12 +122,8 @@ def test_testclient_transport_posts_and_consumes_websocket():
 def test_observed_metrics_are_arrival_based_not_production_latency():
     events = (
         TimedEvent(parse_event(_init()), 1_000_000_000),
-        TimedEvent(
-            parse_event(_chunk(0, pts=0.0, done=False)), 1_100_000_000
-        ),
-        TimedEvent(
-            parse_event(_chunk(1, pts=1.0, done=True)), 2_300_000_000
-        ),
+        TimedEvent(parse_event(_chunk(0, pts=0.0, done=False)), 1_100_000_000),
+        TimedEvent(parse_event(_chunk(1, pts=1.0, done=True)), 2_300_000_000),
         TimedEvent(
             parse_event(
                 {"type": "end", "artifact_url": "/v1/jobs/id/artifacts"}

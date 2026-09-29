@@ -223,9 +223,7 @@ class LocalhostConfig:
     def websocket_url(self, stream_id: str) -> str:
         parsed = urlparse(self.origin)
         scheme = "wss" if parsed.scheme == "https" else "ws"
-        return (
-            f"{scheme}://{parsed.netloc}/v1/streams/{stream_id}/ws"
-        )
+        return f"{scheme}://{parsed.netloc}/v1/streams/{stream_id}/ws"
 
 
 class LocalhostTransport:
@@ -353,9 +351,7 @@ def parse_event(payload: Any) -> StreamEvent:
             video_bytes=_optional_b64(payload["video_b64"], "video_b64"),
             audio_bytes=_optional_b64(payload["audio_b64"], "audio_b64"),
             prompt=_string(payload["prompt"], "prompt"),
-            instruction=_optional_string(
-                payload["instruction"], "instruction"
-            ),
+            instruction=_optional_string(payload["instruction"], "instruction"),
             action=_optional_string(payload["action"], "action"),
             done=_boolean(payload["done"], "done"),
         )
@@ -435,9 +431,9 @@ def observe_events(
     )
     stalls = _count_stalls(chunks, chunk_times)
     native_support = (
-        detect_native_chunker() if native_requested else MetricSupport(
-            False, "session does not use the native source"
-        )
+        detect_native_chunker()
+        if native_requested
+        else MetricSupport(False, "session does not use the native source")
     )
     return ObservedMetrics(
         ttff_ms=(
