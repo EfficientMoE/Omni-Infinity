@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
+from omni_infinity.runner import GenerationResult
 from omni_infinity.serve.models import GenerationRequest
 
 
@@ -45,7 +46,11 @@ class StreamInput(BaseModel):
     prompt: str | None = None
 
 
+@runtime_checkable
 class ChunkSource(Protocol):
+    init: bytes | None
+    result: GenerationResult | None
+
     def iter_chunks(
         self,
         request: StreamRequest,
@@ -54,6 +59,11 @@ class ChunkSource(Protocol):
         image: Any = None,
         last_image: Any = None,
     ) -> Iterator[MediaChunk]: ...
+
+
+@runtime_checkable
+class InteractiveChunkSource(ChunkSource, Protocol):
+    def push_input(self, incoming: StreamInput) -> None: ...
 
 
 def active_cue(cues: Sequence[MediaChunk], time: float) -> MediaChunk | None:

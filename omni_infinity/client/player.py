@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
+from typing import TextIO
 
 import av
 
@@ -49,3 +51,19 @@ def decode_fragmented(messages: list[dict]) -> int:
             payload.extend(base64.b64decode(message["video_b64"]))
     with av.open(io.BytesIO(payload)) as container:
         return sum(1 for _ in container.decode(video=0))
+
+
+async def read_stdin_line(stream: TextIO) -> str:
+    loop = asyncio.get_running_loop()
+    result = loop.create_future()
+    file_number = stream.fileno()
+
+    def ready() -> None:
+        if not result.done():
+            result.set_result(stream.readline())
+
+    loop.add_reader(file_number, ready)
+    try:
+        return await result
+    finally:
+        loop.remove_reader(file_number)
