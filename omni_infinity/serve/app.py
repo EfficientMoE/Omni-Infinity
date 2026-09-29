@@ -241,6 +241,12 @@ def create_app(
                 _WEBUI_DIR / "player.js", media_type="text/javascript"
             )
 
+        @app.get("/demo-first.png", include_in_schema=False)
+        def stream_demo_first_frame():
+            return FileResponse(
+                _WEBUI_DIR / "demo-first.png", media_type="image/png"
+            )
+
         def create_stream(request: StreamRequest):
             try:
                 stream_id = app.state.stream_service.open_session(request)

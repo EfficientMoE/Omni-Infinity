@@ -684,8 +684,11 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
     with TestClient(create_app(live, lambda: object())) as client:
         page = client.get("/")
         script = client.get("/player.js")
+        first_frame = client.get("/demo-first.png")
 
     assert page.status_code == 200
+    assert first_frame.status_code == 200
+    assert first_frame.headers["content-type"].startswith("image/png")
     assert 'id="prompt-panel"' in page.text
     assert "<video" in page.text
     for needle in (

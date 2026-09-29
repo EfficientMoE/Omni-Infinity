@@ -132,6 +132,18 @@ async function createStream(event) {
   endRequested = false;
   cues = [];
   renderCues();
+  const firstFrame = await fetch("/demo-first.png");
+  if (!firstFrame.ok) {
+    status.textContent = `HTTP ${firstFrame.status}`;
+    return;
+  }
+  const firstFrameBytes = new Uint8Array(await firstFrame.arrayBuffer());
+  let firstFrameBase64 = "";
+  for (let offset = 0; offset < firstFrameBytes.length; offset += 0x8000) {
+    firstFrameBase64 += String.fromCharCode(
+      ...firstFrameBytes.subarray(offset, offset + 0x8000),
+    );
+  }
   const response = await fetch("/v1/streams", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -149,6 +161,7 @@ async function createStream(event) {
       num_inference_steps: 8,
       resolution: "256p",
       num_frames: 120,
+      first_frame_base64: btoa(firstFrameBase64),
       action_script: demoScript,
     }),
   });
