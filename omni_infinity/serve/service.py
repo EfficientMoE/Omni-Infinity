@@ -35,6 +35,10 @@ class Ref2VANotImplemented(JobServiceError):
     pass
 
 
+class SessionLimit(JobServiceError):
+    pass
+
+
 class InvalidMedia(JobServiceError, ValueError):
     pass
 
@@ -56,6 +60,19 @@ class JobService:
         self._lock = threading.Lock()
 
     def submit(self, request: GenerationRequest) -> JobRecord:
+        self.validate_request(request)
+        first, last = self.decode_inputs(request)
+        record = self.store.create(request)
+        if first is not None:
+            self.save_image(record.id, "input-first.png", first)
+        if last is not None:
+            self.save_image(record.id, "input-last.png", last)
+        future = self.executor.submit(self._execute, record.id)
+        with self._lock:
+            self._futures[record.id] = future
+        return record
+
+    def validate_request(self, request: GenerationRequest) -> None:
         if request.type == "ref2va":
             raise Ref2VANotImplemented(
                 "Ref2VA requires Task 3 (issue #8), which is not merged"
@@ -74,17 +91,13 @@ class JobService:
                 "request profile does not match the loaded server profile"
             )
 
-        first = self._decode_image(request.first_frame_base64, "first frame")
-        last = self._decode_image(request.last_frame_base64, "last frame")
-        record = self.store.create(request)
-        if first is not None:
-            self._save_image(record.id, "input-first.png", first)
-        if last is not None:
-            self._save_image(record.id, "input-last.png", last)
-        future = self.executor.submit(self._execute, record.id)
-        with self._lock:
-            self._futures[record.id] = future
-        return record
+    def decode_inputs(
+        self, request: GenerationRequest
+    ) -> tuple[bytes | None, bytes | None]:
+        return (
+            self._decode_image(request.first_frame_base64, "first frame"),
+            self._decode_image(request.last_frame_base64, "last frame"),
+        )
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=True, cancel_futures=True)
@@ -101,8 +114,8 @@ class JobService:
     def _execute(self, job_id: str) -> None:
         try:
             record = self.store.transition(job_id, JobStatus.RUNNING)
-            first = self._load_image(job_id, "input-first.png")
-            last = self._load_image(job_id, "input-last.png")
+            first = self.load_image(job_id, "input-first.png")
+            last = self.load_image(job_id, "input-last.png")
             result = self._generate(record.request, first, last, job_id)
             artifacts = write_artifacts(
                 result,
@@ -169,7 +182,7 @@ class JobService:
             raise InvalidMedia(f"invalid image for {label}") from exc
         return payload
 
-    def _save_image(self, job_id: str, name: str, payload: bytes) -> None:
+    def save_image(self, job_id: str, name: str, payload: bytes) -> None:
         path = self.store.input_path(job_id, name)
         try:
             with Image.open(io.BytesIO(payload)) as image:
@@ -177,7 +190,7 @@ class JobService:
         except (OSError, UnidentifiedImageError) as exc:
             raise InvalidMedia(f"could not save {name}") from exc
 
-    def _load_image(self, job_id: str, name: str):
+    def load_image(self, job_id: str, name: str):
         path: Path = self.store.input_path(job_id, name)
         if not path.exists():
             return None
