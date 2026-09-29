@@ -114,8 +114,8 @@ class JobService:
     def _execute(self, job_id: str) -> None:
         try:
             record = self.store.transition(job_id, JobStatus.RUNNING)
-            first = self._load_image(job_id, "input-first.png")
-            last = self._load_image(job_id, "input-last.png")
+            first = self.load_image(job_id, "input-first.png")
+            last = self.load_image(job_id, "input-last.png")
             result = self._generate(record.request, first, last, job_id)
             artifacts = write_artifacts(
                 result,
@@ -190,7 +190,7 @@ class JobService:
         except (OSError, UnidentifiedImageError) as exc:
             raise InvalidMedia(f"could not save {name}") from exc
 
-    def _load_image(self, job_id: str, name: str):
+    def load_image(self, job_id: str, name: str):
         path: Path = self.store.input_path(job_id, name)
         if not path.exists():
             return None

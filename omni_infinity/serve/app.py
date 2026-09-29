@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Response, WebSocket
 from fastapi.responses import FileResponse
 
 from omni_infinity.registry import resolve_profile
@@ -238,5 +238,10 @@ def create_app(
             methods=["POST"],
             status_code=202,
         )
+
+        async def stream_socket(websocket: WebSocket, stream_id: str) -> None:
+            await app.state.stream_service.run_socket(websocket, stream_id)
+
+        app.add_api_websocket_route("/v1/streams/{stream_id}/ws", stream_socket)
 
     return app
