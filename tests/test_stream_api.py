@@ -8,7 +8,10 @@ import base64
 import io
 import json
 import logging
+import os
 import socket
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -27,7 +30,7 @@ from omni_infinity.serve import stream as stream_module
 from omni_infinity.serve.app import ServerSettings, create_app
 from omni_infinity.serve.models import JobStatus
 from omni_infinity.serve.store import JobStoreError
-from omni_infinity.serve.stream import StreamSession
+from omni_infinity.serve.stream import StreamService, StreamSession
 from omni_infinity.streaming import CODEC
 
 
@@ -612,6 +615,7 @@ def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
         assert '#EXT-X-MAP:URI="init.mp4"' in playlist.text
         assert "seg/0.m4s" in playlist.text
         assert "#EXT-X-ENDLIST" in playlist.text
+        assert "#EXT-X-PLAYLIST-TYPE:EVENT" in playlist.text
 
         init = client.get(f"/v1/streams/{stream_id}/init.mp4")
         segment = client.get(f"/v1/streams/{stream_id}/seg/0.m4s")
@@ -691,6 +695,7 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
         "keyup",
         "forward",
         "activeCue",
+        "endOfStream",
     ):
         assert needle in script.text
 
@@ -765,6 +770,28 @@ def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
             release_send.set()
             release_job.set()
             thread.join(timeout=15)
+
+
+def test_feed_closes_the_pipe_when_put_fails():
+    class FailingPipe:
+        closed = False
+
+        async def put(self, chunk):
+            raise RuntimeError("send failed")
+
+        async def close(self, error=None):
+            self.closed = True
+            self.error = error
+
+    async def scenario():
+        pipe = FailingPipe()
+        service = object.__new__(StreamService)
+        with pytest.raises(RuntimeError, match="send failed"):
+            await service._feed(pipe, [object()])
+        assert pipe.closed is True
+        assert pipe.error == "RuntimeError: send failed"
+
+    asyncio.run(scenario())
 
 
 def test_stream_artifact_executor_shuts_down_with_the_app(
@@ -891,6 +918,26 @@ def test_socket_reports_generation_failure(tmp_path):
         assert client.post("/v1/streams", json=_body()).status_code == 202
 
 
+def test_socket_reports_progress_store_failure(tmp_path, artifact_result):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        store = client.app.state.store
+
+        def fail_progress(*args, **kwargs):
+            raise JobStoreError("disk unavailable")
+
+        store.update_progress = fail_progress
+        stream_id = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            message = socket.receive_json()
+
+        assert message["type"] == "error"
+        assert "disk unavailable" in message["detail"]
+        record = client.get(f"/v1/jobs/{stream_id}").json()
+        assert record["status"] == "failed"
+
+
 def _free_local_port():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -954,3 +1001,149 @@ def test_live_uvicorn_socket_upgrade_streams_chunks(tmp_path, artifact_result):
     finally:
         server.should_exit = True
         thread.join(timeout=30)
+
+
+@pytest.mark.timeout(1800)
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="stream API integration needs CUDA"
+)
+@pytest.mark.skipif(
+    os.environ.get("OMNI_STREAM_API_GPU") != "1",
+    reason="set OMNI_STREAM_API_GPU=1 to run the real stream API gate",
+)
+def test_real_fl2va_stream_api_returns_chunks_and_muxed_mp4(tmp_path):
+    websockets_sync = pytest.importorskip("websockets.sync.client")
+    port = _free_local_port()
+    env = os.environ.copy()
+    env.update(
+        {
+            "OMNI_JOBS_DIR": str(tmp_path / "jobs"),
+            "OMNI_HOST": "127.0.0.1",
+            "OMNI_PORT": str(port),
+            "OMNI_DEVICE": "cuda",
+            "OMNI_STREAM_ENABLED": "1",
+            "OMNI_STREAM_CHUNK_FRAMES": "24",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        }
+    )
+    log_path = tmp_path / "server.log"
+    log_handle = log_path.open("w", encoding="utf-8")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "omni_infinity.serve"],
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise AssertionError("server exited during startup")
+            try:
+                ready = httpx.get(f"{base_url}/v1/jobs/{'f' * 32}", timeout=5)
+                if ready.status_code == 404:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(2)
+        else:
+            raise AssertionError("server did not become ready")
+
+        image_buffer = io.BytesIO()
+        from PIL import Image
+
+        Image.new("RGB", (16, 16), color="red").save(image_buffer, format="PNG")
+        created = httpx.post(
+            f"{base_url}/v1/streams",
+            json={
+                "type": "fl2va",
+                "prompt": "a red ball bouncing",
+                "model_arch": "h3-dense",
+                "optimizations": [
+                    "adaln-host-cache",
+                    "block-stream",
+                    "text-encoder-stream",
+                ],
+                "seed": 0,
+                "num_inference_steps": 8,
+                "resolution": "256p",
+                "num_frames": 120,
+                "first_frame_base64": base64.b64encode(
+                    image_buffer.getvalue()
+                ).decode("ascii"),
+            },
+            timeout=30,
+        )
+        assert created.status_code == 202, created.text
+        stream_id = created.json()["stream_id"]
+
+        messages = []
+        artifact_before_end = None
+        with websockets_sync.connect(
+            f"ws://127.0.0.1:{port}/v1/streams/{stream_id}/ws",
+            open_timeout=30,
+        ) as socket:
+            while True:
+                message = json.loads(socket.recv(timeout=900))
+                messages.append(message)
+                if message["type"] == "chunk" and artifact_before_end is None:
+                    artifact_before_end = httpx.get(
+                        f"{base_url}/v1/jobs/{stream_id}/artifacts",
+                        timeout=30,
+                    ).status_code
+                if message["type"] in {"end", "error"}:
+                    break
+
+        assert messages[0]["type"] == "init"
+        chunks = [item for item in messages if item["type"] == "chunk"]
+        assert chunks
+        assert [item["index"] for item in chunks] == list(range(len(chunks)))
+        assert chunks[-1]["done"] is True
+        assert artifact_before_end == 409
+        assert messages[-1] == {
+            "type": "end",
+            "artifact_url": f"/v1/jobs/{stream_id}/artifacts",
+        }
+
+        artifact_response = httpx.get(
+            f"{base_url}/v1/jobs/{stream_id}/artifacts", timeout=120
+        )
+        assert artifact_response.status_code == 200
+        artifact = tmp_path / "stream.mp4"
+        artifact.write_bytes(artifact_response.content)
+        probe = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_streams",
+                "-of",
+                "json",
+                str(artifact),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert probe.returncode == 0, probe.stderr
+        streams = json.loads(probe.stdout)["streams"]
+        assert [stream["codec_type"] for stream in streams].count("video") == 1
+        audio = [
+            stream for stream in streams if stream["codec_type"] == "audio"
+        ]
+        assert len(audio) == 1
+        assert int(audio[0]["channels"]) == 2
+    except Exception as exc:
+        log_handle.flush()
+        logs = log_path.read_text(encoding="utf-8")
+        raise AssertionError(f"{exc}\nserver logs:\n{logs}") from exc
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=30)
+        log_handle.close()

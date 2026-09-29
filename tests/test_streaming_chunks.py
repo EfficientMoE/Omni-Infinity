@@ -4,7 +4,12 @@
 import pytest
 from pydantic import ValidationError
 
-from omni_infinity.streaming import MediaChunk, StreamRequest, active_cue
+from omni_infinity.streaming import (
+    ChunkSource,
+    MediaChunk,
+    StreamRequest,
+    active_cue,
+)
 
 
 def test_active_cue_is_half_open_and_empty_is_none():
@@ -31,3 +36,14 @@ def test_stream_request_defaults_and_rejects_a_long_script():
             prompt="p",
             action_script=[{"t": 0, "action": "x" * 65, "instruction": "go"}],
         )
+
+
+def test_chunk_source_protocol_includes_service_state():
+    class Source:
+        init = b"init"
+        result = object()
+
+        def iter_chunks(self, request, **kwargs):
+            return iter(())
+
+    assert isinstance(Source(), ChunkSource)

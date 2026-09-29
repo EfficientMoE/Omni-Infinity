@@ -11,9 +11,11 @@ const keyActions = {
 };
 
 let socket = null;
+let mediaSource = null;
 let sourceBuffer = null;
 let appendQueue = [];
 let cues = [];
+let endRequested = false;
 
 function bytes(encoded) {
   const raw = atob(encoded);
@@ -28,6 +30,14 @@ function activeCue(items, time) {
 
 function appendNext() {
   if (!sourceBuffer || sourceBuffer.updating || appendQueue.length === 0) {
+    if (
+      endRequested &&
+      sourceBuffer &&
+      !sourceBuffer.updating &&
+      mediaSource?.readyState === "open"
+    ) {
+      mediaSource.endOfStream();
+    }
     return;
   }
   sourceBuffer.appendBuffer(appendQueue.shift());
@@ -58,7 +68,7 @@ function highlightCue() {
 }
 
 function openMedia(codec, init) {
-  const mediaSource = new MediaSource();
+  mediaSource = new MediaSource();
   video.src = URL.createObjectURL(mediaSource);
   mediaSource.addEventListener(
     "sourceopen",
@@ -86,6 +96,8 @@ function receive(message) {
     return;
   }
   if (message.type === "end") {
+    endRequested = true;
+    appendNext();
     status.textContent = "complete";
     return;
   }
@@ -97,6 +109,12 @@ function receive(message) {
 async function createStream(event) {
   event.preventDefault();
   status.textContent = "opening";
+  if (socket) {
+    socket.close();
+  }
+  sourceBuffer = null;
+  appendQueue = [];
+  endRequested = false;
   cues = [];
   renderCues();
   const response = await fetch("/v1/streams", {
