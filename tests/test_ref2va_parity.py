@@ -17,6 +17,8 @@ GOLDENS = Path(__file__).parent / "fixtures" / "goldens" / "ref2va_goldens.pt"
 REFERENCE = Path(__file__).parent / "fixtures" / "ref.png"
 
 
+@pytest.mark.gpu
+@pytest.mark.weights
 @pytest.mark.skipif(
     not GOLDENS.is_file(), reason="Ref2VA golden fixture absent"
 )

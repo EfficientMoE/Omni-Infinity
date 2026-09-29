@@ -15,6 +15,7 @@ from omni_infinity.runner import (
 
 def test_resolutions_cover_rfc_targets():
     assert resolve_resolution("256p") == (256, 256)
+    assert resolve_resolution("512p") == (512, 512)
     assert resolve_resolution("768p") == (768, 768)
     with pytest.raises(ValueError, match="unknown resolution"):
         resolve_resolution("1080p")
