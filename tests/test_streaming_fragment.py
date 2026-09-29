@@ -33,3 +33,15 @@ def test_fragment_clip_keyframes_and_round_trips():
     assert decoded == 5
     assert b"moov" in init
     assert all(b"moof" in item.video_bytes for item in fragments)
+
+
+def test_fragment_clip_rejects_invalid_inputs():
+    frames = np.zeros((2, 16, 16, 3), dtype=np.float32)
+    audio = torch.zeros(2, 48000, dtype=torch.float32)
+
+    with pytest.raises(ValueError, match="frames"):
+        fragment_clip(frames[:, :, :, :2], audio, 48000)
+    with pytest.raises(ValueError, match="audio"):
+        fragment_clip(frames, audio[:1], 48000)
+    with pytest.raises(ValueError, match="fps"):
+        fragment_clip(frames, audio, 48000, fps=0)

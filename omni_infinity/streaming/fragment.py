@@ -43,7 +43,11 @@ def _find_box(data: bytes, box_type: bytes, start: int = 0) -> int:
 
 
 def _split_fragments(
-    data: bytes, frame_count: int, chunk_frames: int, fps: int
+    data: bytes,
+    frame_count: int,
+    chunk_frames: int,
+    fps: int,
+    video_keyframes: tuple[bool, ...],
 ) -> tuple[bytes, tuple[MediaFragment, ...]]:
     moov = _find_box(data, b"moov")
     init_end = _box_end(data, moov)
@@ -58,6 +62,12 @@ def _split_fragments(
         except ValueError:
             break
 
+    expected_fragments = (frame_count + chunk_frames - 1) // chunk_frames
+    if len(fragment_starts) != expected_fragments:
+        raise RuntimeError("encoded GOP boundaries do not match chunk_frames")
+    if len(video_keyframes) < frame_count:
+        raise RuntimeError("encoded video packet count does not match frames")
+
     fragments = []
     for index, start in enumerate(fragment_starts):
         end = (
@@ -68,12 +78,17 @@ def _split_fragments(
         frames_in_fragment = min(
             chunk_frames, frame_count - index * chunk_frames
         )
+        keyframe = video_keyframes[index * chunk_frames]
+        if not keyframe:
+            raise RuntimeError(
+                "encoded fragment does not start with a keyframe"
+            )
         fragments.append(
             MediaFragment(
                 index=index,
                 pts=index * chunk_frames / fps,
                 duration=frames_in_fragment / fps,
-                keyframe=True,
+                keyframe=keyframe,
                 video_bytes=data[start:end],
             )
         )
@@ -88,6 +103,28 @@ def fragment_clip(
     fps: int = 24,
     chunk_frames: int = 24,
 ) -> tuple[bytes, tuple[MediaFragment, ...]]:
+    if not isinstance(frames, np.ndarray) or frames.ndim != 4:
+        raise ValueError("frames must have shape (N, H, W, 3)")
+    if frames.shape[0] <= 0 or frames.shape[1] <= 0 or frames.shape[2] <= 0:
+        raise ValueError("frames must have positive dimensions")
+    if frames.shape[3] != 3 or frames.dtype != np.float32:
+        raise ValueError("frames must be float32 with shape (N, H, W, 3)")
+    if not np.isfinite(frames).all() or not ((0 <= frames).all() and
+                                             (frames <= 1).all()):
+        raise ValueError("frames must contain finite values in [0, 1]")
+    if not isinstance(audio, torch.Tensor) or audio.ndim != 2:
+        raise ValueError("audio must have shape (2, samples)")
+    if audio.shape[0] != 2 or audio.shape[1] <= 0:
+        raise ValueError("audio must have shape (2, samples)")
+    if audio.dtype != torch.float32:
+        raise ValueError("audio must be float32")
+    if not isinstance(fps, int) or fps <= 0:
+        raise ValueError("fps must be a positive integer")
+    if not isinstance(chunk_frames, int) or chunk_frames <= 0:
+        raise ValueError("chunk_frames must be a positive integer")
+    if not isinstance(sample_rate, int) or sample_rate <= 0:
+        raise ValueError("sample_rate must be a positive integer")
+
     frame_count, height, width, _ = frames.shape
     output = io.BytesIO()
     container = av.open(
@@ -113,23 +150,27 @@ def fragment_clip(
     audio_stream.layout = "stereo"
     audio_stream.sample_rate = sample_rate
 
-    packets = []
+    video_packets = []
     for index, frame in enumerate(frames):
         video_frame = av.VideoFrame.from_ndarray(
             np.clip(frame * 255, 0, 255).astype(np.uint8), format="rgb24"
         )
         video_frame.pts = index
         video_frame.time_base = Fraction(1, fps)
-        packets.extend(video_stream.encode(video_frame))
+        if index % chunk_frames == 0:
+            video_frame.pict_type = av.video.frame.PictureType.I
+        video_packets.extend(video_stream.encode(video_frame))
+    video_packets.extend(video_stream.encode())
+    video_keyframes = tuple(packet.is_keyframe for packet in video_packets)
 
     audio_array = audio.detach().cpu().numpy()
     audio_frame = av.AudioFrame.from_ndarray(
         audio_array, format="fltp", layout="stereo"
     )
     audio_frame.sample_rate = sample_rate
-    packets.extend(audio_stream.encode(audio_frame))
-    packets.extend(video_stream.encode())
-    packets.extend(audio_stream.encode())
+    audio_packets = audio_stream.encode(audio_frame)
+    audio_packets.extend(audio_stream.encode())
+    packets = video_packets + audio_packets
     packets.sort(
         key=lambda packet: (
             (packet.dts if packet.dts is not None else packet.pts)
@@ -142,4 +183,10 @@ def fragment_clip(
         container.mux(packet)
     container.close()
 
-    return _split_fragments(output.getvalue(), frame_count, chunk_frames, fps)
+    return _split_fragments(
+        output.getvalue(),
+        frame_count,
+        chunk_frames,
+        fps,
+        video_keyframes,
+    )
