@@ -23,6 +23,15 @@ def test_fields_keep_the_frozen_names():
     assert "verdict" in FIELDS
     assert "notes" in FIELDS
     assert "chunk_rtf_p50" in FIELDS
+    assert FIELDS.index("resolution") > FIELDS.index("notes")
+    for metric in (
+        "production_latency",
+        "detailed_spans",
+        "native_performance",
+        "hls_ttff",
+    ):
+        assert f"{metric}_support" in FIELDS
+        assert f"{metric}_reason" in FIELDS
 
 
 def test_index_zero_produce_time_is_excluded_from_p50():
@@ -84,8 +93,7 @@ def test_omni_native_rtf_over_one_fails():
 
 def test_missing_native_runner_is_skip():
     assert (
-        verdict_for({"stack": "omni-native", "native_runner": False})
-        == "SKIP"
+        verdict_for({"stack": "omni-native", "native_runner": False}) == "SKIP"
     )
 
 
@@ -121,9 +129,7 @@ def test_unmeasured_notes_skip_before_numeric_gates():
         verdict_for({"stack": "vllm-helios", "notes": "weights-absent"})
         == "SKIP"
     )
-    assert (
-        verdict_for({"stack": "omni-clip", "notes": "server-down"}) == "SKIP"
-    )
+    assert verdict_for({"stack": "omni-clip", "notes": "server-down"}) == "SKIP"
 
 
 def test_sglang_rejects_only_cookbook_controls():

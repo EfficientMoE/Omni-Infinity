@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Omni Infinity — Stream Monitor</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #d7e4dc;
+        --muted: #7f9287;
+        --panel: #111713;
+        --line: #2d3b33;
+        --signal: #b7ff4a;
+        --warning: #ffc857;
+        --void: #070b08;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          linear-gradient(rgba(183, 255, 74, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(183, 255, 74, 0.035) 1px, transparent 1px),
+          var(--void);
+        background-size: 32px 32px;
+        font-family: "Iosevka", "JetBrains Mono", monospace;
+      }
+
+      header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 24px 32px 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      h1 {
+        margin: 0;
+        color: var(--signal);
+        font-size: clamp(20px, 3vw, 38px);
+        font-weight: 500;
+        letter-spacing: -0.06em;
+      }
+
+      #status {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+        gap: 1px;
+        min-height: calc(100vh - 83px);
+        background: var(--line);
+      }
+
+      .stage, .rail { background: rgba(7, 11, 8, 0.96); }
+      .stage { padding: 28px 32px; }
+      .rail { padding: 28px 24px; }
+
+      video {
+        display: block;
+        width: 100%;
+        max-height: 72vh;
+        border: 1px solid var(--line);
+        background: #000;
+        box-shadow: 0 22px 80px rgba(0, 0, 0, 0.5);
+      }
+
+      form {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      input, select, button {
+        min-height: 42px;
+        border: 1px solid var(--line);
+        color: var(--ink);
+        background: var(--panel);
+        font: inherit;
+      }
+
+      input { min-width: 0; padding: 0 13px; }
+      select, button { padding: 0 14px; }
+      button {
+        border-color: var(--signal);
+        color: #0a100b;
+        background: var(--signal);
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .rail h2 {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      #prompt-panel {
+        display: grid;
+        gap: 8px;
+        max-height: 62vh;
+        overflow: auto;
+      }
+
+      .cue {
+        padding: 12px;
+        border-left: 2px solid var(--line);
+        background: var(--panel);
+        color: var(--muted);
+      }
+
+      .cue.active {
+        border-color: var(--signal);
+        color: var(--ink);
+        background: rgba(183, 255, 74, 0.08);
+      }
+
+      .cue time { color: var(--warning); font-size: 11px; }
+      .cue p { margin: 6px 0 0; line-height: 1.45; }
+      .hint {
+        margin-top: 24px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 820px) {
+        main { grid-template-columns: 1fr; }
+        form { grid-template-columns: 1fr 1fr; }
+        form input { grid-column: 1 / -1; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>OMNI/STREAM MONITOR</h1>
+      <span id="status">offline</span>
+    </header>
+    <main>
+      <section class="stage">
+        <video id="video" controls autoplay muted></video>
+        <form id="stream-form">
+          <input
+            id="prompt"
+            aria-label="Prompt"
+            value="a red ball bouncing"
+            required
+          />
+          <select id="source" aria-label="Chunk source">
+            <option value="clip">clip</option>
+            <option value="native">native stub</option>
+          </select>
+          <button type="submit">OPEN STREAM</button>
+        </form>
+      </section>
+      <aside class="rail">
+        <h2>Prompt / instruction timeline</h2>
+        <div id="prompt-panel"></div>
+        <p class="hint">
+          Interactive stub: arrow keys steer; space jumps. Input affects the
+          next native chunk and never rewrites one already shown.
+        </p>
+      </aside>
+    </main>
+    <script src="/player.js"></script>
+  </body>
+</html>
