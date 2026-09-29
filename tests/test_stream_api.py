@@ -533,6 +533,46 @@ def test_malformed_native_input_reports_error_and_continues(
     assert end["type"] == "end"
 
 
+def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
+    runner = _FakeRunner(artifact_result)
+    disabled = _stream_settings(tmp_path, stream_fallback_hls=False)
+    with TestClient(create_app(disabled, lambda: runner)) as client:
+        stream_id = _open_stream(client)
+        assert (
+            client.get(f"/v1/streams/{stream_id}/playlist.m3u8").status_code
+            == 404
+        )
+
+    enabled = _stream_settings(tmp_path, stream_fallback_hls=True)
+    with TestClient(create_app(enabled, lambda: runner)) as client:
+        stream_id = _open_stream(client)
+        playlist_url = f"/v1/streams/{stream_id}/playlist.m3u8"
+        before = client.get(playlist_url)
+        assert before.status_code == 409
+        assert before.json()["detail"] == "stream media is not ready"
+
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            messages = _read_until_end(socket)
+
+        playlist = client.get(playlist_url)
+        assert playlist.status_code == 200
+        assert '#EXT-X-MAP:URI="init.mp4"' in playlist.text
+        assert "seg/0.m4s" in playlist.text
+        assert "#EXT-X-ENDLIST" in playlist.text
+
+        init = client.get(f"/v1/streams/{stream_id}/init.mp4")
+        segment = client.get(f"/v1/streams/{stream_id}/seg/0.m4s")
+        prompts = client.get(f"/v1/streams/{stream_id}/prompts.json")
+
+    assert init.status_code == 200
+    assert b"moov" in init.content
+    first_chunk = next(
+        message for message in messages if message["type"] == "chunk"
+    )
+    assert segment.content == base64.b64decode(first_chunk["video_b64"])
+    assert prompts.json()["cues"][0]["prompt"] == "a red ball bouncing"
+
+
 def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
     tmp_path, artifact_result, monkeypatch
 ):

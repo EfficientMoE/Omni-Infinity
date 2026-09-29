@@ -98,6 +98,31 @@ class StreamSession:
         self.connected = False
         self._lock = threading.Lock()
         self._terminal = False
+        self._init: bytes | None = None
+        self._chunks: list[MediaChunk] = []
+        self._media_ended = False
+
+    def record_init(self, init: bytes | None) -> None:
+        if not init:
+            raise RuntimeError(
+                "chunk source produced no initialization segment"
+            )
+        with self._lock:
+            self._init = init
+
+    def record_chunk(self, chunk: MediaChunk) -> None:
+        with self._lock:
+            self._chunks.append(chunk)
+
+    def mark_media_ended(self) -> None:
+        with self._lock:
+            self._media_ended = True
+
+    def media_snapshot(
+        self,
+    ) -> tuple[bytes | None, tuple[MediaChunk, ...], bool]:
+        with self._lock:
+            return self._init, tuple(self._chunks), self._media_ended
 
     def mark_terminal(
         self,
@@ -178,6 +203,7 @@ class StreamService:
             max_workers=1, thread_name_prefix="stream-artifact"
         )
         self._sessions: dict[str, StreamSession] = {}
+        self._media: dict[str, StreamSession] = {}
         self._lock = threading.Lock()
 
     def shutdown(self) -> None:
@@ -197,12 +223,23 @@ class StreamService:
                 self.jobs.save_image(record.id, "input-first.png", first)
             if last is not None:
                 self.jobs.save_image(record.id, "input-last.png", last)
-            self._sessions[record.id] = StreamSession(record.id, request)
+            session = StreamSession(record.id, request)
+            self._sessions[record.id] = session
+            self._media[record.id] = session
             return record.id
 
     def finish(self, stream_id: str) -> None:
         with self._lock:
             self._sessions.pop(stream_id, None)
+
+    def media_snapshot(
+        self, stream_id: str
+    ) -> tuple[bytes | None, tuple[MediaChunk, ...], bool]:
+        with self._lock:
+            session = self._media.get(stream_id)
+        if session is None:
+            raise KeyError(stream_id)
+        return session.media_snapshot()
 
     async def run_socket(self, websocket: WebSocket, stream_id: str) -> None:
         await websocket.accept()
@@ -361,8 +398,10 @@ class StreamService:
             if chunk is None:
                 break
             if not sent_init:
+                session.record_init(source.init)
                 await websocket.send_json(_init_message(session, source))
                 sent_init = True
+            session.record_chunk(chunk)
             await websocket.send_json(_chunk_message(chunk))
             if chunk.done:
                 continue
@@ -459,8 +498,10 @@ class StreamService:
             chunks, closed, failure = await pipe.drain()
             for chunk in chunks:
                 if not sent_init:
+                    session.record_init(source.init)
                     await websocket.send_json(_init_message(session, source))
                     sent_init = True
+                session.record_chunk(chunk)
                 await websocket.send_json(_chunk_message(chunk))
             if closed:
                 break
@@ -500,6 +541,7 @@ class StreamService:
             self._fail(session, detail)
             await _send_error(websocket, detail)
             return
+        session.mark_media_ended()
         await websocket.send_json(
             {
                 "type": "end",

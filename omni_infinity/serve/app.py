@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -249,5 +250,84 @@ def create_app(
             await app.state.stream_service.run_socket(websocket, stream_id)
 
         app.add_api_websocket_route("/v1/streams/{stream_id}/ws", stream_socket)
+
+        if configured.stream_fallback_hls:
+
+            def stream_media(stream_id: str):
+                try:
+                    init, chunks, ended = (
+                        app.state.stream_service.media_snapshot(stream_id)
+                    )
+                except KeyError as exc:
+                    raise HTTPException(
+                        status_code=404, detail="unknown stream session"
+                    ) from exc
+                if init is None:
+                    raise HTTPException(
+                        status_code=409, detail="stream media is not ready"
+                    )
+                return init, chunks, ended
+
+            @app.get("/v1/streams/{stream_id}/playlist.m3u8")
+            def stream_playlist(stream_id: str):
+                _, chunks, ended = stream_media(stream_id)
+                durations = [chunk.duration for chunk in chunks]
+                target = max(1, math.ceil(max(durations, default=1.0)))
+                lines = [
+                    "#EXTM3U",
+                    "#EXT-X-VERSION:7",
+                    f"#EXT-X-TARGETDURATION:{target}",
+                    "#EXT-X-MEDIA-SEQUENCE:0",
+                    '#EXT-X-MAP:URI="init.mp4"',
+                ]
+                for chunk in chunks:
+                    lines.extend(
+                        [
+                            f"#EXTINF:{chunk.duration:.6f},",
+                            f"seg/{chunk.index}.m4s",
+                        ]
+                    )
+                if ended:
+                    lines.append("#EXT-X-ENDLIST")
+                return Response(
+                    "\n".join(lines) + "\n",
+                    media_type="application/vnd.apple.mpegurl",
+                )
+
+            @app.get("/v1/streams/{stream_id}/init.mp4")
+            def stream_init(stream_id: str):
+                init, _, _ = stream_media(stream_id)
+                return Response(init, media_type="video/mp4")
+
+            @app.get("/v1/streams/{stream_id}/seg/{index}.m4s")
+            def stream_segment(stream_id: str, index: int):
+                _, chunks, _ = stream_media(stream_id)
+                chunk = next(
+                    (item for item in chunks if item.index == index), None
+                )
+                if chunk is None or chunk.video_bytes is None:
+                    raise HTTPException(
+                        status_code=404, detail="stream segment not found"
+                    )
+                return Response(
+                    chunk.video_bytes, media_type="video/iso.segment"
+                )
+
+            @app.get("/v1/streams/{stream_id}/prompts.json")
+            def stream_prompts(stream_id: str):
+                _, chunks, _ = stream_media(stream_id)
+                return {
+                    "cues": [
+                        {
+                            "index": chunk.index,
+                            "pts": chunk.pts,
+                            "duration": chunk.duration,
+                            "prompt": chunk.prompt,
+                            "instruction": chunk.instruction,
+                            "action": chunk.action,
+                        }
+                        for chunk in chunks
+                    ]
+                }
 
     return app
