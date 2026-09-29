@@ -467,6 +467,72 @@ def test_slow_socket_with_one_queue_slot_sends_every_fragment(
     assert chunks[-1]["done"] is True
 
 
+def test_input_changes_the_next_native_chunk_only(tmp_path, artifact_result):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path, stream_chunk_frames=2)
+    incoming = {
+        "type": "input",
+        "action": "forward",
+        "prompt": "run",
+        "key": "ArrowUp",
+        "down": True,
+    }
+
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        native_id = _open_stream(client, source="native", prompt="idle")
+        with client.websocket_connect(f"/v1/streams/{native_id}/ws") as socket:
+            assert socket.receive_json()["type"] == "init"
+            first = socket.receive_json()
+            socket.send_json(incoming)
+            messages = _read_until_end(socket, [first])
+
+        native_chunks = [
+            message for message in messages if message["type"] == "chunk"
+        ]
+        assert native_chunks[0]["prompt"] == "idle"
+        assert native_chunks[0]["instruction"] is None
+        assert native_chunks[1]["prompt"] == "run"
+        assert native_chunks[1]["action"] == "forward"
+        assert native_chunks[1]["instruction"] == "forward"
+
+        clip_id = _open_stream(client, source="clip", prompt="idle")
+        with client.websocket_connect(f"/v1/streams/{clip_id}/ws") as socket:
+            assert socket.receive_json()["type"] == "init"
+            first = socket.receive_json()
+            socket.send_json(incoming)
+            messages = _read_until_end(socket, [first])
+
+    clip_chunks = [
+        message for message in messages if message["type"] == "chunk"
+    ]
+    assert all(chunk["prompt"] == "idle" for chunk in clip_chunks)
+    assert all(chunk["instruction"] is None for chunk in clip_chunks)
+
+
+def test_malformed_native_input_reports_error_and_continues(
+    tmp_path, artifact_result
+):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path, stream_chunk_frames=2)
+
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        stream_id = _open_stream(client, source="native", prompt="idle")
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            assert socket.receive_json()["type"] == "init"
+            first = socket.receive_json()
+            socket.send_json({"type": "not-input"})
+            error = socket.receive_json()
+            second = socket.receive_json()
+            end = socket.receive_json()
+
+    assert first["index"] == 0
+    assert error["type"] == "error"
+    assert second["type"] == "chunk"
+    assert second["index"] == 1
+    assert second["prompt"] == "idle"
+    assert end["type"] == "end"
+
+
 def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
     tmp_path, artifact_result, monkeypatch
 ):

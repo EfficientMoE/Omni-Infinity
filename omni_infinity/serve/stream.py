@@ -9,8 +9,11 @@ import contextlib
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Iterator
 
+import anyio
 from fastapi import WebSocket
+from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
 from omni_infinity.serve.artifacts import write_artifacts
@@ -27,6 +30,7 @@ from omni_infinity.streaming import (
     ClipChunker,
     MediaChunk,
     NativeChunker,
+    StreamInput,
     StreamRequest,
 )
 
@@ -211,12 +215,16 @@ class StreamService:
 
         pipe = ChunkPipe(self.queue_chunks)
         source = self._make_source(session)
-        reader = asyncio.create_task(self._read_inputs(websocket, pipe))
+        reader: asyncio.Task[None] | None = None
         feeder: asyncio.Task[None] | None = None
         try:
-            chunks = await self._generate(session, source, pipe)
-            feeder = asyncio.create_task(self._feed(pipe, chunks))
-            await self._pump(websocket, session, source, pipe)
+            if isinstance(source, NativeChunker):
+                await self._pump_native(websocket, session, source, pipe)
+            else:
+                reader = asyncio.create_task(self._read_inputs(websocket, pipe))
+                chunks = await self._generate(session, source, pipe)
+                feeder = asyncio.create_task(self._feed(pipe, chunks))
+                await self._pump(websocket, session, source, pipe)
         except WebSocketDisconnect:
             logger.info("stream %s: client disconnected", stream_id)
         except StreamAborted:
@@ -236,9 +244,10 @@ class StreamService:
                 feeder.cancel()
                 with contextlib.suppress(asyncio.CancelledError, StreamAborted):
                     await feeder
-            reader.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reader
+            if reader is not None:
+                reader.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader
             self._cancel_unfinished(session)
             self.finish(stream_id)
             await _close(websocket)
@@ -337,6 +346,105 @@ class StreamService:
         for chunk in chunks:
             await pipe.put(chunk)
         await pipe.close()
+
+    async def _pump_native(
+        self,
+        websocket: WebSocket,
+        session: StreamSession,
+        source: NativeChunker,
+        pipe: ChunkPipe,
+    ) -> None:
+        iterator = await self._start_native(session, source, pipe)
+        sent_init = False
+        while True:
+            chunk = await self._next_native(session, iterator)
+            if chunk is None:
+                break
+            if not sent_init:
+                await websocket.send_json(_init_message(session, source))
+                sent_init = True
+            await websocket.send_json(_chunk_message(chunk))
+            if chunk.done:
+                continue
+            await self._receive_native_input(websocket, source, chunk.duration)
+        if not sent_init:
+            detail = "chunk source produced no media fragments"
+            self._fail(session, detail)
+            raise StreamGenerationError(detail)
+        await self._publish(websocket, session, source)
+
+    async def _start_native(
+        self,
+        session: StreamSession,
+        source: NativeChunker,
+        pipe: ChunkPipe,
+    ) -> Iterator[MediaChunk]:
+        try:
+            future = self.jobs.executor.submit(
+                self._open_native_iterator, session, source, pipe
+            )
+        except RuntimeError as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._fail(session, detail)
+            raise StreamGenerationError(detail) from exc
+        try:
+            return await asyncio.wrap_future(future)
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._fail(session, detail)
+            raise StreamGenerationError(detail) from exc
+
+    def _open_native_iterator(
+        self,
+        session: StreamSession,
+        source: NativeChunker,
+        pipe: ChunkPipe,
+    ) -> Iterator[MediaChunk]:
+        stream_id = session.stream_id
+        self.jobs.store.transition(stream_id, JobStatus.RUNNING)
+        first = self.jobs.load_image(stream_id, "input-first.png")
+        last = self.jobs.load_image(stream_id, "input-last.png")
+        return source.iter_chunks(
+            session.request,
+            step_callback=lambda completed, total: self._report_progress(
+                session, pipe, completed, total
+            ),
+            image=first,
+            last_image=last,
+        )
+
+    async def _next_native(
+        self,
+        session: StreamSession,
+        iterator: Iterator[MediaChunk],
+    ) -> MediaChunk | None:
+        try:
+            future = self.jobs.executor.submit(_next_or_none, iterator)
+        except RuntimeError as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._fail(session, detail)
+            raise StreamGenerationError(detail) from exc
+        try:
+            return await asyncio.wrap_future(future)
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._fail(session, detail)
+            raise StreamGenerationError(detail) from exc
+
+    async def _receive_native_input(
+        self,
+        websocket: WebSocket,
+        source: NativeChunker,
+        duration: float,
+    ) -> None:
+        with anyio.move_on_after(duration):
+            payload = await websocket.receive_json()
+            try:
+                incoming = StreamInput.model_validate(payload)
+            except ValidationError:
+                await _send_error(websocket, "invalid stream input")
+                return
+            source.push_input(incoming)
 
     async def _pump(
         self,
@@ -442,7 +550,7 @@ class StreamService:
         session.mark_terminal(self.jobs.store, JobStatus.CANCELLED)
 
     async def _read_inputs(self, websocket: WebSocket, pipe: ChunkPipe) -> None:
-        """Accept and ignore client messages; Phase 2 consumes them."""
+        """Accept and ignore client messages from clip sessions."""
         try:
             while True:
                 message = await websocket.receive()
@@ -451,6 +559,13 @@ class StreamService:
         except (WebSocketDisconnect, RuntimeError):
             pass
         pipe.abort()
+
+
+def _next_or_none(iterator: Iterator[MediaChunk]) -> MediaChunk | None:
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
 
 
 async def _send_error(websocket: WebSocket, detail: str) -> None:

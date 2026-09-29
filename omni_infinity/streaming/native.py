@@ -46,7 +46,7 @@ class NativeChunker:
         )
         self.result = GenerationResult(
             videos=[frames],
-            audio=[audio],
+            audio=audio,
             sampling_rate=sample_rate,
             latents=None,
             audio_latents=None,
