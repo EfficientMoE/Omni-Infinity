@@ -21,6 +21,8 @@ import torch
 GOLDENS = Path(__file__).parent / "fixtures" / "goldens" / "fl2va_goldens.pt"
 
 
+@pytest.mark.gpu
+@pytest.mark.weights
 @pytest.mark.skipif(not GOLDENS.is_file(), reason="golden fixtures absent")
 @pytest.mark.skipif(
     not torch.cuda.is_available(), reason="reference parity needs a GPU"

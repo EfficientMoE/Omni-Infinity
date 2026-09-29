@@ -43,6 +43,26 @@ def test_reference_matches_flinear_of_dequant():
     assert rel < 1e-2, rel.item()  # bf16 output rounding only
 
 
+def test_reference_writes_the_provided_out_buffer():
+    torch.manual_seed(1)
+    x = torch.randn(8, 256, dtype=torch.bfloat16)
+    w = (torch.randn(128, 256) * 0.02).to(torch.bfloat16)
+    q, s = quantize_block_fp8(w)
+    expected = fused_fp8_gemm_reference(x, q, s)
+    out = torch.empty(8, 128, dtype=torch.bfloat16)
+    returned = fused_fp8_gemm_reference(x, q, s, out=out)
+    assert returned is out
+    assert torch.equal(out, expected)
+
+
+def test_quantize_block_zero_weight_keeps_a_finite_positive_scale():
+    quantized, scale = quantize_block_fp8(torch.zeros(128, 128))
+    assert quantized.dtype == torch.float8_e4m3fn
+    assert tuple(scale.shape) == (1, 1)
+    assert torch.isfinite(scale).all()
+    assert float(scale) > 0.0
+
+
 def test_quantize_block_handles_non_divisible_K():
     w = (torch.randn(128, 200) * 0.02).to(torch.bfloat16)  # K not %128
     q, s = quantize_block_fp8(w)
@@ -52,8 +72,10 @@ def test_quantize_block_handles_non_divisible_K():
 
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+gpu = pytest.mark.gpu
 
 
+@gpu
 @cuda
 @pytest.mark.parametrize(
     "M,N,K", [(256, 256, 512), (2048, 1536, 4096), (17, 384, 200)]
@@ -75,6 +97,7 @@ def test_triton_matches_reference(M, N, K):
     assert got.shape == (M, N) and got.dtype == torch.bfloat16
 
 
+@gpu
 @cuda
 def test_triton_3d_input_and_out():
     from omni_infinity.kernels._fused_fp8_gemm import fused_fp8_gemm_triton
@@ -105,6 +128,7 @@ def test_facade_reference_fallback_on_cpu():
     assert tuple(y.shape) == (4, 128) and y.dtype == torch.bfloat16
 
 
+@gpu
 @cuda
 def test_facade_env_forces_reference(monkeypatch):
     monkeypatch.setenv("OMO_KERNELS_REFERENCE", "1")

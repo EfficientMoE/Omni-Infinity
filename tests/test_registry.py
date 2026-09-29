@@ -60,6 +60,30 @@ def test_runner_kwargs_for_uses_arch_specific_fp8_names():
     assert hybrid == {"fp8": True}
 
 
+def test_resolve_profile_rejects_unknown_arch_and_duplicates():
+    with pytest.raises(ValueError, match="unknown arch 'h3'"):
+        registry.resolve_profile("h3", [])
+    with pytest.raises(ValueError, match="optimization names must be unique"):
+        registry.resolve_profile("h3-dense", ["fp8", "fp8"])
+
+
+def test_runner_kwargs_for_rejects_unknown_names():
+    with pytest.raises(ValueError, match="unknown optimization 'int8'"):
+        registry.runner_kwargs_for("h3-dense", ["int8"])
+    with pytest.raises(ValueError, match="unknown arch 'h3'"):
+        registry.runner_kwargs_for("h3", ["fp8"])
+
+
+def test_resolve_profile_uses_an_explicit_checkpoint():
+    profile = registry.resolve_profile(
+        "vdn-hybrid", [], checkpoint="/local/vdn"
+    )
+    assert profile.checkpoint == "/local/vdn"
+    assert profile.model_arch == "vdn-hybrid"
+    assert profile.runner_kwargs == {}
+    assert profile.optimizations == ()
+
+
 def test_resolve_profile_returns_runner_checkpoint_and_merged_kwargs():
     profile = registry.resolve_profile(
         "h3-dense", ["adaln-host-cache", "block-stream"]

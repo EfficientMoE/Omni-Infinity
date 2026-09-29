@@ -13,6 +13,8 @@ GOLDENS = pathlib.Path(__file__).parent / "fixtures" / "vdn_goldens"
 CHECKPOINT = os.environ.get("VDN_CHECKPOINT")
 
 pytestmark = [
+    pytest.mark.gpu,
+    pytest.mark.weights,
     pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU"),
     pytest.mark.skipif(CHECKPOINT is None, reason="set VDN_CHECKPOINT to run"),
     pytest.mark.skipif(

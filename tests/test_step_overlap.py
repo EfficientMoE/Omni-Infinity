@@ -154,6 +154,7 @@ def _intersection_ms(
     return sum(end - start for start, end in merged)
 
 
+@pytest.mark.gpu
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_first_group_prefetch_overlaps_previous_step_tail():
     from diffusers.hooks import apply_group_offloading
