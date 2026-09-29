@@ -8,8 +8,7 @@ import base64
 import contextlib
 import logging
 import threading
-from collections import deque
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
@@ -34,85 +33,57 @@ from omni_infinity.streaming import (
 logger = logging.getLogger(__name__)
 
 MAX_PENDING_CHUNKS = 8
+_CLOSED = object()
+StreamSource = ClipChunker | NativeChunker
 
 
 class ChunkPipe:
-    """Bounded hand-off between the GPU worker and the socket sender.
+    """Bounded async hand-off that preserves every generated fragment."""
 
-    The producer never blocks: once the buffer is full it drops fragments
-    until the next keyframe, so a slow client cannot hold the single job
-    executor. Chunk zero and the final chunk are never dropped because a
-    client cannot start without the first fragment and cannot learn the
-    stream ended without the last one.
-    """
-
-    def __init__(
-        self, loop: asyncio.AbstractEventLoop, maxsize: int = MAX_PENDING_CHUNKS
-    ) -> None:
-        self._loop = loop
-        self._maxsize = max(1, int(maxsize))
-        self._lock = threading.Lock()
-        self._ready = asyncio.Event()
-        self._items: deque[MediaChunk] = deque()
-        self._closed = False
+    def __init__(self, maxsize: int = MAX_PENDING_CHUNKS) -> None:
+        self._queue: asyncio.Queue[MediaChunk | object] = asyncio.Queue(
+            maxsize=max(1, int(maxsize))
+        )
         self._error: str | None = None
         self._aborted = False
-        self._resyncing = False
-        self.dropped = 0
 
     @property
     def aborted(self) -> bool:
-        with self._lock:
-            return self._aborted
+        return self._aborted
 
-    def put(self, chunk: MediaChunk) -> None:
-        with self._lock:
-            if self._aborted or self._closed:
-                return
-            if not (chunk.index == 0 or chunk.done):
-                if len(self._items) >= self._maxsize:
-                    self._resyncing = True
-                if self._resyncing:
-                    if not chunk.keyframe or len(self._items) >= self._maxsize:
-                        self.dropped += 1
-                        return
-                    self._resyncing = False
-            self._items.append(chunk)
-        self._wake()
+    async def put(self, chunk: MediaChunk) -> None:
+        if self._aborted:
+            raise StreamAborted("stream pipe is closed")
+        await self._queue.put(chunk)
+        if self._aborted:
+            raise StreamAborted("stream pipe is closed")
 
-    def close(self, error: str | None = None) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            self._error = error
-        self._wake()
+    async def close(self, error: str | None = None) -> None:
+        self._error = error
+        await self._queue.put(_CLOSED)
 
     def abort(self) -> None:
-        with self._lock:
-            self._aborted = True
-            self._closed = True
-            self._items.clear()
-        self._wake()
+        self._aborted = True
+        while not self._queue.empty():
+            self._queue.get_nowait()
+        self._queue.put_nowait(_CLOSED)
 
     async def drain(self) -> tuple[list[MediaChunk], bool, str | None]:
-        await self._ready.wait()
-        with self._lock:
-            items = list(self._items)
-            self._items.clear()
-            closed, error = self._closed, self._error
-            if not closed:
-                self._ready.clear()
-        return items, closed, error
-
-    def _wake(self) -> None:
-        try:
-            self._loop.call_soon_threadsafe(self._ready.set)
-        except RuntimeError:
-            logger.debug("stream event loop is gone; dropping wakeup")
+        item = await self._queue.get()
+        if item is _CLOSED:
+            return [], True, self._error
+        return [item], False, None
 
 
 class StreamAborted(RuntimeError):
+    pass
+
+
+class StreamGenerationError(RuntimeError):
+    pass
+
+
+class TerminalPersistenceError(RuntimeError):
     pass
 
 
@@ -120,8 +91,6 @@ class StreamSession:
     def __init__(self, stream_id: str, request: StreamRequest) -> None:
         self.stream_id = stream_id
         self.request = request
-        self.source: Any = None
-        self.pipe: ChunkPipe | None = None
         self.connected = False
         self._lock = threading.Lock()
         self._terminal = False
@@ -137,25 +106,26 @@ class StreamSession:
         with self._lock:
             if self._terminal:
                 return False
+            try:
+                store.transition(
+                    self.stream_id, status, error=error, artifacts=artifacts
+                )
+            except JobStoreError:
+                logger.exception(
+                    "could not finish stream %s as %s", self.stream_id, status
+                )
+                return False
             self._terminal = True
-        try:
-            store.transition(
-                self.stream_id, status, error=error, artifacts=artifacts
-            )
-        except JobStoreError:
-            logger.exception(
-                "could not finish stream %s as %s", self.stream_id, status
-            )
-            return False
         return True
 
 
-def _init_message(session: StreamSession) -> dict:
-    init = getattr(session.source, "init", None) or b""
+def _init_message(session: StreamSession, source: StreamSource) -> dict:
+    if not source.init:
+        raise RuntimeError("chunk source produced no initialization segment")
     return {
         "type": "init",
         "codec": CODEC,
-        "init_b64": base64.b64encode(init).decode("ascii"),
+        "init_b64": base64.b64encode(source.init).decode("ascii"),
         "action_script": [
             {"t": cue.t, "action": cue.action, "instruction": cue.instruction}
             for cue in session.request.action_script
@@ -200,8 +170,14 @@ class StreamService:
         self.chunk_frames = chunk_frames
         self.hls = hls
         self.queue_chunks = queue_chunks
+        self.artifact_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="stream-artifact"
+        )
         self._sessions: dict[str, StreamSession] = {}
         self._lock = threading.Lock()
+
+    def shutdown(self) -> None:
+        self.artifact_executor.shutdown(wait=True, cancel_futures=True)
 
     def open_session(self, request: StreamRequest) -> str:
         self.jobs.validate_request(request)
@@ -228,22 +204,38 @@ class StreamService:
         await websocket.accept()
         session, detail = self._claim(stream_id)
         if session is None:
+            assert detail is not None
             await _send_error(websocket, detail)
             await _close(websocket)
             return
 
-        session.pipe = ChunkPipe(asyncio.get_running_loop(), self.queue_chunks)
-        session.source = self._make_source(session)
-        reader = asyncio.create_task(self._read_inputs(websocket, session))
+        pipe = ChunkPipe(self.queue_chunks)
+        source = self._make_source(session)
+        reader = asyncio.create_task(self._read_inputs(websocket, pipe))
+        feeder: asyncio.Task[None] | None = None
         try:
-            self._start_worker(session)
-            await self._pump(websocket, session)
+            chunks = await self._generate(session, source, pipe)
+            feeder = asyncio.create_task(self._feed(pipe, chunks))
+            await self._pump(websocket, session, source, pipe)
         except WebSocketDisconnect:
             logger.info("stream %s: client disconnected", stream_id)
+        except StreamAborted:
+            logger.info("stream %s: client disconnected", stream_id)
+        except StreamGenerationError as exc:
+            await _send_error(websocket, str(exc))
+        except RuntimeError as exc:
+            if _is_closed_socket_error(exc):
+                logger.info("stream %s: client socket closed", stream_id)
+            else:
+                logger.exception("stream %s: socket failed", stream_id)
         except Exception:
             logger.exception("stream %s: socket failed", stream_id)
         finally:
-            session.pipe.abort()
+            pipe.abort()
+            if feeder is not None:
+                feeder.cancel()
+                with contextlib.suppress(asyncio.CancelledError, StreamAborted):
+                    await feeder
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
@@ -261,7 +253,7 @@ class StreamService:
             session.connected = True
             return session, None
 
-    def _make_source(self, session: StreamSession):
+    def _make_source(self, session: StreamSession) -> StreamSource:
         if session.request.source == "native":
             return NativeChunker(chunk_frames=self.chunk_frames)
         return ClipChunker(
@@ -270,74 +262,96 @@ class StreamService:
             chunk_frames=self.chunk_frames,
         )
 
-    def _start_worker(self, session: StreamSession) -> None:
-        assert session.pipe is not None
+    async def _generate(
+        self,
+        session: StreamSession,
+        source: StreamSource,
+        pipe: ChunkPipe,
+    ) -> list[MediaChunk]:
         try:
-            future = self.jobs.executor.submit(self._produce, session)
-        except RuntimeError as exc:
-            session.pipe.close(error=f"{type(exc).__name__}: {exc}")
-            return
-        future.add_done_callback(
-            lambda done: (
-                session.pipe.close(error="stream worker was cancelled")
-                if done.cancelled()
-                else None
+            future = self.jobs.executor.submit(
+                self._collect_chunks, session, source, pipe
             )
-        )
-
-    def _produce(self, session: StreamSession) -> None:
-        """Run the chunk iterator on the single job executor.
-
-        The worker never waits on the socket: it hands each fragment to the
-        bounded pipe and returns as soon as generation ends, so queued jobs
-        are not held behind network I/O.
-        """
-        pipe = session.pipe
-        stream_id = session.stream_id
+        except RuntimeError as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._fail(session, detail)
+            raise StreamGenerationError(detail) from exc
         try:
-            if pipe.aborted:
-                raise StreamAborted(stream_id)
-            self.jobs.store.transition(stream_id, JobStatus.RUNNING)
-            first = self.jobs.load_image(stream_id, "input-first.png")
-            last = self.jobs.load_image(stream_id, "input-last.png")
-            for chunk in session.source.iter_chunks(
+            return await asyncio.wrap_future(future)
+        except StreamAborted:
+            raise
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            logger.exception("stream %s: generation failed", session.stream_id)
+            self._fail(session, detail)
+            raise StreamGenerationError(detail) from exc
+
+    def _collect_chunks(
+        self,
+        session: StreamSession,
+        source: StreamSource,
+        pipe: ChunkPipe,
+    ) -> list[MediaChunk]:
+        """Finish GPU-backed generation before bounded async delivery."""
+        stream_id = session.stream_id
+        if pipe.aborted:
+            raise StreamAborted(stream_id)
+        self.jobs.store.transition(stream_id, JobStatus.RUNNING)
+        first = self.jobs.load_image(stream_id, "input-first.png")
+        last = self.jobs.load_image(stream_id, "input-last.png")
+        chunks = list(
+            source.iter_chunks(
                 session.request,
                 step_callback=lambda completed, total: self._report_progress(
-                    session, completed, total
+                    session, pipe, completed, total
                 ),
                 image=first,
                 last_image=last,
-            ):
-                if pipe.aborted:
-                    raise StreamAborted(stream_id)
-                pipe.put(chunk)
-            pipe.close()
-        except StreamAborted:
-            logger.info("stream %s: worker stopped early", stream_id)
-            pipe.close()
-        except Exception as exc:
-            logger.exception("stream %s: generation failed", stream_id)
-            pipe.close(error=f"{type(exc).__name__}: {exc}")
+            )
+        )
+        if pipe.aborted:
+            raise StreamAborted(stream_id)
+        if not chunks:
+            raise RuntimeError("chunk source produced no media fragments")
+        if not source.init:
+            raise RuntimeError(
+                "chunk source produced no initialization segment"
+            )
+        return chunks
 
     def _report_progress(
-        self, session: StreamSession, completed: int, total: int
+        self,
+        session: StreamSession,
+        pipe: ChunkPipe,
+        completed: int,
+        total: int,
     ) -> None:
-        if session.pipe.aborted:
+        if pipe.aborted:
             raise StreamAborted(session.stream_id)
         try:
             self.jobs.store.update_progress(session.stream_id, completed, total)
         except JobStoreError as exc:
             raise StreamAborted(session.stream_id) from exc
 
-    async def _pump(self, websocket: WebSocket, session: StreamSession) -> None:
-        pipe = session.pipe
+    async def _feed(self, pipe: ChunkPipe, chunks: list[MediaChunk]) -> None:
+        for chunk in chunks:
+            await pipe.put(chunk)
+        await pipe.close()
+
+    async def _pump(
+        self,
+        websocket: WebSocket,
+        session: StreamSession,
+        source: StreamSource,
+        pipe: ChunkPipe,
+    ) -> None:
         sent_init = False
         failure: str | None = None
         while True:
             chunks, closed, failure = await pipe.drain()
             for chunk in chunks:
                 if not sent_init:
-                    await websocket.send_json(_init_message(session))
+                    await websocket.send_json(_init_message(session, source))
                     sent_init = True
                 await websocket.send_json(_chunk_message(chunk))
             if closed:
@@ -348,14 +362,19 @@ class StreamService:
             self._fail(session, failure)
             await _send_error(websocket, failure)
             return
-        await self._publish(websocket, session)
+        await self._publish(websocket, session, source)
 
     async def _publish(
-        self, websocket: WebSocket, session: StreamSession
+        self,
+        websocket: WebSocket,
+        session: StreamSession,
+        source: StreamSource,
     ) -> None:
         """Write the job artifact only after the client has the fragments."""
         try:
-            future = self.jobs.executor.submit(self._write_artifact, session)
+            future = self.artifact_executor.submit(
+                self._write_artifact, session, source
+            )
         except RuntimeError as exc:
             detail = f"{type(exc).__name__}: {exc}"
             self._fail(session, detail)
@@ -363,6 +382,11 @@ class StreamService:
             return
         try:
             await asyncio.wrap_future(future)
+        except TerminalPersistenceError as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            self._fail(session, detail, remove_artifacts=False)
+            await _send_error(websocket, detail)
+            return
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
             self._fail(session, detail)
@@ -375,8 +399,10 @@ class StreamService:
             }
         )
 
-    def _write_artifact(self, session: StreamSession) -> None:
-        result = getattr(session.source, "result", None)
+    def _write_artifact(
+        self, session: StreamSession, source: StreamSource
+    ) -> None:
+        result = source.result
         if result is None:
             raise RuntimeError("chunk source produced no generation result")
         stream_id = session.stream_id
@@ -388,12 +414,21 @@ class StreamService:
         if not session.mark_terminal(
             self.jobs.store, JobStatus.SUCCEEDED, artifacts=artifacts
         ):
-            raise RuntimeError("stream session already finished")
+            raise TerminalPersistenceError(
+                "could not persist succeeded stream status"
+            )
 
-    def _fail(self, session: StreamSession, detail: str) -> None:
+    def _fail(
+        self,
+        session: StreamSession,
+        detail: str,
+        *,
+        remove_artifacts: bool = True,
+    ) -> None:
         store = self.jobs.store
-        store.video_path(session.stream_id).unlink(missing_ok=True)
-        store.audio_path(session.stream_id).unlink(missing_ok=True)
+        if remove_artifacts:
+            store.video_path(session.stream_id).unlink(missing_ok=True)
+            store.audio_path(session.stream_id).unlink(missing_ok=True)
         session.mark_terminal(store, JobStatus.FAILED, error=detail)
 
     def _cancel_unfinished(self, session: StreamSession) -> None:
@@ -406,9 +441,7 @@ class StreamService:
             return
         session.mark_terminal(self.jobs.store, JobStatus.CANCELLED)
 
-    async def _read_inputs(
-        self, websocket: WebSocket, session: StreamSession
-    ) -> None:
+    async def _read_inputs(self, websocket: WebSocket, pipe: ChunkPipe) -> None:
         """Accept and ignore client messages; Phase 2 consumes them."""
         try:
             while True:
@@ -417,7 +450,7 @@ class StreamService:
                     break
         except (WebSocketDisconnect, RuntimeError):
             pass
-        session.pipe.abort()
+        pipe.abort()
 
 
 async def _send_error(websocket: WebSocket, detail: str) -> None:
@@ -428,3 +461,12 @@ async def _send_error(websocket: WebSocket, detail: str) -> None:
 async def _close(websocket: WebSocket) -> None:
     with contextlib.suppress(Exception):
         await websocket.close()
+
+
+def _is_closed_socket_error(exc: RuntimeError) -> bool:
+    detail = str(exc).lower()
+    return (
+        "once a close message has been sent" in detail
+        or "after sending 'websocket.close'" in detail
+        or "websocket is not connected" in detail
+    )

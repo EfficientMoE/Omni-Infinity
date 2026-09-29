@@ -7,6 +7,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import socket
 import threading
 import time
@@ -23,8 +24,10 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from omni_infinity.runner import GenerationResult
 from omni_infinity.serve import stream as stream_module
 from omni_infinity.serve.app import ServerSettings, create_app
-from omni_infinity.serve.stream import ChunkPipe
-from omni_infinity.streaming import CODEC, MediaChunk
+from omni_infinity.serve.models import JobStatus
+from omni_infinity.serve.store import JobStoreError
+from omni_infinity.serve.stream import StreamSession
+from omni_infinity.streaming import CODEC
 
 
 def _body(**overrides):
@@ -39,11 +42,17 @@ def _body(**overrides):
 
 @pytest.fixture
 def artifact_result():
-    frames = np.zeros((6, 16, 16, 3), dtype=np.float32)
-    frames[:, :, :, 0] = np.linspace(0.0, 1.0, 6)[:, None, None]
+    return _result_with_frames(6)
+
+
+def _result_with_frames(frame_count):
+    frames = np.zeros((frame_count, 16, 16, 3), dtype=np.float32)
+    frames[:, :, :, 0] = np.linspace(0.0, 1.0, frame_count)[:, None, None]
     return GenerationResult(
         videos=[frames],
-        audio=torch.zeros(1, 2, 8000, dtype=torch.float32),
+        audio=torch.zeros(
+            1, 2, frame_count * 48_000 // 24, dtype=torch.float32
+        ),
         sampling_rate=48000,
         latents=None,
         audio_latents=None,
@@ -203,55 +212,39 @@ def test_stream_validates_typed_action_script(tmp_path):
 def test_stream_enabled_env_parses_bools(monkeypatch):
     monkeypatch.delenv("OMNI_STREAM_ENABLED", raising=False)
     monkeypatch.delenv("OMNI_STREAM_CHUNK_FRAMES", raising=False)
+    monkeypatch.delenv("OMNI_STREAM_QUEUE_CHUNKS", raising=False)
     assert ServerSettings.from_env().stream_enabled is False
 
     monkeypatch.setenv("OMNI_STREAM_ENABLED", "true")
     monkeypatch.setenv("OMNI_STREAM_CHUNK_FRAMES", "12")
+    monkeypatch.setenv("OMNI_STREAM_QUEUE_CHUNKS", "3")
     assert ServerSettings.from_env().stream_enabled is True
     assert ServerSettings.from_env().stream_chunk_frames == 12
+    assert ServerSettings.from_env().stream_queue_chunks == 3
 
     monkeypatch.setenv("OMNI_STREAM_ENABLED", "0")
     assert ServerSettings.from_env().stream_enabled is False
 
 
-def _pipe_chunk(index, *, keyframe=False, done=False):
-    return MediaChunk(
-        index=index,
-        pts=index / 24,
-        duration=1 / 24,
-        keyframe=keyframe,
-        video_bytes=b"\x00",
-        audio_bytes=None,
-        prompt="prompt",
-        done=done,
+def test_terminal_latch_is_set_only_after_store_transition_succeeds():
+    request = stream_module.StreamRequest.model_validate(_body())
+    session = StreamSession("a" * 32, request)
+
+    class FlakyStore:
+        def __init__(self):
+            self.calls = 0
+
+        def transition(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise JobStoreError("disk unavailable")
+
+    store = FlakyStore()
+    assert (
+        session.mark_terminal(store, JobStatus.FAILED, error="first") is False
     )
-
-
-def test_chunk_pipe_protects_the_first_chunk_and_resyncs_on_keyframes():
-    async def scenario():
-        pipe = ChunkPipe(asyncio.get_running_loop(), 1)
-        pipe.put(_pipe_chunk(0, keyframe=True))
-        pipe.put(_pipe_chunk(1))
-        pipe.put(_pipe_chunk(2, keyframe=True))
-        first, closed, error = await pipe.drain()
-
-        pipe.put(_pipe_chunk(3))
-        pipe.put(_pipe_chunk(4, keyframe=True))
-        second, _, _ = await pipe.drain()
-
-        pipe.put(_pipe_chunk(5, done=True))
-        pipe.close()
-        last, done, _ = await pipe.drain()
-        return first, closed, error, second, last, done, pipe.dropped
-
-    first, closed, error, second, last, done, dropped = asyncio.run(scenario())
-
-    assert [chunk.index for chunk in first] == [0]
-    assert (closed, error) == (False, None)
-    assert [chunk.index for chunk in second] == [4]
-    assert [chunk.index for chunk in last] == [5]
-    assert done is True
-    assert dropped == 3
+    assert session.mark_terminal(store, JobStatus.FAILED, error="retry") is True
+    assert store.calls == 2
 
 
 def test_socket_route_is_absent_unless_streaming_is_enabled(tmp_path):
@@ -451,6 +444,101 @@ def test_socket_leaves_the_job_worker_free_during_slow_sends(
         assert runner.max_active == 1
 
 
+def test_slow_socket_with_one_queue_slot_sends_every_fragment(
+    tmp_path, monkeypatch
+):
+    original_send = WebSocket.send_json
+
+    async def slow_send(self, data, mode="text"):
+        if data.get("type") == "chunk":
+            await asyncio.sleep(0.01)
+        await original_send(self, data, mode)
+
+    monkeypatch.setattr(WebSocket, "send_json", slow_send)
+    runner = _FakeRunner(_result_with_frames(40))
+    settings = _stream_settings(tmp_path, stream_queue_chunks=1)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        stream_id = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            messages = _read_until_end(socket)
+
+    chunks = [message for message in messages if message["type"] == "chunk"]
+    assert [chunk["index"] for chunk in chunks] == list(range(10))
+    assert chunks[-1]["done"] is True
+
+
+def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
+    tmp_path, artifact_result, monkeypatch
+):
+    send_blocked = threading.Event()
+    release_send = threading.Event()
+    job_blocked = threading.Event()
+    release_job = threading.Event()
+    original_send = WebSocket.send_json
+
+    async def slow_send(self, data, mode="text"):
+        if data.get("type") == "chunk" and not send_blocked.is_set():
+            send_blocked.set()
+            while not release_send.is_set():
+                await asyncio.sleep(0.01)
+        await original_send(self, data, mode)
+
+    class SecondCallBlocksRunner(_FakeRunner):
+        def __init__(self, result):
+            super().__init__(result)
+            self.calls = 0
+
+        def generate(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                job_blocked.set()
+                assert release_job.wait(timeout=10)
+            return super().generate(*args, **kwargs)
+
+    monkeypatch.setattr(WebSocket, "send_json", slow_send)
+    runner = SecondCallBlocksRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        stream_id = _open_stream(client)
+        messages: list[dict] = []
+        stream_done = threading.Event()
+
+        def reader():
+            with client.websocket_connect(
+                f"/v1/streams/{stream_id}/ws"
+            ) as socket:
+                _read_until_end(socket, messages)
+            stream_done.set()
+
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
+        try:
+            assert send_blocked.wait(timeout=10)
+            job = client.post("/v1/jobs", json=_body())
+            assert job.status_code == 202
+            assert job_blocked.wait(timeout=10)
+            release_send.set()
+            assert stream_done.wait(timeout=3)
+            assert messages[-1]["type"] == "end"
+            assert not release_job.is_set()
+        finally:
+            release_send.set()
+            release_job.set()
+            thread.join(timeout=15)
+
+
+def test_stream_artifact_executor_shuts_down_with_the_app(
+    tmp_path, artifact_result
+):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        stream_service = client.app.state.stream_service
+
+    with pytest.raises(RuntimeError, match="cannot schedule new futures"):
+        stream_service.artifact_executor.submit(lambda: None)
+
+
 def test_stream_waits_for_the_job_worker(tmp_path, artifact_result):
     release = threading.Event()
     runner = _FakeRunner(artifact_result, release=release)
@@ -485,6 +573,59 @@ def test_stream_waits_for_the_job_worker(tmp_path, artifact_result):
         assert not thread.is_alive()
         assert runner.max_active == 1
         assert messages[-1]["type"] == "end"
+
+
+def test_success_transition_failure_keeps_muxed_artifacts(
+    tmp_path, artifact_result, monkeypatch
+):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        store = client.app.state.store
+        real_transition = store.transition
+        failed_once = False
+
+        def fail_success_once(job_id, status, **kwargs):
+            nonlocal failed_once
+            if status == JobStatus.SUCCEEDED and not failed_once:
+                failed_once = True
+                raise JobStoreError("disk unavailable")
+            return real_transition(job_id, status, **kwargs)
+
+        monkeypatch.setattr(store, "transition", fail_success_once)
+        stream_id = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            messages = _read_until_end(socket)
+
+        assert messages[-1]["type"] == "error"
+        assert client.get(f"/v1/jobs/{stream_id}").json()["status"] == "failed"
+        assert (tmp_path / stream_id / "output.mp4").is_file()
+        assert (tmp_path / stream_id / "output.wav").is_file()
+
+
+def test_closed_socket_runtime_error_is_not_logged_as_server_failure(
+    tmp_path, artifact_result, monkeypatch, caplog
+):
+    async def closed_send(self, data, mode="text"):
+        raise RuntimeError(
+            'Cannot call "send" once a close message has been sent.'
+        )
+
+    monkeypatch.setattr(WebSocket, "send_json", closed_send)
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with caplog.at_level(logging.ERROR):
+        with TestClient(create_app(settings, lambda: runner)) as client:
+            stream_id = _open_stream(client)
+            with client.websocket_connect(
+                f"/v1/streams/{stream_id}/ws"
+            ) as socket:
+                with pytest.raises(WebSocketDisconnect):
+                    socket.receive_json()
+
+    assert not any(
+        "socket failed" in record.getMessage() for record in caplog.records
+    )
 
 
 def test_socket_reports_generation_failure(tmp_path):

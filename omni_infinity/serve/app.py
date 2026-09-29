@@ -67,6 +67,7 @@ class ServerSettings:
     stream_enabled: bool = False
     stream_max_sessions: int = 1
     stream_chunk_frames: int = 24
+    stream_queue_chunks: int = 8
     stream_fallback_hls: bool = False
 
     @classmethod
@@ -106,6 +107,9 @@ class ServerSettings:
             ),
             stream_chunk_frames=int(
                 os.environ.get("OMNI_STREAM_CHUNK_FRAMES", "24")
+            ),
+            stream_queue_chunks=int(
+                os.environ.get("OMNI_STREAM_QUEUE_CHUNKS", "8")
             ),
             stream_fallback_hls=parse_bool(
                 os.environ.get("OMNI_STREAM_FALLBACK_HLS", "false")
@@ -169,6 +173,7 @@ def create_app(
             max_sessions=configured.stream_max_sessions,
             chunk_frames=configured.stream_chunk_frames,
             hls=configured.stream_fallback_hls,
+            queue_chunks=configured.stream_queue_chunks,
         )
         app.state.store = store
         app.state.service = service
@@ -177,6 +182,7 @@ def create_app(
         try:
             yield
         finally:
+            stream_service.shutdown()
             service.shutdown()
 
     app = FastAPI(lifespan=lifespan)

@@ -160,6 +160,7 @@ Added on `ServerSettings.from_env`:
 | `OMNI_STREAM_ENABLED` | off | Register stream routes and `/` |
 | `OMNI_STREAM_MAX_SESSIONS` | 1 | Cap concurrent streams |
 | `OMNI_STREAM_CHUNK_FRAMES` | 24 | Frames per fMP4 fragment (about 1 s at 24 fps) |
+| `OMNI_STREAM_QUEUE_CHUNKS` | 8 | Bounded async sender queue capacity |
 | `OMNI_STREAM_FALLBACK_HLS` | off | Publish the playlist / segment / prompt sidecar |
 
 `OMNI_WORKERS` stays 1.
