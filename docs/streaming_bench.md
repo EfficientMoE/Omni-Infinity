@@ -1,6 +1,9 @@
-# Streaming Workload Benchmark Report
+# Streaming Workload Benchmark Contract and Report
 
-Frozen metric contract: [`benchmarks/streaming/contract.py`](../benchmarks/streaming/contract.py).
+Metric contract: [`benchmarks/streaming/contract.py`](../benchmarks/streaming/contract.py).
+The original columns remain frozen; support/reason and client-observed metric
+columns are appended for compatibility. The typed shared client is
+[`benchmarks/streaming/client.py`](../benchmarks/streaming/client.py).
 Tracks live in worktrees under `.worktrees/bench-stream-{baseline,micro,ablation}`
 (branches `bench/stream-baseline`, `bench/stream-micro`, `bench/stream-ablation`).
 CSVs under `results/streaming/` are gitignored; tables below are the recorded
@@ -10,7 +13,8 @@ snapshot from this collection pass.
 
 | Knob | Value |
 | --- | --- |
-| Shape | FL2VA, 256p short edge, 120 frames (24 fps), seed 0 |
+| Dense default | FL2VA, 256p, 120 frames (24 fps), seed 0 |
+| Architecture comparison | Dense and VDN both at 768p |
 | Prompt | `a red ball bouncing` |
 | Baseline opts | `adaln-host-cache,block-stream,text-encoder-stream` |
 | Chunk / transport | 24 frames / WebSocket |
@@ -21,24 +25,34 @@ snapshot from this collection pass.
 Frame substitution rule: if the runner rejects 120, use the next legal
 `17*n+5` length (≥ 120 → 124) and set `notes=frame_substitution=124`.
 
+The WebSocket clock supports accept-to-first-decodable-fragment TTFF and
+inter-arrival gaps. An arrival gap is not chunk production latency and must
+never populate `chunk_produce_ms` or production-derived chunk RTF columns.
+Production latency is `unsupported` until the server emits production
+timestamps. HLS is a post-generation retrieval fallback: its playlist becomes
+ready only after the WebSocket stream has completed, so HLS TTFF is also
+`unsupported`.
+
 ## Targets
 
 ### Omni ClipChunker (`omni-clip`)
 
 - `ttff_ms <= t_job_ready_ms`
 - `quality_vs_job == bitwise`
-- `prompt_index_match == 1`, `av_offset_ms <= 40`, `stall_count == 0`
+- `cue_alignment == 1`, `av_offset_ms <= 40`, `stall_count == 0`
 - `peak_gib <= 24`
-- `chunk_rtf` is not a fail gate (ClipChunker generates the whole clip first)
+- Arrival gaps are report-only; `chunk_rtf` is unsupported without production
+  telemetry (ClipChunker generates the whole clip first).
 - Micro overhead: `e2e_ms - t_job_ready_ms <= max(2000, 0.05 * t_job_ready_ms)`
-- Micro envelope: named spans + `other_ms` within 5% of session wall
-- Micro `fmp4_frag_ms` p50 ≤ 50 ms per 24-frame 256p fragment
+- Detailed denoise/VAE/audio/fMP4 spans and the micro envelope are unsupported
+  unless explicit server telemetry is present.
 
 ### Omni NativeChunker (`omni-native`)
 
-- Requires a registered H3-World runner; otherwise `SKIP`
-- `ttff_ms <= 1.5 * chunk_duration_ms`
-- `chunk_rtf_p50 <= 1.0`, `chunk_rtf_p95 <= 1.2`, `stall_count == 0`
+- The checked-in implementation is a synthetic 16x16 stub and must be
+  detected as `unsupported`, never measured as native model performance.
+- A future registered H3-World runner may enable native TTFF/production gates,
+  but only with explicit implementation identity and production telemetry.
 - `quality_vs_job=skipped` (different sample from one-shot job)
 
 ### External live controls
@@ -50,8 +64,10 @@ Frame substitution rule: if the runner rejects 120, use the next legal
 
 - Chunk size: smallest `{24,48,72}` with stall 0 + bitwise whose `ttff_ms` is
   strictly less than `chunk-120`; else stay on 24 and `REPORT`
-- Transport: WS when `ttff_ms(ws) <= ttff_ms(hls)`
-- Arch: `vdn-hybrid` when both peaks ≤ 24 GiB and VDN `e2e_ms` ≤ dense
+- Transport: WebSocket is the only live transport. HLS reports
+  post-generation retrieval behavior and is not a TTFF competitor.
+- Arch: compare `h3-dense` and `vdn-hybrid` on the common 768p canvas;
+  choose VDN when both peaks ≤ 24 GiB and VDN `e2e_ms` ≤ dense.
 - Opts: text-encoder stream Δs/eval < 1% at peak ≤ 24; fp8 e2e ≤ bf16;
   no-block-stream OOM is recorded, not retried
 
@@ -90,9 +106,10 @@ Collection date: 2026-09-29. All rows `SKIP`:
 ## Micro envelope
 
 No live session wall was collected. H3 span columns are `SKIP` for every row
-(same blockers as baseline). The 5% envelope gate and `fmp4_frag_ms` p50 ≤ 50
-are unit-tested with synthetic spans; they were not exercised against a GPU
-server in this pass.
+(same blockers as baseline). The current wire protocol has no detailed
+denoise, VAE, audio, fMP4, or WebSocket-send telemetry, so these spans remain
+explicitly `unsupported`; client arrival timestamps cannot substitute for
+them.
 
 | track | stack | arch | rep | denoise_ms | vae_decode_ms | fmp4_frag_ms | ws_send_ms | envelope_ok | verdict | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -157,7 +174,7 @@ Unmeasured grid → stay on the baseline knobs and mark each axis `REPORT`:
 - This collection pass did not measure GPU sessions: stream API absent on the
   bench branches, and external weight env vars were unset.
 
-## How to re-run after #14 lands
+## How to re-run with #14
 
 ```bash
 # contract + report branch

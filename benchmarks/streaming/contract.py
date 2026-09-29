@@ -1,9 +1,10 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Frozen metrics and pass targets for the video-streaming workload.
+"""Metrics and pass targets for the video-streaming workload.
 
-Tracks append columns. They do not rename ``FIELDS``.
+The original field order is frozen. Shared integrations may append fields but
+must not rename or reorder existing ones.
 """
 
 from __future__ import annotations
@@ -34,6 +35,20 @@ FIELDS: tuple[str, ...] = (
     "sustained_fps",
     "verdict",
     "notes",
+    "resolution",
+    "arrival_gap_ms",
+    "arrival_gap_p50",
+    "arrival_gap_p95",
+    "cue_alignment",
+    "decoded_parity",
+    "production_latency_support",
+    "production_latency_reason",
+    "detailed_spans_support",
+    "detailed_spans_reason",
+    "native_performance_support",
+    "native_performance_reason",
+    "hls_ttff_support",
+    "hls_ttff_reason",
 )
 
 PROMPT = "a red ball bouncing"
@@ -46,6 +61,8 @@ BASELINE_REPS = 3
 BASELINE_CHUNK_FRAMES = 24
 BASELINE_TRANSPORT = "ws"
 BASELINE_ARCH = "h3-dense"
+DENSE_DEFAULT_RESOLUTION = "256p"
+ARCH_COMPARISON_RESOLUTION = "768p"
 BASELINE_OPTS: tuple[str, ...] = (
     "adaln-host-cache",
     "block-stream",
@@ -86,7 +103,12 @@ class ChunkRtf:
 def chunk_rtf_from_produce(
     produce_ms: list[float], chunk_duration_s: float
 ) -> ChunkRtf:
-    """RTF for fragments ``i >= 1``. Index 0 is startup and is dropped."""
+    """RTF from server production telemetry, never client arrival timestamps.
+
+    This compatibility helper is valid only when ``produce_ms`` comes from
+    explicit server-side instrumentation. The current WebSocket protocol does
+    not expose that telemetry.
+    """
     if chunk_duration_s <= 0:
         raise ValueError("chunk_duration_s must be positive")
     scale = chunk_duration_s * 1000.0

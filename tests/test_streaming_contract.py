@@ -23,6 +23,15 @@ def test_fields_keep_the_frozen_names():
     assert "verdict" in FIELDS
     assert "notes" in FIELDS
     assert "chunk_rtf_p50" in FIELDS
+    assert FIELDS.index("resolution") > FIELDS.index("notes")
+    for metric in (
+        "production_latency",
+        "detailed_spans",
+        "native_performance",
+        "hls_ttff",
+    ):
+        assert f"{metric}_support" in FIELDS
+        assert f"{metric}_reason" in FIELDS
 
 
 def test_index_zero_produce_time_is_excluded_from_p50():
