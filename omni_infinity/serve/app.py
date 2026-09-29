@@ -295,6 +295,7 @@ def create_app(
                     "#EXT-X-VERSION:7",
                     f"#EXT-X-TARGETDURATION:{target}",
                     "#EXT-X-MEDIA-SEQUENCE:0",
+                    "#EXT-X-PLAYLIST-TYPE:EVENT",
                     '#EXT-X-MAP:URI="init.mp4"',
                 ]
                 for chunk in chunks:

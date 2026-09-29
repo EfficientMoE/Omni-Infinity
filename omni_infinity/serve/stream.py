@@ -29,7 +29,9 @@ from omni_infinity.serve.service import JobService, SessionLimit
 from omni_infinity.serve.store import JobStore, JobStoreError
 from omni_infinity.streaming import (
     CODEC,
+    ChunkSource,
     ClipChunker,
+    InteractiveChunkSource,
     MediaChunk,
     NativeChunker,
     StreamInput,
@@ -40,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 MAX_PENDING_CHUNKS = 8
 _CLOSED = object()
-StreamSource = ClipChunker | NativeChunker
 
 
 class ChunkPipe:
@@ -65,6 +66,8 @@ class ChunkPipe:
             raise StreamAborted("stream pipe is closed")
 
     async def close(self, error: str | None = None) -> None:
+        if self._aborted:
+            return
         self._error = error
         await self._queue.put(_CLOSED)
 
@@ -152,7 +155,7 @@ class StreamSession:
         return True
 
 
-def _init_message(session: StreamSession, source: StreamSource) -> dict:
+def _init_message(session: StreamSession, source: ChunkSource) -> dict:
     if not source.init:
         raise RuntimeError("chunk source produced no initialization segment")
     return {
@@ -305,7 +308,7 @@ class StreamService:
         feeder: asyncio.Task[None] | None = None
         generated_chunks: list[MediaChunk] | None = None
         try:
-            if isinstance(source, NativeChunker):
+            if isinstance(source, InteractiveChunkSource):
                 await self._pump_native(websocket, session, source, pipe)
             else:
                 reader = asyncio.create_task(self._read_inputs(websocket, pipe))
@@ -367,7 +370,7 @@ class StreamService:
     async def _publish_after_disconnect(
         self,
         session: StreamSession,
-        source: StreamSource,
+        source: ChunkSource,
         chunks: list[MediaChunk] | None,
     ) -> None:
         try:
@@ -402,7 +405,7 @@ class StreamService:
             session.connected = True
             return session, None
 
-    def _make_source(self, session: StreamSession) -> StreamSource:
+    def _make_source(self, session: StreamSession) -> ChunkSource:
         if session.request.source == "native":
             return NativeChunker(chunk_frames=self.chunk_frames)
         return ClipChunker(
@@ -414,7 +417,7 @@ class StreamService:
     async def _generate(
         self,
         session: StreamSession,
-        source: StreamSource,
+        source: ChunkSource,
         pipe: ChunkPipe,
     ) -> list[MediaChunk]:
         try:
@@ -438,7 +441,7 @@ class StreamService:
     def _collect_chunks(
         self,
         session: StreamSession,
-        source: StreamSource,
+        source: ChunkSource,
         pipe: ChunkPipe,
     ) -> list[MediaChunk]:
         """Finish GPU-backed generation before bounded async delivery."""
@@ -480,18 +483,24 @@ class StreamService:
         try:
             self.jobs.store.update_progress(session.stream_id, completed, total)
         except JobStoreError as exc:
-            raise StreamAborted(session.stream_id) from exc
+            raise RuntimeError(f"progress persistence failed: {exc}") from exc
 
     async def _feed(self, pipe: ChunkPipe, chunks: list[MediaChunk]) -> None:
-        for chunk in chunks:
-            await pipe.put(chunk)
-        await pipe.close()
+        error = None
+        try:
+            for chunk in chunks:
+                await pipe.put(chunk)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            await pipe.close(error)
 
     async def _pump_native(
         self,
         websocket: WebSocket,
         session: StreamSession,
-        source: NativeChunker,
+        source: InteractiveChunkSource,
         pipe: ChunkPipe,
     ) -> None:
         iterator = await self._start_native(session, source, pipe)
@@ -520,7 +529,7 @@ class StreamService:
     async def _start_native(
         self,
         session: StreamSession,
-        source: NativeChunker,
+        source: InteractiveChunkSource,
         pipe: ChunkPipe,
     ) -> Iterator[MediaChunk]:
         try:
@@ -541,7 +550,7 @@ class StreamService:
     def _open_native_iterator(
         self,
         session: StreamSession,
-        source: NativeChunker,
+        source: InteractiveChunkSource,
         pipe: ChunkPipe,
     ) -> Iterator[MediaChunk]:
         stream_id = session.stream_id
@@ -578,7 +587,7 @@ class StreamService:
     async def _receive_native_input(
         self,
         websocket: WebSocket,
-        source: NativeChunker,
+        source: InteractiveChunkSource,
         duration: float,
     ) -> None:
         with anyio.move_on_after(duration):
@@ -608,7 +617,7 @@ class StreamService:
         self,
         websocket: WebSocket,
         session: StreamSession,
-        source: StreamSource,
+        source: ChunkSource,
         pipe: ChunkPipe,
     ) -> None:
         sent_init = False
@@ -638,7 +647,7 @@ class StreamService:
         self,
         websocket: WebSocket,
         session: StreamSession,
-        source: StreamSource,
+        source: ChunkSource,
     ) -> None:
         """Write the job artifact only after the client has the fragments."""
         try:
@@ -672,7 +681,7 @@ class StreamService:
         )
 
     def _write_artifact(
-        self, session: StreamSession, source: StreamSource
+        self, session: StreamSession, source: ChunkSource
     ) -> None:
         result = source.result
         if result is None:

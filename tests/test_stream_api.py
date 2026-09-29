@@ -27,7 +27,7 @@ from omni_infinity.serve import stream as stream_module
 from omni_infinity.serve.app import ServerSettings, create_app
 from omni_infinity.serve.models import JobStatus
 from omni_infinity.serve.store import JobStoreError
-from omni_infinity.serve.stream import StreamSession
+from omni_infinity.serve.stream import StreamService, StreamSession
 from omni_infinity.streaming import CODEC
 
 
@@ -612,6 +612,7 @@ def test_hls_stays_404_until_the_fallback_flag(tmp_path, artifact_result):
         assert '#EXT-X-MAP:URI="init.mp4"' in playlist.text
         assert "seg/0.m4s" in playlist.text
         assert "#EXT-X-ENDLIST" in playlist.text
+        assert "#EXT-X-PLAYLIST-TYPE:EVENT" in playlist.text
 
         init = client.get(f"/v1/streams/{stream_id}/init.mp4")
         segment = client.get(f"/v1/streams/{stream_id}/seg/0.m4s")
@@ -691,6 +692,7 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
         "keyup",
         "forward",
         "activeCue",
+        "endOfStream",
     ):
         assert needle in script.text
 
@@ -765,6 +767,28 @@ def test_artifact_mux_does_not_wait_behind_an_unrelated_job(
             release_send.set()
             release_job.set()
             thread.join(timeout=15)
+
+
+def test_feed_closes_the_pipe_when_put_fails():
+    class FailingPipe:
+        closed = False
+
+        async def put(self, chunk):
+            raise RuntimeError("send failed")
+
+        async def close(self, error=None):
+            self.closed = True
+            self.error = error
+
+    async def scenario():
+        pipe = FailingPipe()
+        service = object.__new__(StreamService)
+        with pytest.raises(RuntimeError, match="send failed"):
+            await service._feed(pipe, [object()])
+        assert pipe.closed is True
+        assert pipe.error == "RuntimeError: send failed"
+
+    asyncio.run(scenario())
 
 
 def test_stream_artifact_executor_shuts_down_with_the_app(
@@ -889,6 +913,26 @@ def test_socket_reports_generation_failure(tmp_path):
         assert client.get(f"/v1/jobs/{stream_id}/artifacts").status_code == 409
 
         assert client.post("/v1/streams", json=_body()).status_code == 202
+
+
+def test_socket_reports_progress_store_failure(tmp_path, artifact_result):
+    runner = _FakeRunner(artifact_result)
+    settings = _stream_settings(tmp_path)
+    with TestClient(create_app(settings, lambda: runner)) as client:
+        store = client.app.state.store
+
+        def fail_progress(*args, **kwargs):
+            raise JobStoreError("disk unavailable")
+
+        store.update_progress = fail_progress
+        stream_id = _open_stream(client)
+        with client.websocket_connect(f"/v1/streams/{stream_id}/ws") as socket:
+            message = socket.receive_json()
+
+        assert message["type"] == "error"
+        assert "disk unavailable" in message["detail"]
+        record = client.get(f"/v1/jobs/{stream_id}").json()
+        assert record["status"] == "failed"
 
 
 def _free_local_port():

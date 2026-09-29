@@ -33,6 +33,7 @@ def test_fragment_clip_keyframes_and_round_trips():
     assert decoded == 5
     assert b"moov" in init
     assert all(b"moof" in item.video_bytes for item in fragments)
+    assert b"mfra" not in fragments[-1].video_bytes
 
 
 def test_fragment_clip_rejects_invalid_inputs():

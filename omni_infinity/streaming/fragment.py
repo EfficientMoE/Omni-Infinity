@@ -68,12 +68,17 @@ def _split_fragments(
     if len(video_keyframes) < frame_count:
         raise RuntimeError("encoded video packet count does not match frames")
 
+    try:
+        trailer_start = _find_box(data, b"mfra", init_end)
+    except ValueError:
+        trailer_start = len(data)
+
     fragments = []
     for index, start in enumerate(fragment_starts):
         end = (
             fragment_starts[index + 1]
             if index + 1 < len(fragment_starts)
-            else len(data)
+            else trailer_start
         )
         frames_in_fragment = min(
             chunk_frames, frame_count - index * chunk_frames

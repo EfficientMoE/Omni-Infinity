@@ -131,8 +131,10 @@ Client to server, Phase 2:
 The GPU worker writes fragments to a bounded per-session queue. A separate
 async WebSocket sender drains that queue, so a slow network client cannot
 block the sole GPU executor thread and prevent queued jobs from running.
-When the queue fills, the session drops through the next keyframe boundary
-and resumes with a keyframe; it never accumulates an unbounded fragment list.
+`ClipChunker` materializes the request-bounded clip before delivery. The
+socket hand-off queue is bounded and applies backpressure without dropping
+fragments, so slow clients receive every fragment in order while the GPU
+worker remains free for the next job.
 The MSE client can therefore resync without a custom timeline.
 
 Optional passive fallback, only if `OMNI_STREAM_FALLBACK_HLS` is set:
