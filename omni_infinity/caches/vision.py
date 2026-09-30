@@ -4,10 +4,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from collections import OrderedDict
+from types import MappingProxyType
 
-from omni_infinity.caches._tensor_tree import tree_nbytes
+from omni_infinity.caches._tensor_tree import (
+    tree_map,
+    tree_nbytes,
+    update_hash_for_value,
+)
+from omni_infinity.registry import OptimizationSpec
 
 
 class VisionEmbedCache:
@@ -44,7 +51,9 @@ class VisionEmbedCache:
                 "hits": self._hits,
                 "misses": self._misses,
                 "entries": len(self._entries),
-                "bytes": sum(tree_nbytes(value) for value in self._entries.values()),
+                "bytes": sum(
+                    tree_nbytes(value) for value in self._entries.values()
+                ),
             }
 
 
@@ -57,3 +66,108 @@ def _visual_module(text_encoder):
     if visual is not None:
         return visual
     raise AttributeError("text encoder has no visual module")
+
+
+def _cache_key(args, kwargs) -> bytes:
+    hasher = hashlib.sha256()
+    update_hash_for_value(hasher, "omni-vision-v1")
+    update_hash_for_value(hasher, args)
+    for key in sorted(kwargs):
+        update_hash_for_value(hasher, key)
+        update_hash_for_value(hasher, kwargs[key])
+    return hasher.digest()
+
+
+def _first_tensor_device(args, kwargs):
+    device = None
+
+    def remember(tensor):
+        nonlocal device
+        if device is None:
+            device = tensor.device
+        return tensor
+
+    tree_map(remember, args)
+    for key in sorted(kwargs):
+        tree_map(remember, kwargs[key])
+    return device
+
+
+class VisionCacheController:
+    """Own the reversible instance-level vision ``forward`` wrapper."""
+
+    def __init__(
+        self,
+        module,
+        cache: VisionEmbedCache,
+        original_forward,
+        previous_instance_forward,
+        had_instance_forward: bool,
+    ):
+        self.module = module
+        self.cache = cache
+        self.original_forward = original_forward
+        self.previous_instance_forward = previous_instance_forward
+        self.had_instance_forward = had_instance_forward
+        self._closed = False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        if self.had_instance_forward:
+            self.module.forward = self.previous_instance_forward
+        else:
+            del self.module.forward
+        self._closed = True
+
+
+def enable_vision_cache(
+    text_encoder,
+    cache: VisionEmbedCache | None = None,
+    *,
+    max_entries: int = 4,
+) -> VisionCacheController:
+    """Cache complete calls to the encoder's vision tower."""
+    module = _visual_module(text_encoder)
+    cache = cache or VisionEmbedCache(max_entries=max_entries)
+    original_forward = module.forward
+    had_instance_forward = "forward" in module.__dict__
+    previous_instance_forward = module.__dict__.get("forward")
+
+    def cached_forward(*args, **kwargs):
+        key = _cache_key(args, kwargs)
+        cached = cache.get(key)
+        if cached is not None:
+            device = _first_tensor_device(args, kwargs)
+            if device is None:
+                return cached
+            return tree_map(lambda tensor: tensor.to(device), cached)
+
+        output = original_forward(*args, **kwargs)
+        cache.put(
+            key,
+            tree_map(lambda tensor: tensor.detach().to("cpu"), output),
+        )
+        return output
+
+    module.forward = cached_forward
+    return VisionCacheController(
+        module,
+        cache,
+        original_forward,
+        previous_instance_forward,
+        had_instance_forward,
+    )
+
+
+OPTIMIZATION = OptimizationSpec(
+    name="vision-cache",
+    description="Cache complete vision-tower calls by content hash.",
+    supported_archs=("h3-dense", "vdn-hybrid"),
+    runner_kwargs_by_arch=MappingProxyType(
+        {
+            "h3-dense": MappingProxyType({"vision_cache": True}),
+            "vdn-hybrid": MappingProxyType({"vision_cache": True}),
+        }
+    ),
+)

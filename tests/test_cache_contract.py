@@ -79,12 +79,12 @@ def test_attach_caches_records_disabled_state_and_namespace():
 def test_attach_caches_fails_closed_when_module_is_missing(
     cache_name, monkeypatch
 ):
+    kwargs = {"condition_cache": False, "vision_cache": False}
+    kwargs[cache_name] = True
     module_name = cache_name.removesuffix("_cache")
     monkeypatch.setitem(
         sys.modules, f"omni_infinity.caches.{module_name}", None
     )
-    kwargs = {"condition_cache": False, "vision_cache": False}
-    kwargs[cache_name] = True
 
     with pytest.raises(RuntimeError, match="not installed"):
         attach_caches(
