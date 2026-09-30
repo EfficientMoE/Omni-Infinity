@@ -38,6 +38,8 @@ def probe_forward(module, signal_name: str = "hidden_states"):
     """Yield a list that fills with one record per forward call."""
     records: list[dict] = []
     state = {"input": None, "output": None}
+    had_instance_forward = "forward" in module.__dict__
+    previous_forward = module.__dict__.get("forward")
     original = module.forward
 
     def probed(*args, **kwargs):
@@ -61,7 +63,10 @@ def probe_forward(module, signal_name: str = "hidden_states"):
     try:
         yield records
     finally:
-        del module.__dict__["forward"]
+        if had_instance_forward:
+            module.forward = previous_forward
+        else:
+            del module.__dict__["forward"]
 
 
 def main() -> int:  # pragma: no cover — needs weights
