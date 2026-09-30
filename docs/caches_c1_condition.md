@@ -19,7 +19,20 @@ PyTorch's `weights_only=True` mode.
 
 ## Warm-hit smoke gate
 
-Status: pending — run before release
+Status: passed on RTX PRO 6000 Blackwell (sm120), 2026-09-30.
+
+Measured with the commands below (a local H3 snapshot and moe-store on
+NVMe, `--frames 120 --steps 8 --resolution 256p`):
+
+| phase | wall-clock | rms_rel vs goldens |
+|---|---|---|
+| cold (miss) | 67.7 s | 0.0000 |
+| warm (hit) | 31.0 s | 0.0000 |
+
+The warm hit reproduces the goldens bitwise. The warm run is strictly
+faster than the cold run because the text and VAE encoders are skipped;
+the stored `<key>.pt` entry was present in the cache directory between
+runs.
 
 Cold run (miss path):
 
