@@ -22,6 +22,8 @@ from typing import Any
 
 import torch
 
+from omni_infinity.caches.attach import attach_caches, bind_generation
+
 StepCallback = Callable[[int, int], None]
 
 
@@ -245,6 +247,9 @@ class ReferenceRunner:
         block_stream_to_disk: str | None = None,
         stream_text_encoder: bool = False,
         step_overlap: bool = False,
+        condition_cache: bool = False,
+        condition_cache_dir: str | None = None,
+        vision_cache: bool = False,
     ) -> "ReferenceRunner":
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
@@ -362,11 +367,19 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
-        return cls(
+        runner = cls(
             pipeline,
             overlap_controller=overlap_controller,
             transformer_component=transformer_component,
         )
+        attach_caches(
+            runner,
+            condition_cache=condition_cache,
+            condition_cache_dir=condition_cache_dir,
+            vision_cache=vision_cache,
+            cache_namespace=f"ReferenceRunner:{checkpoint}",
+        )
+        return runner
 
     def generate(
         self,
@@ -381,6 +394,7 @@ class ReferenceRunner:
         image: Any = None,
         last_image: Any = None,
         step_callback: StepCallback | None = None,
+        denoise_cache=None,
     ) -> GenerationResult:
         height, width = resolve_resolution(resolution)
         generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -399,13 +413,31 @@ class ReferenceRunner:
             call_kwargs["last_image"] = last_image
         if references is not None:
             call_kwargs["references"] = references
-        with _denoising_progress(
-            self.pipeline,
-            num_inference_steps,
-            step_callback,
-            self.transformer_component,
-        ):
-            state = self.pipeline(**call_kwargs)
+        binding = bind_generation(
+            self,
+            prompt=prompt,
+            media=(image, last_image, *(references or ())),
+            height=height,
+            width=width,
+            num_frames=num_frames,
+            call_kwargs=call_kwargs,
+            denoise_cache=denoise_cache,
+            total_steps=num_inference_steps,
+            transformer=None,
+        )
+        if denoise_cache is not None:
+            binding.transformer = _transformer_component(
+                binding.pipeline, self.transformer_component
+            )
+        with binding.denoise():
+            with _denoising_progress(
+                binding.pipeline,
+                num_inference_steps,
+                step_callback,
+                self.transformer_component,
+            ):
+                state = binding.pipeline(**binding.call_kwargs)
+        binding.observe(state)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

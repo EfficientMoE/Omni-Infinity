@@ -24,6 +24,7 @@ _ENV_KEYS = (
     "OMNI_STORE_DIR",
     "OMNI_STORE_COMPONENTS",
     "OMNI_MAX_VRAM",
+    "OMNI_CONDITION_CACHE_DIR",
     "OMNI_HOST",
     "OMNI_PORT",
     "OMNI_WORKERS",
@@ -95,6 +96,7 @@ def test_settings_from_env_use_the_streamed_dense_defaults(clean_env):
     assert settings.store_dir is None
     assert settings.store_components == ("transformer", "vae", "audio_vae")
     assert settings.max_vram is None
+    assert settings.condition_cache_dir is None
     assert settings.host == "127.0.0.1"
     assert settings.port == 8000
     assert settings.workers == 1
@@ -251,6 +253,22 @@ def test_load_runner_forces_the_fl2va_workflow_for_vdn(monkeypatch):
     assert kwargs["workflow"] == "fl2va"
     assert kwargs["fp8"] is True
     assert "store_dir" not in kwargs
+
+
+def test_condition_cache_dir_is_unset_by_default(clean_env):
+    assert ServerSettings.from_env().condition_cache_dir is None
+
+
+def test_load_runner_forwards_the_dir_only_with_the_flag(monkeypatch):
+    _CaptureRunner.calls = []
+    _stub_profile(monkeypatch, "h3-dense", condition_cache=True)
+    load_runner(ServerSettings(condition_cache_dir="/tmp/cond"))
+    assert _CaptureRunner.calls[-1][2]["condition_cache_dir"] == "/tmp/cond"
+
+    _CaptureRunner.calls = []
+    _stub_profile(monkeypatch, "h3-dense", offload=True)
+    load_runner(ServerSettings(condition_cache_dir="/tmp/cond"))
+    assert "condition_cache_dir" not in _CaptureRunner.calls[-1][2]
 
 
 def test_main_rejects_more_than_one_worker(clean_env, monkeypatch):

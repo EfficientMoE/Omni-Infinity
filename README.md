@@ -62,6 +62,19 @@ supported configuration; the smoke CLIs and the ablation harness
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
+### Opt-in caches
+
+Nothing is on by default. The shared interfaces are tracked by the
+[cache contract plan](docs/superpowers/plans/2026-09-30-caches-contract.md)
+for [issue #24](https://github.com/EfficientMoE/Omni-Infinity/issues/24).
+
+| cache | opt-in interface | status |
+|---|---|---|
+| C1 | `condition-cache` | Registry optimization. |
+| C2 / C4 | — | C2 is deferred. C4 is unchanged upstream. |
+| C3 | `vision-cache` | Registry optimization. |
+| C5 | `--denoise-cache-coefficients` plus `--denoise-cache-threshold` | Off the registry. C5 refuses to run without H3-calibrated coefficients. |
+
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
 [OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
 pinned at `third_party/vdn-minimax-h3`): a frame-wise linear-attention

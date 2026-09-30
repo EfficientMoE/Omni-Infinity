@@ -23,10 +23,11 @@ from pathlib import Path
 
 import torch
 
+from omni_infinity.caches.attach import denoise_config_from_args
 from omni_infinity.runner import RESOLUTIONS, ReferenceRunner
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--seed", type=int, default=0)
@@ -48,6 +49,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--store-dir", default=None)
     parser.add_argument("--store-components", default="vae,audio_vae")
     parser.add_argument("--adaln-host-cache", action="store_true")
+    parser.add_argument("--condition-cache", action="store_true")
+    parser.add_argument("--condition-cache-dir")
+    parser.add_argument("--vision-cache", action="store_true")
+    parser.add_argument("--denoise-cache-coefficients")
+    parser.add_argument("--denoise-cache-threshold", type=float)
     parser.add_argument("--transformer-fp8", action="store_true")
     parser.add_argument(
         "--fp8-scale",
@@ -96,7 +102,11 @@ def parse_args() -> argparse.Namespace:
         help="assert generated latents allclose(rtol=2e-2) with the recorded "
         "goldens (the FP8 QA tolerance)",
     )
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 _VRAM_UNITS = (("gib", 1024**3), ("gb", 10**9), ("mib", 1024**2), ("mb", 10**6))
@@ -256,6 +266,9 @@ def main() -> int:
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
         block_stream_to_disk=args.block_stream_to_disk,
         stream_text_encoder=args.stream_text_encoder,
+        condition_cache=getattr(args, "condition_cache", False),
+        condition_cache_dir=getattr(args, "condition_cache_dir", None),
+        vision_cache=getattr(args, "vision_cache", False),
     )
     probe = None
     if args.max_vram is not None and args.vram_window == "denoise":
@@ -270,6 +283,7 @@ def main() -> int:
         num_inference_steps=args.steps,
         resolution=args.resolution,
         num_frames=args.frames,
+        denoise_cache=denoise_config_from_args(args),
     )
     full_peak = None
     if args.max_vram is not None and args.vram_window == "full":

@@ -28,6 +28,7 @@ from typing import Any
 
 import torch
 
+from omni_infinity.caches.attach import attach_caches, bind_generation
 from omni_infinity.runner import (
     _OUTPUT_KEYS,
     GenerationResult,
@@ -77,6 +78,9 @@ class VdnRunner:
         offload: bool = False,
         block_stream_blocks_per_group: int = 0,
         stream_text_encoder: bool = False,
+        condition_cache: bool = False,
+        condition_cache_dir: str | None = None,
+        vision_cache: bool = False,
     ) -> "VdnRunner":
         try:
             spec = _VARIANTS[variant]
@@ -121,7 +125,15 @@ class VdnRunner:
             )
         else:
             pipeline.to(device)
-        return cls(pipeline, spec["evaluations"])
+        runner = cls(pipeline, spec["evaluations"])
+        attach_caches(
+            runner,
+            condition_cache=condition_cache,
+            condition_cache_dir=condition_cache_dir,
+            vision_cache=vision_cache,
+            cache_namespace=f"VdnRunner:{checkpoint}",
+        )
+        return runner
 
     def generate(
         self,
@@ -134,6 +146,7 @@ class VdnRunner:
         image: Any = None,
         last_image: Any = None,
         step_callback: StepCallback | None = None,
+        denoise_cache=None,
     ) -> GenerationResult:
         evaluations = num_evaluations or self.default_evaluations
         generator = torch.Generator(device="cpu").manual_seed(seed)
@@ -148,8 +161,26 @@ class VdnRunner:
             call_kwargs["image"] = image
         if last_image is not None:
             call_kwargs["last_image"] = last_image
-        with _denoising_progress(self.pipeline, evaluations, step_callback):
-            state = self.pipeline(**call_kwargs)
+        binding = bind_generation(
+            self,
+            prompt=prompt,
+            media=(image, last_image),
+            height=768,
+            width=1344,
+            num_frames=num_frames,
+            call_kwargs=call_kwargs,
+            denoise_cache=denoise_cache,
+            total_steps=evaluations,
+            transformer=None,
+        )
+        if denoise_cache is not None:
+            binding.transformer = binding.pipeline.transformer
+        with binding.denoise():
+            with _denoising_progress(
+                binding.pipeline, evaluations, step_callback
+            ):
+                state = binding.pipeline(**binding.call_kwargs)
+        binding.observe(state)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
 

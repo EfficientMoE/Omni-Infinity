@@ -309,5 +309,6 @@ def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
     )
 
     assert captured["fp8_mode"] == "per_row"
+    # Cache support must not alter the default pipeline construction path.
     assert captured["workflow"] == "fl2va"
     assert captured["built"]["transformer"] == "fake-transformer"
