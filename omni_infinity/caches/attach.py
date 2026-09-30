@@ -13,6 +13,10 @@ def _noop(_state) -> None:
     return None
 
 
+def _module_is_missing(exc: ModuleNotFoundError, module_name: str) -> bool:
+    return exc.name == module_name or module_name.startswith(f"{exc.name}.")
+
+
 @dataclasses.dataclass
 class GenerationBinding:
     pipeline: object
@@ -47,7 +51,9 @@ def attach_caches(
     if condition_cache:
         try:
             from omni_infinity.caches.condition import ConditionCache
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if not _module_is_missing(exc, "omni_infinity.caches.condition"):
+                raise
             raise RuntimeError("condition-cache is not installed") from None
         runner.condition_cache = ConditionCache(cache_dir=condition_cache_dir)
 
@@ -55,7 +61,9 @@ def attach_caches(
     if vision_cache:
         try:
             from omni_infinity.caches.vision import enable_vision_cache
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if not _module_is_missing(exc, "omni_infinity.caches.vision"):
+                raise
             raise RuntimeError("vision-cache is not installed") from None
         components = getattr(runner.pipeline, "components", {})
         text_encoder = components.get("text_encoder")
@@ -105,7 +113,9 @@ def bind_generation(
     if denoise_cache is not None:
         try:
             from omni_infinity.caches.denoise import denoise_step_cache
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if not _module_is_missing(exc, "omni_infinity.caches.denoise"):
+                raise
             raise RuntimeError("denoise-step cache is not installed") from None
 
     return GenerationBinding(
@@ -131,7 +141,9 @@ def denoise_config_from_args(args):
         )
     try:
         from omni_infinity.caches.denoise import DenoiseCacheConfig
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        if not _module_is_missing(exc, "omni_infinity.caches.denoise"):
+            raise
         raise RuntimeError("denoise-step cache is not installed") from None
     return DenoiseCacheConfig(
         coefficients=tuple(float(value) for value in coefficients.split(",")),

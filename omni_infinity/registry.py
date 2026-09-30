@@ -60,6 +60,10 @@ def _kw(**kwargs) -> MappingProxyType:
     return MappingProxyType(kwargs)
 
 
+def _module_is_missing(exc: ModuleNotFoundError, module_name: str) -> bool:
+    return exc.name == module_name or module_name.startswith(f"{exc.name}.")
+
+
 ARCHS = {
     "h3-dense": ArchSpec(
         name="h3-dense",
@@ -140,7 +144,9 @@ def load_cache_optimizations() -> dict[str, OptimizationSpec]:
     ):
         try:
             module = importlib.import_module(module_name)
-        except ModuleNotFoundError:
+        except ModuleNotFoundError as exc:
+            if not _module_is_missing(exc, module_name):
+                raise
             continue
         spec = getattr(module, "OPTIMIZATION", None)
         if spec is not None:

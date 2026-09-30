@@ -89,6 +89,48 @@ def test_attach_caches_fails_closed_when_module_is_missing(cache_name):
         )
 
 
+def test_attach_caches_surfaces_broken_vision_module(monkeypatch):
+    module_name = "omni_infinity.caches.vision"
+    module = types.ModuleType(module_name)
+
+    def missing_dependency(name):
+        if name == "enable_vision_cache":
+            raise ModuleNotFoundError("No module named 'httpx'", name="httpx")
+        raise AttributeError(name)
+
+    module.__getattr__ = missing_dependency
+    monkeypatch.setitem(sys.modules, module_name, module)
+
+    with pytest.raises(ModuleNotFoundError, match="httpx") as exc_info:
+        attach_caches(
+            _Runner(),
+            condition_cache=False,
+            condition_cache_dir=None,
+            vision_cache=True,
+            cache_namespace="ReferenceRunner:/ckpt",
+        )
+
+    assert exc_info.value.name == "httpx"
+
+
+def test_cache_optimization_loader_surfaces_broken_module(monkeypatch):
+    import_module = registry.importlib.import_module
+
+    def import_with_broken_vision(module_name):
+        if module_name == "omni_infinity.caches.vision":
+            raise ModuleNotFoundError("No module named 'httpx'", name="httpx")
+        return import_module(module_name)
+
+    monkeypatch.setattr(
+        registry.importlib, "import_module", import_with_broken_vision
+    )
+
+    with pytest.raises(ModuleNotFoundError, match="httpx") as exc_info:
+        registry.load_cache_optimizations()
+
+    assert exc_info.value.name == "httpx"
+
+
 def test_bind_generation_is_noop_without_enabled_caches():
     runner = _Runner()
     runner.condition_cache = None
