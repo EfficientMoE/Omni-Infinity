@@ -59,9 +59,9 @@ def probe_forward(module, signal_name: str = "hidden_states"):
                 ),
             }
         )
-        state["input"] = signal.detach()
+        state["input"] = signal.detach().clone()
         if leaf is not None:
-            state["output"] = leaf.detach()
+            state["output"] = leaf.detach().clone()
         return output
 
     handle = module.register_forward_hook(record, with_kwargs=True)
