@@ -365,6 +365,9 @@ curl http://127.0.0.1:8000/v1/demos \
     "prompts": ["opening", "middle", "close"],
     "duration": "15s",
     "model_arch": "h3-dense",
+    "optimizations": [
+      "adaln-host-cache", "block-stream", "text-encoder-stream"
+    ],
     "resolution": "256p",
     "first_frame_base64": "<png-base64>"
   }'
