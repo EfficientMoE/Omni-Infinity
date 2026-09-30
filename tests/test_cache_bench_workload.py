@@ -54,3 +54,12 @@ def test_zero_repeat_ratio_means_all_unique():
     prompts = [item.prompt for item in trace]
     assert len(set(prompts)) == 16
     assert not any(item.expected_hit for item in trace)
+
+
+def test_duplicate_source_prompts_do_not_count_as_unique(monkeypatch):
+    monkeypatch.setattr(
+        "benchmarks.caches.workload.load_prompts",
+        lambda *_args, **_kwargs: ["x", "x"],
+    )
+    with pytest.raises(ValueError, match="pool has 1"):
+        build_trace(seed=0, length=2, repeat_ratio=0.0)

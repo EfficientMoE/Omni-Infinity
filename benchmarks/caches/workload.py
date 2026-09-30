@@ -64,7 +64,7 @@ def build_trace(
     """
     if not 0.0 <= repeat_ratio <= 1.0:
         raise ValueError("repeat_ratio must be within [0, 1]")
-    prompts = load_prompts("fixture", pool=pool)
+    prompts = list(dict.fromkeys(load_prompts("fixture", pool=pool)))
     repeats = int(length * repeat_ratio)
     uniques = length - repeats
     if uniques > len(prompts):
