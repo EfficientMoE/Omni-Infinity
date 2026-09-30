@@ -1,14 +1,91 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 import torch
 
-from omni_infinity.caches.condition import ConditionCache, condition_key
+from omni_infinity import registry
+from omni_infinity.caches import condition as condition_module
+from omni_infinity.caches.condition import (
+    ConditionCache,
+    build_conditioned_pipeline,
+    condition_key,
+    prepare,
+)
 
 
 class _UnsafePayload:
     pass
+
+
+class _Input:
+    def __init__(self, name):
+        self.name = name
+
+
+class _Block:
+    def __init__(self, *inputs):
+        self.inputs = [_Input(name) for name in inputs]
+
+
+class _Blocks:
+    def __init__(self, sub_blocks):
+        self.sub_blocks = sub_blocks
+
+    @property
+    def inputs(self):
+        return [
+            spec for block in self.sub_blocks.values() for spec in block.inputs
+        ]
+
+
+class _Pipeline:
+    def __init__(self, blocks=None, components=None):
+        self.blocks = blocks
+        self.components = components or {"transformer": object()}
+        self.calls = []
+        self._execution_device = torch.device("cpu")
+
+    def update_components(self, **components):
+        self.components.update(components)
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+class _ReducedBlocks(_Blocks):
+    def init_pipeline(self):
+        return _Pipeline(blocks=self, components={})
+
+
+class _FakeSequentialPipelineBlocks:
+    @classmethod
+    def from_blocks_dict(cls, blocks_dict):
+        return _ReducedBlocks(blocks_dict)
+
+
+@pytest.fixture
+def pipeline(monkeypatch):
+    monkeypatch.setattr(
+        condition_module,
+        "SequentialPipelineBlocks",
+        _FakeSequentialPipelineBlocks,
+    )
+    blocks = _Blocks(
+        {
+            "text_encoder": _Block("prompt"),
+            "vae_encoder": _Block("image"),
+            "denoise": _Block("prompt_embeds", "generator"),
+        }
+    )
+    return _Pipeline(blocks=blocks)
+
+
+def _state(**kwargs):
+    return SimpleNamespace(**kwargs)
 
 
 def test_identical_condition_gives_identical_key():
@@ -154,3 +231,204 @@ def test_disk_load_rejects_non_tensor_payload_with_weights_only(tmp_path):
     cache = ConditionCache(cache_dir=tmp_path)
 
     assert cache.get("unsafe") is None
+
+
+def test_miss_captures_and_hit_skips_encoders(pipeline):
+    cache = ConditionCache()
+    generator = object()
+    request = {"prompt": "p", "generator": generator}
+
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(b"img",),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+    assert first.hit is False
+    assert first.pipeline is None
+    assert first.call_kwargs() is request
+    assert first.call_kwargs()["generator"] is generator
+    first.observe(_state(prompt_embeds=torch.ones(2)))
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(b"img",),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs={"prompt": "p", "generator": generator},
+    )
+
+    assert second.hit is True
+    assert second.pipeline is not pipeline
+    kwargs = second.call_kwargs()
+    assert torch.equal(kwargs["prompt_embeds"], torch.ones(2))
+    assert "prompt" not in kwargs
+    assert kwargs["generator"] is generator
+    second.pipeline(**kwargs)
+    assert pipeline.calls == []
+    assert second.pipeline.calls == [kwargs]
+
+
+def test_miss_observe_accepts_a_mapping(pipeline):
+    cache = ConditionCache()
+    replay = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs={"prompt": "p"},
+    )
+
+    replay.observe({"prompt_embeds": torch.full((1,), 3)})
+
+    assert cache.stats()["entries"] == 1
+
+
+def test_different_prompt_is_a_miss(pipeline):
+    cache = ConditionCache()
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="left",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs={"prompt": "left"},
+    )
+    first.observe(_state(prompt_embeds=torch.ones(1)))
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="right",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs={"prompt": "right"},
+    )
+
+    assert second.hit is False
+
+
+def test_unhashable_reference_fails_open(pipeline):
+    cache = ConditionCache()
+    request = {"prompt": "p", "generator": object()}
+
+    replay = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(object(),),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+
+    assert replay.hit is False
+    assert replay.pipeline is None
+    assert replay.call_kwargs() is request
+    replay.observe(_state(prompt_embeds=torch.ones(1)))
+    assert cache.stats()["entries"] == 0
+
+
+def test_pipeline_that_cannot_be_reduced_fails_open():
+    cache = ConditionCache()
+    pipeline = _Pipeline(blocks=None)
+    request = {"prompt": "p", "generator": object()}
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+    first.observe(_state(prompt_embeds=torch.ones(1)))
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+
+    assert second.hit is False
+    assert second.pipeline is None
+    assert second.call_kwargs() is request
+    assert cache.stats()["entries"] == 1
+
+
+def test_loader_publishes_condition_cache():
+    optimizations = registry.load_cache_optimizations()
+
+    assert "condition-cache" in optimizations
+    assert registry.runner_kwargs_for("h3-dense", ["condition-cache"]) == {
+        "condition_cache": True
+    }
+    assert registry.runner_kwargs_for("vdn-hybrid", ["condition-cache"]) == {
+        "condition_cache": True
+    }
+
+
+def test_h3_blocks_can_drop_encoders():
+    pytest.importorskip("diffusers")
+    from diffusers import MiniMaxH3Blocks
+    from diffusers.modular_pipelines import SequentialPipelineBlocks
+
+    monkeypatch_target = condition_module.SequentialPipelineBlocks
+    condition_module.SequentialPipelineBlocks = SequentialPipelineBlocks
+    try:
+        pipeline = MiniMaxH3Blocks().init_pipeline()
+        names = set(pipeline.blocks.sub_blocks)
+        assert {"text_encoder", "vae_encoder"}.issubset(names)
+
+        reduced = build_conditioned_pipeline(pipeline)
+
+        assert reduced is not None
+        assert "text_encoder" not in reduced.blocks.sub_blocks
+        assert "vae_encoder" not in reduced.blocks.sub_blocks
+        shared = set(pipeline.components) & set(reduced.components)
+        for name in shared:
+            if pipeline.components[name] is not None:
+                assert reduced.components[name] is pipeline.components[name]
+    finally:
+        condition_module.SequentialPipelineBlocks = monkeypatch_target
+
+
+def test_documentation_records_safety_and_determinism_contract():
+    text = Path("docs/caches_c1_condition.md").read_text()
+
+    for sentence in (
+        "A shared [Shot 1] opener is not a hit.",
+        "use_cache=False",
+        "keyframe_encode_seed",
+        "the request generator is not consumed",
+    ):
+        assert sentence in text

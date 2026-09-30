@@ -9,8 +9,10 @@ import os
 import tempfile
 import threading
 from collections import OrderedDict
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import torch
 
@@ -20,12 +22,21 @@ from omni_infinity.caches._tensor_tree import (
     update_hash_for_value,
 )
 
+try:
+    from diffusers.modular_pipelines import SequentialPipelineBlocks
+except ImportError:
+    SequentialPipelineBlocks = None
+
 CACHE_SCHEMA_VERSION = 1
 DEFAULT_CAPTURE = (
     "prompt_embeds",
     "text_token_tags",
     "condition_latents",
     "audio_condition_latents",
+)
+ENCODE_BLOCKS = ("text_encoder", "vae_encoder")
+_CONDITION_ARGUMENTS = frozenset(
+    (*DEFAULT_CAPTURE, "prompt", "image", "last_image", "references")
 )
 
 
@@ -120,7 +131,10 @@ class ConditionCache:
         temporary = None
         try:
             with tempfile.NamedTemporaryFile(
-                dir=self.cache_dir, prefix=f".{key}.", suffix=".tmp", delete=False
+                dir=self.cache_dir,
+                prefix=f".{key}.",
+                suffix=".tmp",
+                delete=False,
             ) as handle:
                 temporary = Path(handle.name)
                 torch.save(entry.values, handle)
@@ -144,7 +158,9 @@ class ConditionCache:
                     if not isinstance(values, dict):
                         raise TypeError("condition entry must be a mapping")
                     if not all(name in values for name in self.required):
-                        raise ValueError("condition entry is missing required values")
+                        raise ValueError(
+                            "condition entry is missing required values"
+                        )
                     entry = self._host_entry(values)
                 except Exception:
                     entry = None
@@ -180,3 +196,140 @@ class ConditionCache:
                 "entries": len(self._entries),
                 "bytes": self._bytes,
             }
+
+
+def build_conditioned_pipeline(pipeline, skip_blocks=ENCODE_BLOCKS):
+    """Return a pipeline view without condition encoders, or ``None``."""
+    try:
+        blocks = pipeline.blocks
+        sub_blocks = blocks.sub_blocks
+        if SequentialPipelineBlocks is None:
+            return None
+        retained = {
+            name: block
+            for name, block in sub_blocks.items()
+            if name not in skip_blocks
+        }
+        reduced_blocks = SequentialPipelineBlocks.from_blocks_dict(retained)
+        reduced = reduced_blocks.init_pipeline()
+        shared = {
+            name: component
+            for name, component in pipeline.components.items()
+            if component is not None
+        }
+        reduced.update_components(**shared)
+        return reduced
+    except Exception:
+        return None
+
+
+@dataclass(frozen=True)
+class ConditionReplay:
+    """One fail-open condition-cache decision for a generation call."""
+
+    hit: bool
+    pipeline: object | None
+    _kwargs: dict
+    _observer: Callable[[object], None]
+
+    def call_kwargs(self) -> dict:
+        """Return kwargs for the selected pipeline."""
+        return self._kwargs
+
+    def observe(self, state) -> None:
+        """Capture a miss result, or do nothing for a hit/fail-open call."""
+        self._observer(state)
+
+
+def _noop(_state) -> None:
+    return None
+
+
+def _miss(call_kwargs: dict, observer: Callable = _noop) -> ConditionReplay:
+    return ConditionReplay(False, None, call_kwargs, observer)
+
+
+def _input_names(pipeline) -> set[str]:
+    inputs = getattr(getattr(pipeline, "blocks", None), "inputs", ())
+    return {
+        spec.name
+        for spec in inputs
+        if isinstance(getattr(spec, "name", None), str)
+    }
+
+
+def prepare(
+    pipeline,
+    cache: ConditionCache,
+    *,
+    namespace: str,
+    prompt: str,
+    media: tuple,
+    height: int,
+    width: int,
+    num_frames: int,
+    call_kwargs: dict,
+) -> ConditionReplay:
+    """Prepare an exact replay, failing open to normal encoding."""
+    try:
+        key = condition_key(
+            namespace,
+            prompt,
+            media,
+            height=height,
+            width=width,
+            num_frames=num_frames,
+        )
+    except TypeError:
+        return _miss(call_kwargs)
+
+    entry = cache.get(key)
+    if entry is None:
+
+        def observe(state) -> None:
+            values = {}
+            for name in cache.capture:
+                if isinstance(state, Mapping):
+                    value = state.get(name)
+                else:
+                    value = getattr(state, name, None)
+                values[name] = value
+            cache.put(key, values)
+
+        return _miss(call_kwargs, observe)
+
+    reduced = build_conditioned_pipeline(pipeline)
+    if reduced is None:
+        return _miss(call_kwargs)
+
+    device = getattr(pipeline, "_execution_device", None) or "cpu"
+    declared_inputs = _input_names(reduced)
+    cached = {
+        name: value
+        for name, value in entry.to(device).items()
+        if name in declared_inputs
+    }
+    replay_kwargs = {
+        name: value
+        for name, value in call_kwargs.items()
+        if name not in _CONDITION_ARGUMENTS
+    }
+    replay_kwargs.update(cached)
+    return ConditionReplay(True, reduced, replay_kwargs, _noop)
+
+
+def _optimization_spec():
+    from omni_infinity import registry
+
+    enabled = MappingProxyType({"condition_cache": True})
+    return registry.OptimizationSpec(
+        name="condition-cache",
+        description="Replay an exact whole condition without re-encoding.",
+        supported_archs=("h3-dense", "vdn-hybrid"),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": enabled, "vdn-hybrid": enabled}
+        ),
+    )
+
+
+OPTIMIZATION = _optimization_spec()
