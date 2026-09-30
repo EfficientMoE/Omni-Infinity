@@ -279,6 +279,25 @@ def test_demo_and_job_services_share_the_single_executor(tmp_path):
         jobs.shutdown()
 
 
+def test_demo_stream_session_expires_when_never_connected():
+    from omni_infinity.serve.stream import DemoStreamService
+
+    service = DemoStreamService(session_ttl=0.0)
+    service.open_session("a")
+    assert "a" in service._sessions
+
+    service.open_session("b")
+    assert "a" not in service._sessions
+    assert "b" in service._sessions
+
+    service.publish("a", {"type": "chunk"})
+
+    service._sessions["b"].connected = True
+    service.open_session("c")
+    assert "b" in service._sessions
+    assert "c" in service._sessions
+
+
 def test_stream_starts_at_the_first_clip(tmp_path):
     class BlockingSecondRunner:
         def __init__(self):

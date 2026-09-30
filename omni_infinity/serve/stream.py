@@ -199,6 +199,7 @@ class DemoStreamSession:
     def __init__(self, demo_id: str) -> None:
         self.demo_id = demo_id
         self.connected = False
+        self.created_at = time.monotonic()
         self.messages: queue.Queue[dict] = queue.Queue()
 
     def push(self, message: dict) -> None:
@@ -208,12 +209,22 @@ class DemoStreamSession:
 class DemoStreamService:
     """Thread-safe message hand-off from demo generation to a player."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, session_ttl: float) -> None:
+        self.session_ttl = session_ttl
         self._sessions: dict[str, DemoStreamSession] = {}
         self._lock = threading.Lock()
 
     def open_session(self, demo_id: str) -> None:
+        now = time.monotonic()
         with self._lock:
+            expired = [
+                session_id
+                for session_id, session in self._sessions.items()
+                if not session.connected
+                and now - session.created_at >= self.session_ttl
+            ]
+            for session_id in expired:
+                self._sessions.pop(session_id, None)
             self._sessions[demo_id] = DemoStreamSession(demo_id)
 
     def publish(self, demo_id: str, message: dict) -> None:

@@ -184,7 +184,9 @@ def create_app(
         runner = runner_factory() if runner_factory else load_runner(configured)
         service = JobService(runner, profile, store)
         demo_stream_service = (
-            DemoStreamService() if configured.stream_enabled else None
+            DemoStreamService(session_ttl=configured.stream_session_ttl)
+            if configured.stream_enabled
+            else None
         )
         demo_service = DemoService(
             runner,
