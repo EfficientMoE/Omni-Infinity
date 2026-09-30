@@ -1,12 +1,15 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Sequence
+from __future__ import annotations
+
+from collections.abc import Sequence
 
 import numpy as np
 import torch
 from PIL import Image
 
+from omni_infinity.demo.schedule import FPS
 from omni_infinity.runner import GenerationResult
 from omni_infinity.serve.artifacts import _stereo_audio, _video_frames
 
@@ -19,16 +22,14 @@ def last_frame_image(frames: np.ndarray) -> Image.Image:
         frame = frames
     else:
         raise ValueError(
-            f"Unsupported frame ndim={frames.ndim}, expected 3 or 4"
+            f"unsupported frame ndim={frames.ndim}, expected 3 or 4"
         )
 
     if frame.dtype == np.uint8:
         img_array = frame.copy()
     else:
-        # Clip float to [0,1] and convert to uint8
         img_array = np.clip(frame, 0, 1) * 255
         img_array = np.round(img_array).astype(np.uint8)
-    img_array = np.ascontiguousarray(img_array)
     return Image.fromarray(img_array, mode="RGB")
 
 
@@ -36,9 +37,8 @@ def stitch_results(
     results: Sequence[GenerationResult], *, playback_frames: int
 ) -> GenerationResult:
     if not results:
-        raise ValueError("No results to stitch")
+        raise ValueError("no results to stitch")
 
-    # Extract sampling rate from first result
     sampling_rate = results[0].sampling_rate
 
     videos = []
@@ -47,7 +47,7 @@ def stitch_results(
     for r in results:
         if r.sampling_rate != sampling_rate:
             raise ValueError(
-                f"Sampling rate mismatch: {r.sampling_rate} != {sampling_rate}"
+                f"sampling rate mismatch: {r.sampling_rate} != {sampling_rate}"
             )
         videos.append(_video_frames(r.videos))
         audios.append(_stereo_audio(r.audio))
@@ -57,16 +57,13 @@ def stitch_results(
 
     if video_concat.shape[0] < playback_frames:
         raise ValueError(
-            (
-                "Concatenated video length {} is less than playback_frames {}"
-            ).format(video_concat.shape[0], playback_frames)
+            f"concatenated video length {video_concat.shape[0]} "
+            f"is less than playback_frames {playback_frames}"
         )
 
-    # Trim video frames
     video_trim = video_concat[:playback_frames]
 
-    # Calculate audio trim length: playback_frames / 24 * sampling_rate, rounded
-    audio_trim_length = round(playback_frames / 24 * sampling_rate)
+    audio_trim_length = round(playback_frames / FPS * sampling_rate)
 
     audio_trim = audio_concat[:, :audio_trim_length]
 
