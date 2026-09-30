@@ -4,7 +4,7 @@
 
 **Goal:** Accept an ordered prompt list and play one stitched video at 15s, 1min, 2min, or 5min, where every prompt is one 124-frame generation.
 
-**Architecture:** A new `omni_infinity/demo/` package owns the duration table, frame/audio stitch, and the sequential runner loop. `POST /v1/demos` queues that loop on the existing job executor so the GPU still runs one generation at a time. The finished file is one trimmed MP4. When streaming is enabled, the same trimmed clip is fragmented with the existing fMP4 helper and served on a demo WebSocket. `POST /v1/jobs` and `GenerationRequest` stay single-prompt.
+**Architecture:** A new `omni_infinity/demo/` package owns the duration table, frame/audio stitch, and the sequential runner loop. `POST /v1/demos` queues that loop on the existing job executor so the GPU still runs one generation at a time. As soon as the first 124-frame clip returns, its fMP4 fragments are sent and the browser starts playback. Later clips keep generating on that same worker and are appended as they finish. The finished file is still one trimmed MP4, written after the last clip. `POST /v1/jobs` and `GenerationRequest` stay single-prompt. The stream monitor picks the length from a dropdown and highlights the prompt whose interval contains `video.currentTime`.
 
 **Tech Stack:** Python 3.10+, FastAPI, Pydantic v2, Pillow, NumPy, PyTorch, pytest, the existing `write_artifacts` / `fragment_clip` helpers. No new dependencies. No H3-World weights.
 
@@ -14,7 +14,8 @@
 
 - Each segment is exactly 124 frames at 24 fps (`17*7+5`, 124/24 s). `num_frames` is not a demo request field.
 - Presets and the smallest covering prompt counts are exactly: `15s` → 3 prompts (372 generated frames, play 360), `1min` → 12 (1488 generated, play 1440), `2min` → 24 (2976 generated, play 2880), `5min` → 59 (7316 generated, play 7200). 23 prompts is 118.8 s and is rejected for `2min`. 58 prompts is 299.7 s and is rejected for `5min`.
-- Playback stops at the nominal duration: 15 s, 60 s, 120 s, 300 s. Trim happens before mux and before fragmentation.
+- Playback stops at the nominal duration: 15 s, 60 s, 120 s, 300 s. The final MP4 is trimmed to that duration. Fragments for the last clip stop at the same cut, before they are sent.
+- The first clip is fragmented and sent before `generate()` for the second clip starts. The browser plays that clip while later clips are still running. One executor, so generations stay serial; they overlap playback, not each other.
 - Segment 0 uses the required first frame. Segment `i > 0` uses the last decoded frame of segment `i - 1` as its `image`. `last_image` is always `None`.
 - Segment `i` is called with `seed + i`.
 - `POST /v1/jobs` still accepts one `prompt` and `num_frames` in `120..360`. A demo id is HTTP 404 on `GET /v1/jobs/{id}`.
@@ -22,6 +23,7 @@
 - Profile mismatch is HTTP 409 with detail `request profile does not match the loaded server profile`. A bad prompt count is HTTP 422 with detail `duration {duration} requires {n} prompts, got {got}`. A missing first frame is HTTP 422 with detail `first frame is required`. Invalid image bytes reuse `JobService._decode_image` errors.
 - `vdn-hybrid` with `resolution != "768p"` raises `ValueError("vdn-hybrid requires the 768p canvas")` before any `generate()`.
 - `OMNI_STREAM_ENABLED` unset leaves `WS /v1/demos/{id}/ws` unregistered. `POST /v1/demos` stays registered either way.
+- The length control is `<select id="duration">` with options `15s`, `1min`, `2min`, `5min`. It is not a free-text field. The prompt row whose half-open interval contains `video.currentTime` has class `active`. Rows for clips the server has not sent yet stay visible and are marked rendering.
 - CPU tests, fake runners, no checkpoint loads. Do not modify `third_party/`.
 - New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
 
@@ -29,6 +31,7 @@
 
 - `2min` with 23 prompts and `5min` with 58 prompts are 422; the covering counts are 24 and 59. Task 3.
 - No played frame or fragment has `pts` at or past the nominal duration. Task 2 and Task 6.
+- The first clip's websocket `chunk` is sent before the second `generate()` starts, and the player calls `video.play()` on that first chunk. Task 6 and Task 7.
 - Segment 1's `image` is the last frame of segment 0, not the user first frame. Task 4.
 - `POST /v1/jobs` still rejects a body that has `prompts` and no `prompt`. Task 5.
 - A demo submit and a job submit share one executor, so the two `generate()` calls cannot overlap. Task 5.
@@ -54,6 +57,8 @@ Modify:
 
 - `omni_infinity/serve/app.py` — demo routes, pass `service.executor` into `DemoService`.
 - `omni_infinity/serve/stream.py` — export `chunk_message` (current `_chunk_message` body).
+- `omni_infinity/serve/webui/index.html` — length `<select id="duration">` and `#prompt-stack`.
+- `omni_infinity/serve/webui/player.js` — demo submit, play on the first chunk, highlight the playhead prompt.
 - `README.md` — one section after Streaming playback.
 
 Do not edit `GenerationRequest`, `JobStore.create`, or `POST /v1/jobs`.
@@ -306,7 +311,7 @@ git commit -m "feat: serve the multi-prompt demo"
 
 ---
 
-### Task 6: Stream the trimmed clip
+### Task 6: Play the first clip while later clips generate
 
 **Files:**
 - Modify: `omni_infinity/serve/stream.py`
@@ -316,20 +321,20 @@ git commit -m "feat: serve the multi-prompt demo"
 
 **Interfaces:**
 - Consumes: `fragment_clip` from `omni_infinity.streaming.fragment`. `chunk_message` is `stream.py`'s current `_chunk_message` made public; keep `_chunk_message = chunk_message`.
-- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends `init`, then one `chunk` per fragment of the trimmed clip, then `end`. Each chunk's `prompt` is `prompts[min(int(pts / (124/24)), len(prompts)-1)]`. `instruction` and `action` are `None`. The last chunk has `done: true`. No fragment has `pts >=` nominal seconds. When `stream_enabled` is false, that websocket route is unregistered (404) and `POST /v1/demos` still works.
+- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends `init` and the first clip's `chunk` messages before the second `runner.generate` starts. Later clips are fragmented as each `generate()` returns, with `pts` shifted by `i * 124 / 24`. `end` is sent only after the last clip. Each chunk's `prompt` is that clip's prompt. `instruction` and `action` are `None`. The last chunk has `done: true`. No fragment has `pts >=` nominal seconds; the last clip is trimmed to the nominal cut before it is fragmented. The final MP4 is the stitched, trimmed timeline, written before `SUCCEEDED`. When `stream_enabled` is false, that websocket route is unregistered (404), `POST /v1/demos` still works, and the MP4 appears only after every clip has finished.
 
 - [ ] **Step 1: Write the failing test**
 
-With `stream_enabled=True` and `stream_chunk_frames=120`, open the demo socket after the 15s demo succeeds. Collect chunks. Assert `pts` values are all `< 15`, the last `done` is true, chunk 0's prompt is `prompts[0]`, and the chunk whose `pts` is `124/24` has `prompts[1]`. With `stream_enabled=False`, `POST /v1/demos` returns 202 and the websocket path is 404.
+Name it `test_stream_starts_at_the_first_clip`. With `stream_enabled=True` and `stream_chunk_frames=124`, a 15s demo uses a fake runner whose second `generate()` blocks on a `threading.Event`. The websocket, opened immediately after HTTP 202, receives `init` and a chunk with `prompts[0]` while that event is still unset. Releasing the event lets clips 2 and 3 finish. Collected `pts` values are all `< 15`, the chunk at `pts == 124/24` has `prompts[1]`, and the last chunk has `done: true`. With `stream_enabled=False`, `POST /v1/demos` returns 202 and the websocket path is 404.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_demo_api.py -v -k stream`
 Expected: FAIL because the websocket route is missing
 
-- [ ] **Step 3: Implement fragmentation after a successful stitch**
+- [ ] **Step 3: Implement per-clip send**
 
-Fragment the trimmed `GenerationResult` only. Store `init` and chunks on the demo record before `SUCCEEDED`, and send them from the websocket. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
+Inside the segment loop, after each `generate()`, fragment that clip and push its messages to the connected socket before the next `generate()`. Do not wait for `stitch_results` before the first chunk. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -340,41 +345,64 @@ Expected: PASS
 
 ```bash
 git add omni_infinity/serve/stream.py omni_infinity/serve/app.py omni_infinity/demo/service.py tests/test_demo_api.py
-git commit -m "feat: stream the trimmed demo"
+git commit -m "feat: play the first demo clip while generating the rest"
 ```
 
 ---
 
-### Task 7: README
+### Task 7: Length dropdown and playhead highlight
 
 **Files:**
+- Modify: `omni_infinity/serve/webui/index.html`
+- Modify: `omni_infinity/serve/webui/player.js`
 - Modify: `README.md` (after the Streaming playback section)
+- Test: `tests/test_stream_api.py` (`test_webui_is_served_only_when_streaming_is_enabled`)
 
 **Interfaces:**
-- Consumes: the route and preset table from Tasks 1 and 5.
-- Produces: a "Multi-prompt demo" section with the four rows (prompts, generated frames, played frames) and a `curl` `POST /v1/demos` example for `15s` with three prompts and `first_frame_base64`. State that `POST /v1/jobs` is unchanged and that H3-World weights are not in this change; the loaded runner is called once per prompt at 124 frames.
+- Consumes: preset ids `15s`, `1min`, `2min`, `5min` and clip counts 3, 12, 24, 59 from Task 1. Chunk messages from Task 6 carry `pts`, `duration`, and `prompt`.
+- Produces:
+  - `<select id="duration" aria-label="Playback length">` with those four values. Option labels name the length and the clip count (`15 seconds — 3 clips`, `1 minute — 12 clips`, `2 minutes — 24 clips`, `5 minutes — 59 clips`).
+  - Source option `value="demo"`. Choosing it reveals `#prompt-stack`: one text field per clip. Changing the dropdown rebuilds the stack and keeps text already typed.
+  - On submit, demo mode `POST`s `/v1/demos` with `prompts`, `duration`, and `first_frame_base64`, then opens `WS /v1/demos/{id}/ws`. Clip and native keep `POST /v1/streams`.
+  - Before any chunk, the rail lists every prompt as rendering. `highlightCue` adds `active` only to the row whose half-open `[pts, pts + duration)` contains `video.currentTime`. The first `chunk` calls `video.play()`. Until `end`, the status reads `live · model running`.
 
-- [ ] **Step 1: Add the section**
+- [ ] **Step 1: Extend the web UI test**
 
-No new test. The example duration is `15s` and the example prompt count is 3.
+In `test_webui_is_served_only_when_streaming_is_enabled`, assert the page contains `id="duration"`, `value="15s"`, `value="1min"`, `value="2min"`, `value="5min"`, and `value="demo"`. Assert `player.js` contains `video.play`, `model running`, and `highlightCue`.
 
-- [ ] **Step 2: Check the section**
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_stream_api.py::test_webui_is_served_only_when_streaming_is_enabled -v`
+Expected: FAIL on `id="duration"`
+
+- [ ] **Step 3: Implement the monitor controls**
+
+Keep the existing dark monitor. The length control is the styled `<select>`, not a new text field. Prompt rows use the existing `.cue` / `.cue.active` treatment. Add `.cue.rendering` for clips not yet received. Do not add a font that requires a network fetch.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_stream_api.py::test_webui_is_served_only_when_streaming_is_enabled -v`
+Expected: PASS
+
+- [ ] **Step 5: README**
+
+Add a "Multi-prompt demo" section with the four rows (prompts, generated frames, played frames) and a `curl` `POST /v1/demos` example for `15s` with three prompts and `first_frame_base64`. State that playback starts when the first clip is generated, later clips still run on the same worker, the length control is the dropdown, and the prompt under the playhead is highlighted. `POST /v1/jobs` is unchanged. H3-World weights are not in this change.
 
 Run: `rg -n "POST /v1/demos" README.md`
-Expected: one match, and nearby text lists `59` prompts for `5min`
+Expected: one match, and nearby text lists `59` prompts for `5min` and `first clip`
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add README.md
-git commit -m "docs: describe the multi-prompt demo"
+git add omni_infinity/serve/webui/index.html omni_infinity/serve/webui/player.js README.md tests/test_stream_api.py
+git commit -m "feat: pick demo length from a dropdown and highlight the playhead prompt"
 ```
 
 ---
 
 ## Test plan
 
-Run from the repo root after Task 6:
+Run from the repo root after Task 7:
 
 ```bash
 pytest tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py tests/test_job_api.py tests/test_stream_api.py -v
@@ -384,4 +412,4 @@ ruff format --check omni_infinity/demo omni_infinity/serve/app.py omni_infinity/
 
 Expected: pytest PASS, ruff clean.
 
-Out of scope for these tests: loading H3-World or MiniMax-H3 weights, a real GPU generation, and the browser player. The 1min, 2min, and 5min presets are covered by the schedule and validation tests, not by generating 59 fake clips in the HTTP test. The HTTP test generates the 15s preset only.
+Out of scope for these tests: loading H3-World or MiniMax-H3 weights, and a real GPU generation. The 1min, 2min, and 5min presets are covered by the schedule, the validation tests, and the dropdown markup, not by generating 59 fake clips. The HTTP generation test uses the 15s preset only. `test_stream_starts_at_the_first_clip` is the check that playback media leaves the server before the second clip's `generate()` returns. The page test checks the dropdown and that `highlightCue` still keys off `video.currentTime`.

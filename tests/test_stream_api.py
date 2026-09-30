@@ -699,8 +699,14 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
         "forward",
         "activeCue",
         "endOfStream",
+        "video.play",
+        "model running",
+        "highlightCue",
     ):
         assert needle in script.text
+    assert 'id="duration"' in page.text
+    for value in ("15s", "1min", "2min", "5min", "demo"):
+        assert f'value="{value}"' in page.text
 
 
 def test_readme_documents_pseudo_streaming():

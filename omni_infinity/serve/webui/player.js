@@ -4,14 +4,21 @@ const status = document.querySelector("#status");
 const form = document.querySelector("#stream-form");
 const prompt = document.querySelector("#prompt");
 const source = document.querySelector("#source");
+const duration = document.querySelector("#duration");
+const promptStack = document.querySelector("#prompt-stack");
+const frameChip = document.querySelector("#frame-chip");
 const artifactLink = document.querySelector("#artifact");
 const cueCount = document.querySelector("#cue-count");
-const demoPrompt = [
+const demoShots = [
   "[Shot 1] 2D-animated wide shot in an infinite black void. Thick grey smoke, black ink haze, and glowing red embers drift around a pale ronin assassin in layered black silk robes with red waist cords. A black katana rests at her hip. She stands still, right hand on the hilt, while cold white light cuts through the smoke. Low wind, ember crackle, distant taiko.",
   "[Shot 2] At 00:01.500 the camera pushes into a close-up. Her eyes narrow and she quickdraws the katana. A crimson slash tears the smoke. Robes and hair snap backward. A metallic scrape and a tearing whoosh.",
   "[Shot 3] At 00:03.000 a medium-wide shot pans as she leaps and spins. Overlapping crimson arcs scatter embers. Fabric snaps and the blade whistles.",
   "[Shot 4] At 00:04.200 she lands and cuts a jagged crimson arc that freezes the smoke and debris in slow motion. A deep impact boom rings out, then a sustained high tone over a shamisen hit.",
-].join(" ");
+];
+const demoPrompt = demoShots.join(" ");
+const SEGMENT_SECONDS = 124 / 24;
+const DEMO_CLIPS = { "15s": 3, "1min": 12, "2min": 24, "5min": 59 };
+const DEMO_SECONDS = { "15s": 15, "1min": 60, "2min": 120, "5min": 300 };
 const demoScript = [
   { t: 0.2, action: "hold", instruction: "Still stance in rolling smoke, hand on the katana." },
   { t: 1.2, action: "draw", instruction: "Eyes narrow; quickdraw leaves a crimson slash." },
@@ -36,6 +43,9 @@ let cues = [];
 let endRequested = false;
 let generation = 0;
 let activeIndex = null;
+let schedule = [];
+let modelRunning = false;
+let playbackStarted = false;
 
 function bytes(encoded) {
   const raw = atob(encoded);
@@ -52,7 +62,7 @@ function streamState(text) {
   if (text === "offline") return "idle";
   if (text === "opening") return "connecting";
   if (text === "connected") return "waiting";
-  if (text.startsWith("chunk ")) return "live";
+  if (text.startsWith("chunk ") || text.startsWith("live")) return "live";
   if (text === "complete") return "done";
   return "alert";
 }
@@ -104,6 +114,9 @@ function renderCues() {
     ...cues.map((cue) => {
       const item = document.createElement("article");
       item.className = "cue";
+      if (cue.ready === false) {
+        item.classList.add("rendering");
+      }
       item.dataset.index = String(cue.index);
       const label = cue.instruction || cue.prompt;
       const stamp = document.createElement("time");
@@ -119,10 +132,11 @@ function renderCues() {
       ? `${String(cues.length).padStart(2, "0")} cues`
       : "";
   }
+  highlightCue();
 }
 
 function highlightCue() {
-  const active = activeCue(cues, video.currentTime);
+  const active = activeCue(schedule.length ? schedule : cues, video.currentTime);
   for (const item of panel.querySelectorAll(".cue")) {
     item.classList.toggle(
       "active",
@@ -164,9 +178,78 @@ function openMedia(codec, init) {
       // first — put it at the head of the queue before draining.
       appendQueue.unshift(bytes(init));
       appendNext();
+      startPlayback();
     },
     { once: true },
   );
+}
+
+function startPlayback() {
+  if (playbackStarted) {
+    return;
+  }
+  playbackStarted = true;
+  const pending = video.play();
+  if (pending && pending.catch) {
+    pending.catch(() => {});
+  }
+}
+
+function slipValue(index) {
+  return demoShots[index] || `Clip ${index + 1}. Continue the same scene and subject.`;
+}
+
+function renderPromptStack() {
+  const count = DEMO_CLIPS[duration.value];
+  const previous = [...promptStack.querySelectorAll("textarea")].map(
+    (node) => node.value,
+  );
+  promptStack.replaceChildren();
+  for (let index = 0; index < count; index += 1) {
+    const label = document.createElement("label");
+    label.className = "slip";
+    const marker = document.createElement("span");
+    marker.className = "slip__index";
+    marker.textContent = String(index + 1).padStart(2, "0");
+    const field = document.createElement("textarea");
+    field.rows = 2;
+    field.required = true;
+    field.spellcheck = false;
+    field.value = previous[index] || slipValue(index);
+    field.setAttribute("aria-label", `Prompt ${index + 1}`);
+    label.append(marker, field);
+    promptStack.append(label);
+  }
+  frameChip.textContent = `256p / 124f × ${count}`;
+}
+
+function syncMode() {
+  form.dataset.mode = source.value;
+  const demo = source.value === "demo";
+  prompt.disabled = demo;
+  prompt.required = !demo;
+  if (demo) {
+    renderPromptStack();
+    return;
+  }
+  frameChip.textContent = "256p / 120f";
+}
+
+function armSchedule(prompts, seconds) {
+  schedule = prompts.map((text, index) => {
+    const pts = index * SEGMENT_SECONDS;
+    const end = Math.min((index + 1) * SEGMENT_SECONDS, seconds);
+    return {
+      index,
+      pts,
+      duration: end - pts,
+      prompt: text,
+      instruction: null,
+      ready: false,
+    };
+  });
+  cues = schedule;
+  renderCues();
 }
 
 function receive(message) {
@@ -176,14 +259,30 @@ function receive(message) {
   }
   if (message.type === "chunk") {
     appendQueue.push(bytes(message.video_b64));
-    cues.push(message);
+    if (schedule.length) {
+      const row = schedule.find(
+        (item) => item.pts <= message.pts && message.pts < item.pts + item.duration,
+      );
+      if (row) {
+        row.ready = true;
+      }
+      cues = schedule;
+    } else {
+      cues.push(message);
+    }
     renderCues();
     appendNext();
-    setStatus(`chunk ${message.index}`);
+    startPlayback();
+    setStatus(
+      schedule.length && modelRunning
+        ? "live · model running"
+        : `chunk ${message.index}`,
+    );
     return;
   }
   if (message.type === "end") {
     endRequested = true;
+    modelRunning = false;
     // Latch the terminal status first; a late append/flush must not stop
     // the monitor from reading "complete".
     setStatus("complete");
@@ -215,6 +314,9 @@ async function createStream(event) {
   appendQueue = [];
   endRequested = false;
   cues = [];
+  schedule = [];
+  modelRunning = false;
+  playbackStarted = false;
   activeIndex = null;
   renderCues();
   if (artifactLink) {
@@ -233,35 +335,62 @@ async function createStream(event) {
       ...firstFrameBytes.subarray(offset, offset + 0x8000),
     );
   }
-  const response = await fetch("/v1/streams", {
+  const demo = source.value === "demo";
+  const prompts = demo
+    ? [...promptStack.querySelectorAll("textarea")].map((node) => node.value)
+    : [];
+  if (demo) {
+    armSchedule(prompts, DEMO_SECONDS[duration.value]);
+    modelRunning = true;
+  }
+  const response = await fetch(demo ? "/v1/demos" : "/v1/streams", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      type: "fl2va",
-      prompt: prompt.value,
-      source: source.value,
-      model_arch: "h3-dense",
-      optimizations: [
-        "adaln-host-cache",
-        "block-stream",
-        "text-encoder-stream",
-      ],
-      seed: 0,
-      num_inference_steps: 8,
-      resolution: "256p",
-      num_frames: 120,
-      first_frame_base64: btoa(firstFrameBase64),
-      action_script: demoScript,
-    }),
+    body: JSON.stringify(
+      demo
+        ? {
+            prompts,
+            duration: duration.value,
+            model_arch: "h3-dense",
+            optimizations: [
+              "adaln-host-cache",
+              "block-stream",
+              "text-encoder-stream",
+            ],
+            seed: 0,
+            num_inference_steps: 8,
+            resolution: "256p",
+            first_frame_base64: btoa(firstFrameBase64),
+          }
+        : {
+            type: "fl2va",
+            prompt: prompt.value,
+            source: source.value,
+            model_arch: "h3-dense",
+            optimizations: [
+              "adaln-host-cache",
+              "block-stream",
+              "text-encoder-stream",
+            ],
+            seed: 0,
+            num_inference_steps: 8,
+            resolution: "256p",
+            num_frames: 120,
+            first_frame_base64: btoa(firstFrameBase64),
+            action_script: demoScript,
+          },
+    ),
   });
   if (!response.ok) {
+    modelRunning = false;
     setStatus(`HTTP ${response.status}`);
     return;
   }
-  const { stream_id: streamId } = await response.json();
+  const payload = await response.json();
+  const streamId = payload.stream_id || payload.id;
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const connection = new WebSocket(
-    `${protocol}://${location.host}/v1/streams/${streamId}/ws`,
+    `${protocol}://${location.host}${demo ? "/v1/demos" : "/v1/streams"}/${streamId}/ws`,
   );
   socket = connection;
   connection.addEventListener("open", () => {
@@ -280,7 +409,12 @@ async function createStream(event) {
 function sendKey(event, down) {
   // Never steal keys or preventDefault while the prompt or source has focus.
   const focused = document.activeElement;
-  if (focused === prompt || focused === source) {
+  if (
+    focused === prompt ||
+    focused === source ||
+    focused === duration ||
+    (promptStack && promptStack.contains(focused))
+  ) {
     return;
   }
   const action = keyActions[event.key];
@@ -299,6 +433,12 @@ function sendKey(event, down) {
 }
 
 setStatus("offline");
+source.addEventListener("change", syncMode);
+duration.addEventListener("change", () => {
+  if (source.value === "demo") {
+    renderPromptStack();
+  }
+});
 form.addEventListener("submit", createStream);
 video.addEventListener("timeupdate", highlightCue);
 window.addEventListener("keydown", (event) => sendKey(event, true));
