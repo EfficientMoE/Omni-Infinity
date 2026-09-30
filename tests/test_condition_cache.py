@@ -158,6 +158,27 @@ class TestConditionCache:
         cache = ConditionCache(cache_dir=tmp_path)
         assert cache.get("bad") is None
 
+    @pytest.mark.parametrize(
+        "payload",
+        [{}, {"prompt_embeds": "not-a-tensor"}],
+    )
+    def test_invalid_disk_payload_is_a_miss(self, tmp_path, payload):
+        torch.save(payload, tmp_path / "bad.pt")
+        cache = ConditionCache(cache_dir=tmp_path)
+        assert cache.get("bad") is None
+        assert cache.stats()["misses"] == 1
+
+    def test_unwritable_disk_tier_fails_open(self, tmp_path, monkeypatch):
+        cache = ConditionCache(cache_dir=tmp_path)
+
+        def fail_mkstemp(**_kwargs):
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr("tempfile.mkstemp", fail_mkstemp)
+        entry = cache.put("key", {"prompt_embeds": torch.ones(2)})
+        assert entry is not None
+        assert cache.get("key") is entry
+
 
 class _RecordingState:
     def __init__(self, values):

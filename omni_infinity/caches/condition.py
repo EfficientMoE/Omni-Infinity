@@ -48,6 +48,7 @@ import torch
 from omni_infinity.caches._tensor_tree import (
     tree_map,
     tree_nbytes,
+    tree_tensors,
     update_hash_for_value,
 )
 
@@ -173,7 +174,7 @@ class ConditionCache:
             for name in self.capture
             if values.get(name) is not None
         }
-        if any(name not in kept for name in self.required):
+        if not self._valid_values(kept):
             return None
         entry = ConditionEntry(kept)
         with self._lock:
@@ -219,23 +220,39 @@ class ConditionCache:
             return None
         if not isinstance(values, dict):
             return None
-        return ConditionEntry(values)
+        kept = {
+            name: values[name]
+            for name in self.capture
+            if values.get(name) is not None
+        }
+        if not self._valid_values(kept):
+            return None
+        return ConditionEntry(kept)
+
+    def _valid_values(self, values: dict[str, Any]) -> bool:
+        if any(name not in values for name in self.required):
+            return False
+        return all(tree_tensors(value) for value in values.values())
 
     def _save_to_disk(self, key: str, values: dict[str, Any]) -> None:
         path = self._disk_path(key)
         if path is None:
             return
-        fd, tmp_name = tempfile.mkstemp(dir=str(self.cache_dir), suffix=".tmp")
+        tmp_name = None
         try:
+            fd, tmp_name = tempfile.mkstemp(
+                dir=str(self.cache_dir), suffix=".tmp"
+            )
             with os.fdopen(fd, "wb") as handle:
                 torch.save(values, handle)
             os.replace(tmp_name, path)
         except Exception:
             logger.warning("could not persist cache entry %s", path)
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
+            if tmp_name is not None:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
 
 
 def declared_inputs(pipeline) -> frozenset[str] | None:
