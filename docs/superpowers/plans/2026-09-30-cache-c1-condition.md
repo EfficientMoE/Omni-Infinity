@@ -43,7 +43,7 @@ This plan is stacked on the shared cache contract and cannot start before it:
 - A hit requires the entire condition. Do not implement prefix matching or `[Shot N]` reordering.
 - Do not modify `third_party/`, `runner.py`, `arch/vdn.py`, `registry.py`, `serve/`, `examples/fl2va_smoke.py`, or any parity test.
 - Do not edit `attach.py`. Once the contract plan has been executed, its `attach.py` imports `ConditionCache` and `prepare` from this module inside its functions. Preflight before Task 1: run `grep -n "ConditionCache" omni_infinity/caches/attach.py`. If the file is missing or lacks that name, stop and execute the contract plan first (see Prerequisites).
-- CPU tests with fake pipelines. The diffusers structural test uses `pytest.importorskip` and must not download weights.
+- CPU tests with fake pipelines (Tasks 1–3). The diffusers structural test uses `pytest.importorskip` and must not download weights. Task 4 is the only step that loads a checkpoint: it is a GPU smoke gate that runs when CUDA and a local H3 snapshot are available, and otherwise records itself as pending.
 - New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
 - Fresh context: read this plan and the contract Interfaces only. Do not open the other cache plans or draft PR #25.
 
@@ -54,6 +54,7 @@ This plan is stacked on the shared cache contract and cannot start before it:
 - `ReferenceRunner:/ckpt-a` and `ReferenceRunner:/ckpt-b` must hash differently. Task 1.
 - A hit must not call the full pipeline, and the request `generator` object in `call_kwargs` must be the same object the caller passed. Task 3.
 - An unhashable reference and a pipeline that cannot be reduced must return `hit is False` and the original kwargs. Task 3.
+- The warm smoke run must be bitwise (`rms_rel=0.0000` vs the goldens) and strictly faster than the cold run. Task 4.
 
 ## File Structure
 
@@ -264,4 +265,69 @@ Then ruff check and format check on `omni_infinity/caches/condition.py` and `tes
 ```bash
 git add omni_infinity/caches/condition.py tests/test_condition_cache.py docs/caches_c1_condition.md
 git commit -m "feat(caches): replay an exact condition without re-encoding"
+```
+
+---
+
+### Task 4: GPU bitwise warm-hit smoke gate
+
+The repo's convention for landed memory work is a bitwise smoke gate on real
+H3 weights (inc 5–7, Ref2VA, VDN parity). C1 claims exact replay, so it gets
+the same gate: two identical smoke runs, where the second must hit the cache
+and still reproduce the goldens bitwise.
+
+**Files:**
+- Modify: `docs/caches_c1_condition.md` (append a "Warm-hit smoke gate" section)
+
+**Interfaces:**
+- Consumes: the `--condition-cache` and `--condition-cache-dir` flags the contract plan added to `examples/fl2va_smoke.py`, and the existing `--goldens` comparison.
+- Produces: recorded gate results (or the pending-gate commands) in the doc. No new Python files and no new pytest — GPU pytest coverage belongs to the benchmark plan.
+
+- [ ] **Step 1: Preflight**
+
+The gate needs CUDA, a local H3 snapshot, a moe-store, and the recorded
+goldens (`tests/fixtures/goldens/fl2va_goldens.pt`). If any are absent,
+append the "Warm-hit smoke gate" section to `docs/caches_c1_condition.md`
+with the two commands from Steps 2–3 verbatim, mark it
+`Status: pending — run before release`, commit as in Step 5, and stop.
+
+- [ ] **Step 2: Cold run (miss path)**
+
+```bash
+rm -rf /tmp/omni-c1-gate
+python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
+    --seed 0 --steps 8 --resolution 256p --frames 120 \
+    --checkpoint <local-H3-snapshot-dir> --offload \
+    --store-dir <moe-store> --store-components transformer,vae,audio_vae \
+    --adaln-host-cache --block-stream-blocks-per-group 1 \
+    --condition-cache --condition-cache-dir /tmp/omni-c1-gate \
+    --goldens tests/fixtures/goldens/fl2va_goldens.pt
+```
+
+Expected: `rms_rel=0.0000` against the goldens — the miss path must be
+byte-identical to a run without the cache. Record the wall-clock. If
+`rms_rel` is not zero, stop: the cache broke the miss path; do not proceed
+to Step 3.
+
+- [ ] **Step 3: Warm run (hit path)**
+
+Re-run the identical command from Step 2 (same process invocation, same
+cache dir, no `rm`). Expected: `rms_rel=0.0000` again, and wall-clock
+strictly lower than the cold run because the encoders are skipped. Record
+both wall-clocks. A warm run that is not faster means the hit never
+happened — inspect the cache dir for the stored `<key>.pt` before
+concluding.
+
+- [ ] **Step 4: Record the gate**
+
+Append to `docs/caches_c1_condition.md` a "Warm-hit smoke gate" section:
+the two commands, both wall-clocks, both `rms_rel` values, and the sentence
+`The warm hit reproduces the goldens bitwise.` Keep the section factual —
+measured numbers, not estimates.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/caches_c1_condition.md
+git commit -m "docs: record the C1 warm-hit smoke gate"
 ```
