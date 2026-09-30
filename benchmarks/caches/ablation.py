@@ -133,9 +133,7 @@ def _rms_rel(a, b) -> float:
     denominator = b.float().pow(2).mean().sqrt()
     if float(denominator) == 0.0:
         return float("inf")
-    return float(
-        (a.float() - b.float()).pow(2).mean().sqrt() / denominator
-    )
+    return float((a.float() - b.float()).pow(2).mean().sqrt() / denominator)
 
 
 def _run_cell(cell: Cell, args) -> dict:
@@ -334,9 +332,7 @@ def main() -> int:
     parser.add_argument("--cell", default=None)
     parser.add_argument("--only", default=None)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--c5-coefficients", type=_parse_coeffs, default=()
-    )
+    parser.add_argument("--c5-coefficients", type=_parse_coeffs, default=())
     parser.add_argument("--c5-threshold", type=float, default=0.1)
     parser.add_argument("--c5-rms-rel-max", type=float, default=0.1)
     args = parser.parse_args()

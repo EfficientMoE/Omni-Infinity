@@ -32,21 +32,27 @@ def test_cache_configs_cover_each_level_and_baseline():
 
 
 def test_weights_absent_is_skip_not_fail():
-    row = {"suite": "ablation", "cache_config": "c1",
-           "notes": "weights-absent"}
+    row = {"suite": "ablation", "cache_config": "c1", "notes": "weights-absent"}
     assert verdict_for(row) == "SKIP"
 
 
 def test_uncalibrated_c5_is_skip():
-    row = {"suite": "ablation", "cache_config": "c5",
-           "notes": "c5-uncalibrated"}
+    row = {
+        "suite": "ablation",
+        "cache_config": "c5",
+        "notes": "c5-uncalibrated",
+    }
     assert verdict_for(row) == "SKIP"
 
 
 def test_exact_cache_warm_must_be_bitwise_and_hit():
     row = {
-        "suite": "ablation", "cache_config": "c1", "phase": "warm",
-        "rms_rel": 0.0, "c1_hits": 1, "notes": "",
+        "suite": "ablation",
+        "cache_config": "c1",
+        "phase": "warm",
+        "rms_rel": 0.0,
+        "c1_hits": 1,
+        "notes": "",
     }
     assert verdict_for(row) == "PASS"
     assert verdict_for({**row, "rms_rel": 1e-3}) == "FAIL"
@@ -55,9 +61,14 @@ def test_exact_cache_warm_must_be_bitwise_and_hit():
 
 def test_c5_needs_skips_and_speedup_never_bitwise_claim():
     row = {
-        "suite": "ablation", "cache_config": "c5", "phase": "warm",
-        "c5_skipped": 2, "speedup_vs_baseline": 1.3,
-        "rms_rel": 0.04, "rms_rel_max": 0.1, "notes": "",
+        "suite": "ablation",
+        "cache_config": "c5",
+        "phase": "warm",
+        "c5_skipped": 2,
+        "speedup_vs_baseline": 1.3,
+        "rms_rel": 0.04,
+        "rms_rel_max": 0.1,
+        "notes": "",
     }
     assert verdict_for(row) == "PASS"
     assert verdict_for({**row, "rms_rel": 0.2}) == "FAIL"
@@ -66,10 +77,16 @@ def test_c5_needs_skips_and_speedup_never_bitwise_claim():
 
 
 def test_baseline_and_micro_rows_report():
-    assert verdict_for({"suite": "ablation", "cache_config": "baseline",
-                        "notes": ""}) == "REPORT"
-    assert verdict_for({"suite": "micro", "cache_config": "c1",
-                        "notes": ""}) == "REPORT"
+    assert (
+        verdict_for(
+            {"suite": "ablation", "cache_config": "baseline", "notes": ""}
+        )
+        == "REPORT"
+    )
+    assert (
+        verdict_for({"suite": "micro", "cache_config": "c1", "notes": ""})
+        == "REPORT"
+    )
 
 
 def test_prompt_fixture_path_exists():

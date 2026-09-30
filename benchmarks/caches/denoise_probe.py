@@ -30,9 +30,7 @@ def _rel_l1(current, previous) -> float | None:
     scale = previous.abs().mean()
     if float(scale) == 0.0:
         return None
-    return float(
-        (current.to(previous.dtype) - previous).abs().mean() / scale
-    )
+    return float((current.to(previous.dtype) - previous).abs().mean() / scale)
 
 
 @contextlib.contextmanager

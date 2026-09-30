@@ -33,8 +33,11 @@ def test_micro_runs_on_cpu_and_reports_all_benches(tmp_path):
 
 def test_c5_overhead_row_reports_skip_counters(tmp_path):
     rows = run_micro(
-        out_path=tmp_path / "m.json", reps=3, warmup=1,
-        embed_rows=16, image_bytes=128,
+        out_path=tmp_path / "m.json",
+        reps=3,
+        warmup=1,
+        embed_rows=16,
+        image_bytes=128,
     )
     c5 = next(r for r in rows if r["bench"] == "c5_decision_overhead")
     assert c5["extra"]["computed"] >= 1

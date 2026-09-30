@@ -20,9 +20,18 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_dry_run_builds_the_full_grid(tmp_path):
     proc = subprocess.run(
-        [sys.executable, "-m", "benchmarks.caches.ablation",
-         "--dry-run", "--results-dir", str(tmp_path)],
-        capture_output=True, text=True, cwd=REPO, timeout=120,
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.caches.ablation",
+            "--dry-run",
+            "--results-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+        timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
     for name in ("baseline", "c1", "c3", "c5", "all-exact"):
@@ -35,9 +44,19 @@ def test_c1_cell_hits_bitwise_on_warm(tmp_path):
     if not os.environ.get("OMNI_CHECKPOINT"):
         pytest.skip("OMNI_CHECKPOINT unset")
     proc = subprocess.run(
-        [sys.executable, "-m", "benchmarks.caches.ablation",
-         "--cell", "h3-dense-c1", "--results-dir", str(tmp_path)],
-        capture_output=True, text=True, cwd=REPO, timeout=3600,
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.caches.ablation",
+            "--cell",
+            "h3-dense-c1",
+            "--results-dir",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+        timeout=3600,
     )
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)

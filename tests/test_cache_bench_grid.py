@@ -46,8 +46,12 @@ def test_c5_cell_rows_carry_step_counters_and_score():
         "phases": [
             {"phase": "cold", "e2e_ms": 100.0, "stats": {}},
             {
-                "phase": "warm", "e2e_ms": 60.0, "rms_rel": 0.04,
-                "rms_rel_max": 0.1, "c5_computed": 5, "c5_skipped": 3,
+                "phase": "warm",
+                "e2e_ms": 60.0,
+                "rms_rel": 0.04,
+                "rms_rel_max": 0.1,
+                "c5_computed": 5,
+                "c5_skipped": 3,
                 "stats": {},
             },
         ],
@@ -66,7 +70,9 @@ def test_rows_from_cell_output_orders_fields_and_scores():
         "phases": [
             {"phase": "cold", "e2e_ms": 100.0, "stats": {}},
             {
-                "phase": "warm", "e2e_ms": 50.0, "rms_rel": 0.0,
+                "phase": "warm",
+                "e2e_ms": 50.0,
+                "rms_rel": 0.0,
                 "stats": {"c1": {"hits": 1, "misses": 1}},
             },
         ],

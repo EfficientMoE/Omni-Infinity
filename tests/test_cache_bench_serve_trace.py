@@ -21,8 +21,13 @@ class _FakeClient:
 
 def test_replay_emits_one_row_per_request():
     trace = build_trace(seed=0, length=8, repeat_ratio=0.25)
-    rows = replay(trace, _FakeClient(), arch="h3-dense",
-                  cache_config="c1", repeat_ratio=0.25)
+    rows = replay(
+        trace,
+        _FakeClient(),
+        arch="h3-dense",
+        cache_config="c1",
+        repeat_ratio=0.25,
+    )
     assert len(rows) == 8
     assert all(set(row) == set(FIELDS) for row in rows)
     hits = [row for row in rows if row["expected_hits"] == 1]
@@ -32,8 +37,13 @@ def test_replay_emits_one_row_per_request():
 
 def test_summarize_reports_latency_split():
     trace = build_trace(seed=0, length=8, repeat_ratio=0.25)
-    rows = replay(trace, _FakeClient(), arch="h3-dense",
-                  cache_config="c1", repeat_ratio=0.25)
+    rows = replay(
+        trace,
+        _FakeClient(),
+        arch="h3-dense",
+        cache_config="c1",
+        repeat_ratio=0.25,
+    )
     summary = summarize(rows)
     assert summary["requests"] == 8
     assert summary["expected_hits"] == 2

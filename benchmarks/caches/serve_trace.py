@@ -152,9 +152,7 @@ def main() -> int:  # pragma: no cover
         length=args.trace_len,
         repeat_ratio=args.repeat_ratio,
     )
-    client = JobClient(
-        args.base_url, args.optimizations.split(","), args.arch
-    )
+    client = JobClient(args.base_url, args.optimizations.split(","), args.arch)
     rows = replay(
         trace,
         client,
@@ -163,9 +161,7 @@ def main() -> int:  # pragma: no cover
         repeat_ratio=args.repeat_ratio,
     )
     args.results_dir.mkdir(parents=True, exist_ok=True)
-    with open(
-        args.results_dir / "serve_trace.csv", "w", newline=""
-    ) as handle:
+    with open(args.results_dir / "serve_trace.csv", "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(rows)
