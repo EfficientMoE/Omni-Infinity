@@ -47,6 +47,12 @@ def test_prompt_count_rejects_short_lists():
     assert d.duration == "15s"
 
 
+def test_prompt_count_rejects_long_lists():
+    with pytest.raises(ValidationError) as e:
+        DemoRequest(prompts=["a"] * 4, duration="15s")
+    assert "duration 15s requires 3 prompts, got 4" in str(e.value)
+
+
 def test_schedule_range_rejects_reversed():
     with pytest.raises(ValidationError) as e:
         DemoRequest(

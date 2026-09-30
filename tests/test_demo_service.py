@@ -103,6 +103,8 @@ def test_run_sequential_handoff_and_stitch():
     assert [c.seed for c in runner.calls] == [7, 8, 9]
     assert [c.num_frames for c in runner.calls] == [124, 124, 124]
     assert all(c.last_image is None for c in runner.calls)
+    assert [c.resolution for c in runner.calls] == ["256p"] * 3
+    assert [c.num_inference_steps for c in runner.calls] == [8, 8, 8]
     assert runner.calls[0].image is first
 
     expected_handoff = last_frame_image(
@@ -110,6 +112,12 @@ def test_run_sequential_handoff_and_stitch():
     )
     assert np.array_equal(
         np.asarray(runner.calls[1].image), np.asarray(expected_handoff)
+    )
+    expected_handoff_2 = last_frame_image(
+        np.full((SEGMENT_FRAMES, 2, 2, 3), 2 / 10.0, dtype=np.float32)
+    )
+    assert np.array_equal(
+        np.asarray(runner.calls[2].image), np.asarray(expected_handoff_2)
     )
 
     assert result.videos[0].shape[0] == 360

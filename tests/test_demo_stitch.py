@@ -64,6 +64,33 @@ def test_last_frame_image():
     assert img.getpixel((0, 0)) == (255, 255, 255)
 
 
+def test_last_frame_image_uint8_copy():
+    frame = np.full((1, 1, 3), (10, 20, 30), dtype=np.uint8)
+
+    img = stitch.last_frame_image(frame)
+
+    assert img.mode == "RGB"
+    assert img.getpixel((0, 0)) == (10, 20, 30)
+    frame[0, 0] = (0, 0, 0)
+    assert img.getpixel((0, 0)) == (10, 20, 30)
+
+
+def test_last_frame_image_stack_returns_last():
+    frames = np.zeros((3, 1, 1, 3), dtype=np.float32)
+    frames[2] = 1.0
+
+    img = stitch.last_frame_image(frames)
+
+    assert img.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_stitch_rejects_short_video():
+    results = [make_result(4), make_result(4)]
+
+    with pytest.raises(ValueError, match="less than playback_frames"):
+        stitch.stitch_results(results, playback_frames=100)
+
+
 def test_sampling_rate_mismatch_raises():
     result0 = make_result(4, sampling_rate=24)
     result1 = make_result(4, sampling_rate=16_000)
