@@ -1,13 +1,22 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
-from types import MappingProxyType
+import importlib.util
+import sys
+import types
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from omni_infinity import registry
-from omni_infinity.caches.attach import attach_caches, bind_generation
+from omni_infinity.caches.attach import (
+    attach_caches,
+    bind_generation,
+    denoise_config_from_args,
+)
 from omni_infinity.registry import OptimizationSpec
+from omni_infinity.serve.models import GenerationRequest
 
 
 class _Runner:
@@ -121,3 +130,89 @@ def test_bind_generation_fails_closed_for_missing_denoise_cache():
             total_steps=8,
             transformer=object(),
         )
+
+
+def test_request_accepts_cache_optimizations_and_rejects_denoise():
+    GenerationRequest(
+        type="fl2va",
+        prompt="a",
+        optimizations=["condition-cache", "vision-cache"],
+    )
+    with pytest.raises(ValidationError):
+        GenerationRequest(
+            type="fl2va", prompt="a", optimizations=["denoise-cache"]
+        )
+
+
+def test_denoise_config_requires_both_cli_values():
+    empty = SimpleNamespace(
+        denoise_cache_coefficients=None,
+        denoise_cache_threshold=None,
+    )
+    assert denoise_config_from_args(empty) is None
+
+    missing_threshold = SimpleNamespace(
+        denoise_cache_coefficients="1.0,0.0",
+        denoise_cache_threshold=None,
+    )
+    with pytest.raises(ValueError, match="both"):
+        denoise_config_from_args(missing_threshold)
+
+
+def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
+    module = types.ModuleType("omni_infinity.caches.denoise")
+
+    class DenoiseCacheConfig:
+        def __init__(self, *, coefficients, threshold):
+            self.coefficients = coefficients
+            self.threshold = threshold
+
+    module.DenoiseCacheConfig = DenoiseCacheConfig
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    args = SimpleNamespace(
+        denoise_cache_coefficients="2.0, 1.0,0.5",
+        denoise_cache_threshold=0.2,
+    )
+
+    config = denoise_config_from_args(args)
+
+    assert config.coefficients == (2.0, 1.0, 0.5)
+    assert config.threshold == 0.2
+
+
+def test_denoise_config_fails_closed_when_module_is_missing():
+    args = SimpleNamespace(
+        denoise_cache_coefficients="1.0,0.0",
+        denoise_cache_threshold=0.2,
+    )
+    with pytest.raises(RuntimeError, match="not installed"):
+        denoise_config_from_args(args)
+
+
+def test_smoke_parser_exposes_opt_in_cache_flags():
+    spec = importlib.util.spec_from_file_location(
+        "fl2va_smoke", "examples/fl2va_smoke.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    args = module.build_parser().parse_args(
+        [
+            "--prompt",
+            "a",
+            "--condition-cache",
+            "--condition-cache-dir",
+            "/tmp/cache",
+            "--vision-cache",
+            "--denoise-cache-coefficients",
+            "1.0,0.0",
+            "--denoise-cache-threshold",
+            "0.2",
+        ]
+    )
+
+    assert args.condition_cache is True
+    assert args.condition_cache_dir == "/tmp/cache"
+    assert args.vision_cache is True
+    assert args.denoise_cache_coefficients == "1.0,0.0"
+    assert args.denoise_cache_threshold == 0.2

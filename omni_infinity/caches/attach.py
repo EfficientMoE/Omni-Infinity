@@ -117,3 +117,23 @@ def bind_generation(
         denoise_cache=denoise_cache,
         denoise_step_cache=denoise_step_cache,
     )
+
+
+def denoise_config_from_args(args):
+    """Build the opt-in denoise cache configuration from CLI arguments."""
+    coefficients = getattr(args, "denoise_cache_coefficients", None)
+    threshold = getattr(args, "denoise_cache_threshold", None)
+    if coefficients is None and threshold is None:
+        return None
+    if coefficients is None or threshold is None:
+        raise ValueError(
+            "both denoise cache coefficients and threshold are required"
+        )
+    try:
+        from omni_infinity.caches.denoise import DenoiseCacheConfig
+    except ModuleNotFoundError:
+        raise RuntimeError("denoise-step cache is not installed") from None
+    return DenoiseCacheConfig(
+        coefficients=tuple(float(value) for value in coefficients.split(",")),
+        threshold=threshold,
+    )
