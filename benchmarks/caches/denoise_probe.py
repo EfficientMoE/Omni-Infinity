@@ -29,9 +29,7 @@ def _rel_l1(current, previous) -> float | None:
     scale = previous.abs().mean()
     if float(scale) == 0.0:
         return 0.0 if float(current.abs().mean()) == 0.0 else float("inf")
-    return float(
-        (current.to(previous.dtype) - previous).abs().mean() / scale
-    )
+    return float((current.to(previous.dtype) - previous).abs().mean() / scale)
 
 
 @contextlib.contextmanager
@@ -48,16 +46,20 @@ def probe_forward(module, signal_name: str = "hidden_states"):
         output = original(*args, **kwargs)
         from omni_infinity.caches._tensor_tree import tree_tensors
 
-        leaf = tree_tensors(output)[0]
+        leaves = tree_tensors(output)
+        leaf = leaves[0] if leaves else None
         records.append(
             {
                 "call": len(records),
                 "input_rel_l1": _rel_l1(signal, state["input"]),
-                "output_rel_l1": _rel_l1(leaf, state["output"]),
+                "output_rel_l1": (
+                    _rel_l1(leaf, state["output"]) if leaf is not None else None
+                ),
             }
         )
         state["input"] = signal.detach()
-        state["output"] = leaf.detach()
+        if leaf is not None:
+            state["output"] = leaf.detach()
         return output
 
     module.forward = probed

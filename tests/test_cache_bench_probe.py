@@ -13,6 +13,11 @@ class _Toy(torch.nn.Module):
         return hidden_states + 1.0
 
 
+class _TensorlessToy(torch.nn.Module):
+    def forward(self, hidden_states):
+        return {"metadata": "no tensor output"}
+
+
 def test_probe_records_relative_distances():
     module = _Toy()
     with probe_forward(module) as records:
@@ -22,3 +27,11 @@ def test_probe_records_relative_distances():
     assert records[0]["input_rel_l1"] is None
     assert records[1]["input_rel_l1"] is not None
     assert all("output_rel_l1" in record for record in records)
+
+
+def test_probe_records_tensorless_output_without_advancing_output_state():
+    module = _TensorlessToy()
+    with probe_forward(module) as records:
+        module(hidden_states=torch.zeros(2, 4))
+        module(hidden_states=torch.ones(2, 4))
+    assert [record["output_rel_l1"] for record in records] == [None, None]
