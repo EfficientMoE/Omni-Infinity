@@ -131,6 +131,23 @@ OPTIMIZATIONS = {
 }
 
 
+def load_cache_optimizations() -> dict[str, OptimizationSpec]:
+    """Load optimization specs supplied by optional cache modules."""
+    optimizations = {}
+    for module_name in (
+        "omni_infinity.caches.condition",
+        "omni_infinity.caches.vision",
+    ):
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        spec = getattr(module, "OPTIMIZATION", None)
+        if spec is not None:
+            optimizations[spec.name] = spec
+    return optimizations
+
+
 def runner_class(spec: ArchSpec):
     module_name, _, class_name = spec.runner.partition(":")
     return getattr(importlib.import_module(module_name), class_name)
@@ -145,10 +162,14 @@ def runner_kwargs_for(arch: str, optimizations) -> dict:
     if arch not in ARCHS:
         raise ValueError(f"unknown arch {arch!r}")
     merged: dict = {}
+    cache_optimizations = None
     for name in optimizations:
-        try:
-            spec = OPTIMIZATIONS[name]
-        except KeyError:
+        spec = OPTIMIZATIONS.get(name)
+        if spec is None:
+            if cache_optimizations is None:
+                cache_optimizations = load_cache_optimizations()
+            spec = cache_optimizations.get(name)
+        if spec is None:
             raise ValueError(f"unknown optimization {name!r}") from None
         if arch not in spec.supported_archs:
             raise ValueError(
