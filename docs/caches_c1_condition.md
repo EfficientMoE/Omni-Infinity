@@ -63,3 +63,19 @@ python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
     --condition-cache --condition-cache-dir /tmp/omni-c1-gate \
     --goldens tests/fixtures/goldens/fl2va_goldens.pt
 ```
+
+## Image-conditioned replay
+
+Image-conditioned hits use exact replay rather than failing open. The reduced
+pipeline still receives `image`, `last_image`, or `references`: H3's retained
+`before_encode` and `denoise` conditional blocks use those public arguments to
+select FL2VA or Ref2VA and to rebuild deterministic keyframe anchors or
+normalized-reference metadata. Only the expensive text and VAE encoder blocks
+are removed, and their cached outputs are injected.
+
+Device placement also follows H3's encoder contracts. `prompt_embeds` is moved
+to the reduced pipeline's execution device, while `text_token_tags`,
+`condition_latents`, and `audio_condition_latents` remain host tensors until
+the retained H3 preparation blocks move or consume them. Moving every cached
+value to the execution device changes the layout path and is not an exact
+replay.

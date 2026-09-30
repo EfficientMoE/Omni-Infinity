@@ -36,8 +36,9 @@ DEFAULT_CAPTURE = (
     "audio_condition_latents",
 )
 ENCODE_BLOCKS = ("text_encoder", "vae_encoder")
-_CONDITION_ARGUMENTS = frozenset(
-    (*DEFAULT_CAPTURE, "prompt", "image", "last_image", "references")
+_ENCODER_ARGUMENTS = frozenset((*DEFAULT_CAPTURE, "prompt"))
+_HOST_REPLAY_VALUES = frozenset(
+    ("text_token_tags", "condition_latents", "audio_condition_latents")
 )
 
 
@@ -74,6 +75,18 @@ class ConditionEntry:
     def to(self, device) -> dict:
         """Copy the captured tensor tree to ``device``."""
         return tree_map(lambda tensor: tensor.to(device), self.values)
+
+    def replay_values(self, execution_device) -> dict:
+        """Restore each H3 encoder output to the device its consumer expects."""
+        return {
+            name: tree_map(
+                lambda tensor: tensor.to(
+                    "cpu" if name in _HOST_REPLAY_VALUES else execution_device
+                ),
+                value,
+            )
+            for name, value in self.values.items()
+        }
 
 
 class ConditionCache:
@@ -359,7 +372,7 @@ def prepare(
     try:
         cached = {
             name: value
-            for name, value in entry.to(device).items()
+            for name, value in entry.replay_values(device).items()
             if name in declared_inputs
         }
     except Exception:
@@ -367,7 +380,7 @@ def prepare(
     replay_kwargs = {
         name: value
         for name, value in call_kwargs.items()
-        if name not in _CONDITION_ARGUMENTS
+        if name not in _ENCODER_ARGUMENTS
     }
     replay_kwargs.update(cached)
     return ConditionReplay(True, reduced, replay_kwargs, _noop)

@@ -82,7 +82,12 @@ def pipeline(monkeypatch):
         {
             "text_encoder": _Block("prompt"),
             "vae_encoder": _Block("image"),
-            "denoise": _Block("prompt_embeds", "generator"),
+            "denoise": _Block(
+                "prompt_embeds",
+                "text_token_tags",
+                "condition_latents",
+                "generator",
+            ),
         }
     )
     return _Pipeline(blocks=blocks)
@@ -306,6 +311,45 @@ def test_miss_captures_and_hit_skips_encoders(pipeline):
     assert second.pipeline.calls == [kwargs]
 
 
+def test_image_hit_preserves_workflow_selector_for_retained_blocks(pipeline):
+    cache = ConditionCache()
+    image = object()
+    request = {"prompt": "p", "image": image, "generator": object()}
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(b"image",),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+    first.observe(
+        _state(
+            prompt_embeds=torch.ones(2),
+            text_token_tags=torch.ones(2, dtype=torch.long),
+            condition_latents=[torch.ones(1)],
+        )
+    )
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(b"image",),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+
+    assert second.hit is True
+    assert second.call_kwargs()["image"] is image
+
+
 def test_hit_moves_cached_condition_to_pipeline_execution_device(
     pipeline, monkeypatch
 ):
@@ -344,6 +388,49 @@ def test_hit_moves_cached_condition_to_pipeline_execution_device(
     replay_kwargs = second.call_kwargs()
     assert replay_kwargs["prompt_embeds"].device.type == "meta"
     assert replay_kwargs["generator"] is generator
+
+
+def test_hit_keeps_h3_layout_inputs_on_cpu(pipeline, monkeypatch):
+    cache = ConditionCache()
+    monkeypatch.setattr(
+        _ReducedBlocks, "execution_device", torch.device("meta")
+    )
+    request = {"prompt": "p", "generator": object()}
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+    first.observe(
+        _state(
+            prompt_embeds=torch.ones(2),
+            text_token_tags=torch.ones(2, dtype=torch.long),
+            condition_latents=[torch.ones(1)],
+        )
+    )
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+
+    replay_kwargs = second.call_kwargs()
+    assert replay_kwargs["prompt_embeds"].device.type == "meta"
+    assert replay_kwargs["text_token_tags"].device.type == "cpu"
+    assert replay_kwargs["condition_latents"][0].device.type == "cpu"
 
 
 def test_miss_observe_accepts_a_mapping(pipeline):
