@@ -1,0 +1,387 @@
+# Multi-prompt demo Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Accept an ordered prompt list and play one stitched video at 15s, 1min, 2min, or 5min, where every prompt is one 124-frame generation.
+
+**Architecture:** A new `omni_infinity/demo/` package owns the duration table, frame/audio stitch, and the sequential runner loop. `POST /v1/demos` queues that loop on the existing job executor so the GPU still runs one generation at a time. The finished file is one trimmed MP4. When streaming is enabled, the same trimmed clip is fragmented with the existing fMP4 helper and served on a demo WebSocket. `POST /v1/jobs` and `GenerationRequest` stay single-prompt.
+
+**Tech Stack:** Python 3.10+, FastAPI, Pydantic v2, Pillow, NumPy, PyTorch, pytest, the existing `write_artifacts` / `fragment_clip` helpers. No new dependencies. No H3-World weights.
+
+**Spec:** https://github.com/EfficientMoE/Omni-Infinity/issues/34
+
+## Global Constraints
+
+- Each segment is exactly 124 frames at 24 fps (`17*7+5`, 124/24 s). `num_frames` is not a demo request field.
+- Presets and the smallest covering prompt counts are exactly: `15s` → 3 prompts (372 generated frames, play 360), `1min` → 12 (1488 generated, play 1440), `2min` → 24 (2976 generated, play 2880), `5min` → 59 (7316 generated, play 7200). 23 prompts is 118.8 s and is rejected for `2min`. 58 prompts is 299.7 s and is rejected for `5min`.
+- Playback stops at the nominal duration: 15 s, 60 s, 120 s, 300 s. Trim happens before mux and before fragmentation.
+- Segment 0 uses the required first frame. Segment `i > 0` uses the last decoded frame of segment `i - 1` as its `image`. `last_image` is always `None`.
+- Segment `i` is called with `seed + i`.
+- `POST /v1/jobs` still accepts one `prompt` and `num_frames` in `120..360`. A demo id is HTTP 404 on `GET /v1/jobs/{id}`.
+- Demo and job `generate()` share `JobService.executor` (`max_workers=1`). Do not construct a second pool.
+- Profile mismatch is HTTP 409 with detail `request profile does not match the loaded server profile`. A bad prompt count is HTTP 422 with detail `duration {duration} requires {n} prompts, got {got}`. A missing first frame is HTTP 422 with detail `first frame is required`. Invalid image bytes reuse `JobService._decode_image` errors.
+- `vdn-hybrid` with `resolution != "768p"` raises `ValueError("vdn-hybrid requires the 768p canvas")` before any `generate()`.
+- `OMNI_STREAM_ENABLED` unset leaves `WS /v1/demos/{id}/ws` unregistered. `POST /v1/demos` stays registered either way.
+- CPU tests, fake runners, no checkpoint loads. Do not modify `third_party/`.
+- New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
+
+## Review Focus
+
+- `2min` with 23 prompts and `5min` with 58 prompts are 422; the covering counts are 24 and 59. Task 3.
+- No played frame or fragment has `pts` at or past the nominal duration. Task 2 and Task 6.
+- Segment 1's `image` is the last frame of segment 0, not the user first frame. Task 4.
+- `POST /v1/jobs` still rejects a body that has `prompts` and no `prompt`. Task 5.
+- A demo submit and a job submit share one executor, so the two `generate()` calls cannot overlap. Task 5.
+
+---
+
+## File Structure
+
+Create:
+
+- `omni_infinity/demo/__init__.py` — re-exports `segment_count`, `DemoRequest`, `DemoService`.
+- `omni_infinity/demo/schedule.py` — preset table and frame counts.
+- `omni_infinity/demo/stitch.py` — last-frame image, concatenate, trim.
+- `omni_infinity/demo/models.py` — `DemoRequest`, `DemoRecord`, `DemoResponse`.
+- `omni_infinity/demo/store.py` — `DemoStore` under `{jobs_dir.parent}/demos`.
+- `omni_infinity/demo/service.py` — `DemoService`.
+- `tests/test_demo_schedule.py`
+- `tests/test_demo_stitch.py`
+- `tests/test_demo_service.py`
+- `tests/test_demo_api.py`
+
+Modify:
+
+- `omni_infinity/serve/app.py` — demo routes, pass `service.executor` into `DemoService`.
+- `omni_infinity/serve/stream.py` — export `chunk_message` (current `_chunk_message` body).
+- `README.md` — one section after Streaming playback.
+
+Do not edit `GenerationRequest`, `JobStore.create`, or `POST /v1/jobs`.
+
+---
+
+### Task 1: Duration schedule
+
+**Files:**
+- Create: `omni_infinity/demo/__init__.py`
+- Create: `omni_infinity/demo/schedule.py`
+- Test: `tests/test_demo_schedule.py`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces:
+  - `FPS: int = 24`, `SEGMENT_FRAMES: int = 124`
+  - `PRESETS: dict[str, int]` mapping `15s`→15, `1min`→60, `2min`→120, `5min`→300
+  - `segment_count(duration_s: int) -> int` = `math.ceil(duration_s * FPS / SEGMENT_FRAMES)`
+  - `playback_frames(duration_s: int) -> int` = `duration_s * FPS`
+  - `generated_frames(duration_s: int) -> int` = `segment_count(duration_s) * SEGMENT_FRAMES`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+import pytest
+
+from omni_infinity.demo.schedule import (
+    generated_frames,
+    playback_frames,
+    segment_count,
+)
+
+@pytest.mark.parametrize(
+    ("seconds", "segments", "play", "generated"),
+    [
+        (15, 3, 360, 372),
+        (60, 12, 1440, 1488),
+        (120, 24, 2880, 2976),
+        (300, 59, 7200, 7316),
+    ],
+)
+def test_covering_counts(seconds, segments, play, generated):
+    assert segment_count(seconds) == segments
+    assert playback_frames(seconds) == play
+    assert generated_frames(seconds) == generated
+
+
+def test_short_counts_do_not_cover():
+    assert segment_count(120) != 23
+    assert segment_count(300) != 58
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_demo_schedule.py -v`
+Expected: FAIL with `ModuleNotFoundError` or import error for `omni_infinity.demo.schedule`
+
+- [ ] **Step 3: Implement the four names in `omni_infinity/demo/schedule.py`**
+
+Use the formulas in Interfaces. Re-export `segment_count` from `omni_infinity/demo/__init__.py`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_demo_schedule.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/__init__.py omni_infinity/demo/schedule.py tests/test_demo_schedule.py
+git commit -m "feat: add demo duration schedule"
+```
+
+---
+
+### Task 2: Stitch and trim
+
+**Files:**
+- Create: `omni_infinity/demo/stitch.py`
+- Test: `tests/test_demo_stitch.py`
+
+**Interfaces:**
+- Consumes: `GenerationResult` from `omni_infinity.runner`. `playback_frames` from Task 1.
+- Produces:
+  - `last_frame_image(frames) -> PIL.Image.Image`. Float frames are clipped to `[0, 1]`, multiplied by 255, and rounded to uint8. uint8 frames are copied. Mode is `RGB`.
+  - `stitch_results(results: Sequence[GenerationResult], *, playback_frames: int) -> GenerationResult`. Concatenate `_video_frames` on axis 0 and `_stereo_audio` on the sample axis. Trim video to `playback_frames` rows. Trim audio to `round(playback_frames / 24 * sampling_rate)` samples. `sampling_rate` is the first result's rate; a later mismatch raises `ValueError`. `latents` and `audio_latents` on the return value are `None`. If the concatenated video has fewer than `playback_frames` rows, raise `ValueError`.
+
+- [ ] **Step 1: Write the failing test**
+
+Build two `GenerationResult`s. Each video is `np.arange` float32 frames of shape `(4, 2, 2, 3)` scaled into `[0, 1]`. Each audio is `torch.ones(2, 8)`. Sampling rate 24 so one frame is one audio sample. Call `stitch_results(..., playback_frames=6)`.
+
+Assert the video has 6 frames, the first 4 equal result 0, the next 2 equal result 1's first two frames, audio shape is `(2, 6)`, and `latents is None`. Assert `last_frame_image` on a `(1, 1, 3)` float frame of `1.0` is RGB `(255, 255, 255)`. Assert a second result with `sampling_rate=16_000` raises `ValueError`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_demo_stitch.py -v`
+Expected: FAIL with import error for `omni_infinity.demo.stitch`
+
+- [ ] **Step 3: Implement `last_frame_image` and `stitch_results`**
+
+Use `_video_frames` and `_stereo_audio` from `omni_infinity.serve.artifacts`. Do not mux here.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_demo_stitch.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/stitch.py tests/test_demo_stitch.py
+git commit -m "feat: stitch and trim demo segments"
+```
+
+---
+
+### Task 3: Demo request validation
+
+**Files:**
+- Create: `omni_infinity/demo/models.py`
+- Test: `tests/test_demo_api.py` (validation cases only in this task)
+
+**Interfaces:**
+- Consumes: `PRESETS`, `segment_count` from Task 1. Optimization literals match `GenerationRequest.optimizations`.
+- Produces:
+  - `DemoRequest` fields: `prompts: list[str]` (each length 1..20000), `duration: Literal["15s","1min","2min","5min"]`, `model_arch: Literal["h3-dense","vdn-hybrid"] = "h3-dense"`, `optimizations` (same names and unique-name rule as `GenerationRequest`), `seed: int = 0`, `num_inference_steps: int = Field(default=8, ge=1, le=100)`, `resolution: Literal["256p","512p","768p"] = "256p"`, `first_frame_base64: str | None = None`.
+  - Model validator: `len(prompts) == segment_count(PRESETS[duration])`, else `ValueError` with message `duration {duration} requires {n} prompts, got {got}`.
+  - `DemoRecord` and `DemoResponse` mirror `JobRecord` / `JobResponse` with `request: DemoRequest`.
+
+- [ ] **Step 1: Write the failing test**
+
+Name the tests `test_prompt_count_rejects_short_lists` and `test_duplicate_optimizations_rejected`.
+
+`test_prompt_count_rejects_short_lists`: `DemoRequest(prompts=["a", "b"], duration="15s")` raises `ValidationError` matching `duration 15s requires 3 prompts, got 2`. 23 prompts at `2min` matches `requires 24 prompts, got 23`. 58 prompts at `5min` matches `requires 59 prompts, got 58`. A 3-prompt `15s` request validates.
+
+`test_duplicate_optimizations_rejected`: `optimizations=["fp8", "fp8"]` raises `ValidationError` matching `optimization names must be unique`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_demo_api.py -v -k "prompt_count or duplicate"`
+Expected: FAIL with import error for `DemoRequest`
+
+- [ ] **Step 3: Implement `DemoRequest` in `omni_infinity/demo/models.py`**
+
+No `num_frames` field. No `type` field. No `last_frame_base64`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_demo_api.py -v -k "prompt_count or duplicate"`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/models.py tests/test_demo_api.py
+git commit -m "feat: validate demo prompt counts"
+```
+
+---
+
+### Task 4: Sequential generation
+
+**Files:**
+- Create: `omni_infinity/demo/service.py`
+- Test: `tests/test_demo_service.py`
+
+**Interfaces:**
+- Consumes: `segment_count`, `playback_frames`, `PRESETS`, `last_frame_image`, `stitch_results`, `DemoRequest`.
+- Produces:
+  - `DemoService.run(request: DemoRequest, first: Image.Image, *, step_callback) -> GenerationResult`
+  - Calls `runner.generate(prompt, seed=request.seed + i, num_frames=124, image=frame, last_image=None, num_inference_steps=..., resolution=..., step_callback=...)` for `h3-dense`.
+  - For `vdn-hybrid`, pass `num_evaluations=request.num_inference_steps` and omit `resolution` from the runner kwargs, matching `JobService._generate`. If `request.resolution != "768p"`, raise `ValueError("vdn-hybrid requires the 768p canvas")` before the first call.
+  - `step_callback(completed, total)` uses `total = segment_count * num_inference_steps` and `completed = i * num_inference_steps + segment_completed`.
+  - Returns `stitch_results(..., playback_frames=playback_frames(PRESETS[request.duration]))`.
+
+- [ ] **Step 1: Write the failing test**
+
+Fake runner records `(prompt, seed, num_frames, image, last_image)` and returns 124 frames. Frame `t` of segment `i` is filled with scalar `(i + 1) / 10`. Audio is `torch.zeros(2, 124 * 48000 // 24)`. Sampling rate 48000.
+
+Call `run` with three prompts, `duration="15s"`, `seed=7`, and a red first image. Assert three calls, seeds `7, 8, 9`, `num_frames == 124`, `last_image is None`, call 0's image is the red image, and call 1's image pixel equals segment 0's last frame via `last_frame_image`. Assert the stitched video has 360 frames. Assert a `vdn-hybrid` request at `256p` raises `ValueError` matching `768p` and the fake `generate` was not called.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_demo_service.py -v`
+Expected: FAIL with import error for `DemoService`
+
+- [ ] **Step 3: Implement `DemoService.run`**
+
+The constructor takes `runner` and `model_arch: str`. Do not open a thread pool in this task.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_demo_service.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/service.py tests/test_demo_service.py
+git commit -m "feat: generate demo segments in order"
+```
+
+---
+
+### Task 5: HTTP demo API
+
+**Files:**
+- Create: `omni_infinity/demo/store.py`
+- Modify: `omni_infinity/demo/service.py`
+- Modify: `omni_infinity/serve/app.py`
+- Test: `tests/test_demo_api.py`
+
+**Interfaces:**
+- Consumes: `DemoService.run`, `JobService.executor`, `JobService._decode_image`, `write_artifacts`, `JobStatus` transitions from `omni_infinity.serve.store.ALLOWED_TRANSITIONS`.
+- Produces:
+  - `DemoStore` rooted at `jobs_dir.parent / "demos"`, with `create`, `get`, `transition`, `update_progress`, `video_path`. Record file is `demo.json`. `create` sets `progress.total_steps` to `segment_count(PRESETS[duration]) * num_inference_steps`.
+  - `DemoService.submit(request) -> DemoRecord` decodes the first frame, stores it as `input-first.png`, and submits `_execute` on the injected executor.
+  - `POST /v1/demos` → HTTP 202, body `DemoResponse`, header `Location: /v1/demos/{id}`.
+  - `GET /v1/demos/{id}` returns that record. Unknown id is HTTP 404.
+  - `GET /v1/demos/{id}/artifacts` is HTTP 409 with detail `artifact is not ready` until `SUCCEEDED` and `output.mp4` exists, then a `video/mp4` file.
+  - `GET /v1/jobs/{demo_id}` is HTTP 404.
+
+- [ ] **Step 1: Write the failing test**
+
+Use `TestClient` and a fake runner, same pattern as `tests/test_job_api.py`. A 3-prompt `15s` post returns 202 and a 32-hex id. After the executor finishes, the artifact response is `video/mp4` and `av` counts 360 frames. `GET /v1/jobs/{id}` is 404. `POST /v1/jobs` with `{"type":"fl2va","prompts":["a","b","c"],"duration":"15s"}` is 422. Two-prompt `15s` is 422 matching `requires 3 prompts, got 2`. Missing `first_frame_base64` is 422 matching `first frame is required`. A profile whose `model_arch` differs from the server is 409 matching `request profile does not match the loaded server profile`.
+
+Shared-executor test: construct `JobService` and `DemoService` in-process, assert `demo.executor is jobs.executor`. Submit a job whose fake `generate` sets a threading event and waits on a second event, then submit a demo; assert the demo's `generate` has not started until the job releases. `max` overlapping calls is 1.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_demo_api.py -v`
+Expected: FAIL with 404 on `POST /v1/demos`
+
+- [ ] **Step 3: Implement store, submit, and routes**
+
+`create_app` builds `DemoStore(configured.jobs_dir.parent / "demos")` and `DemoService(..., executor=service.executor)`. `_execute` mirrors `JobService._execute`: `RUNNING`, `run`, `write_artifacts` with `artifact_url=f"/v1/demos/{id}/artifacts"`, `SUCCEEDED`; on exception unlink partial media and transition `FAILED`. Decode the first frame with `JobService._decode_image`. Empty `first_frame_base64` raises `InvalidMedia("first frame is required")` before decode.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_demo_api.py tests/test_job_api.py -v`
+Expected: PASS, including the existing job tests
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/store.py omni_infinity/demo/service.py omni_infinity/serve/app.py tests/test_demo_api.py
+git commit -m "feat: serve the multi-prompt demo"
+```
+
+---
+
+### Task 6: Stream the trimmed clip
+
+**Files:**
+- Modify: `omni_infinity/serve/stream.py`
+- Modify: `omni_infinity/serve/app.py`
+- Modify: `omni_infinity/demo/service.py`
+- Test: `tests/test_demo_api.py`
+
+**Interfaces:**
+- Consumes: `fragment_clip` from `omni_infinity.streaming.fragment`. `chunk_message` is `stream.py`'s current `_chunk_message` made public; keep `_chunk_message = chunk_message`.
+- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends `init`, then one `chunk` per fragment of the trimmed clip, then `end`. Each chunk's `prompt` is `prompts[min(int(pts / (124/24)), len(prompts)-1)]`. `instruction` and `action` are `None`. The last chunk has `done: true`. No fragment has `pts >=` nominal seconds. When `stream_enabled` is false, that websocket route is unregistered (404) and `POST /v1/demos` still works.
+
+- [ ] **Step 1: Write the failing test**
+
+With `stream_enabled=True` and `stream_chunk_frames=120`, open the demo socket after the 15s demo succeeds. Collect chunks. Assert `pts` values are all `< 15`, the last `done` is true, chunk 0's prompt is `prompts[0]`, and the chunk whose `pts` is `124/24` has `prompts[1]`. With `stream_enabled=False`, `POST /v1/demos` returns 202 and the websocket path is 404.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `pytest tests/test_demo_api.py -v -k stream`
+Expected: FAIL because the websocket route is missing
+
+- [ ] **Step 3: Implement fragmentation after a successful stitch**
+
+Fragment the trimmed `GenerationResult` only. Store `init` and chunks on the demo record before `SUCCEEDED`, and send them from the websocket. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `pytest tests/test_demo_api.py tests/test_stream_api.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/serve/stream.py omni_infinity/serve/app.py omni_infinity/demo/service.py tests/test_demo_api.py
+git commit -m "feat: stream the trimmed demo"
+```
+
+---
+
+### Task 7: README
+
+**Files:**
+- Modify: `README.md` (after the Streaming playback section)
+
+**Interfaces:**
+- Consumes: the route and preset table from Tasks 1 and 5.
+- Produces: a "Multi-prompt demo" section with the four rows (prompts, generated frames, played frames) and a `curl` `POST /v1/demos` example for `15s` with three prompts and `first_frame_base64`. State that `POST /v1/jobs` is unchanged and that H3-World weights are not in this change; the loaded runner is called once per prompt at 124 frames.
+
+- [ ] **Step 1: Add the section**
+
+No new test. The example duration is `15s` and the example prompt count is 3.
+
+- [ ] **Step 2: Check the section**
+
+Run: `rg -n "POST /v1/demos" README.md`
+Expected: one match, and nearby text lists `59` prompts for `5min`
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: describe the multi-prompt demo"
+```
+
+---
+
+## Test plan
+
+Run from the repo root after Task 6:
+
+```bash
+pytest tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py tests/test_job_api.py tests/test_stream_api.py -v
+ruff check omni_infinity/demo omni_infinity/serve/app.py omni_infinity/serve/stream.py tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py
+ruff format --check omni_infinity/demo omni_infinity/serve/app.py omni_infinity/serve/stream.py tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py
+```
+
+Expected: pytest PASS, ruff clean.
+
+Out of scope for these tests: loading H3-World or MiniMax-H3 weights, a real GPU generation, and the browser player. The 1min, 2min, and 5min presets are covered by the schedule and validation tests, not by generating 59 fake clips in the HTTP test. The HTTP test generates the 15s preset only.
