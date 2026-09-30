@@ -26,6 +26,7 @@ import csv
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -153,6 +154,11 @@ def _run_cell(cell: Cell, args) -> dict:
         )
     from omni_infinity.runner import ReferenceRunner, _transformer_component
 
+    condition_cache_dir = None
+    if config.condition_cache:
+        condition_cache_dir = Path(args.results_dir) / f"{cell.name}-c1store"
+        shutil.rmtree(condition_cache_dir, ignore_errors=True)
+
     runner = ReferenceRunner.from_pretrained(
         os.environ["OMNI_CHECKPOINT"],
         workflow="fl2va",
@@ -170,12 +176,17 @@ def _run_cell(cell: Cell, args) -> dict:
         stream_text_encoder=True,
         condition_cache=config.condition_cache,
         condition_cache_dir=(
-            str(Path(args.results_dir) / f"{cell.name}-c1store")
-            if config.condition_cache
+            str(condition_cache_dir)
+            if condition_cache_dir is not None
             else None
         ),
         vision_cache=config.vision_cache,
     )
+    image_kwargs = {}
+    if config.vision_cache:
+        from PIL import Image
+
+        image_kwargs["image"] = Image.new("RGB", (8, 8), "black")
     phases = []
     reference = None
     for phase in ("cold", "warm"):
@@ -202,6 +213,7 @@ def _run_cell(cell: Cell, args) -> dict:
                     num_inference_steps=STEPS,
                     resolution=RESOLUTION,
                     num_frames=FRAMES,
+                    **image_kwargs,
                 )
         else:
             result = runner.generate(
@@ -210,6 +222,7 @@ def _run_cell(cell: Cell, args) -> dict:
                 num_inference_steps=STEPS,
                 resolution=RESOLUTION,
                 num_frames=FRAMES,
+                **image_kwargs,
             )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         entry: dict = {"phase": phase, "e2e_ms": elapsed_ms, "stats": {}}

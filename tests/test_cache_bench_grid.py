@@ -4,9 +4,13 @@
 """CPU tests: ablation grid construction and cell-command building."""
 
 import json
+from types import SimpleNamespace
+
+import torch
 
 from benchmarks.caches.ablation import (
     GRID,
+    _run_cell,
     build_cell_command,
     rows_from_cell_output,
 )
@@ -83,3 +87,67 @@ def test_rows_from_cell_output_orders_fields_and_scores():
     assert warm["c1_hits"] == 1
     assert warm["verdict"] == "PASS"
     assert set(warm) == set(FIELDS)
+
+
+class _Stats:
+    def stats(self):
+        return {"hits": 0, "misses": 0, "entries": 0, "bytes": 0}
+
+
+class _FakeRunner:
+    def __init__(self, *, condition=False, vision=False):
+        self.condition_cache = _Stats() if condition else None
+        self.vision_cache_controller = (
+            SimpleNamespace(cache=_Stats()) if vision else None
+        )
+        self.calls = []
+
+    def generate(self, _prompt, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(latents=torch.zeros(1))
+
+
+def _cell_args(tmp_path):
+    return SimpleNamespace(
+        results_dir=str(tmp_path),
+        c5_coefficients=(),
+        c5_threshold=0.1,
+        c5_rms_rel_max=0.1,
+    )
+
+
+def test_c1_cell_clears_stale_disk_store_before_runner_creation(
+    tmp_path, monkeypatch
+):
+    cell = next(c for c in GRID if c.config.name == "c1")
+    store = tmp_path / f"{cell.name}-c1store"
+    store.mkdir()
+    stale = store / "stale.pt"
+    stale.write_bytes(b"old benchmark run")
+    runner = _FakeRunner(condition=True)
+
+    def from_pretrained(_checkpoint, **kwargs):
+        assert kwargs["condition_cache_dir"] == str(store)
+        assert not stale.exists()
+        return runner
+
+    monkeypatch.setenv("OMNI_CHECKPOINT", "checkpoint")
+    monkeypatch.setattr(
+        "omni_infinity.runner.ReferenceRunner.from_pretrained", from_pretrained
+    )
+    _run_cell(cell, _cell_args(tmp_path))
+
+
+def test_c3_cell_uses_same_image_for_cold_and_warm(tmp_path, monkeypatch):
+    cell = next(c for c in GRID if c.config.name == "c3")
+    runner = _FakeRunner(vision=True)
+    monkeypatch.setenv("OMNI_CHECKPOINT", "checkpoint")
+    monkeypatch.setattr(
+        "omni_infinity.runner.ReferenceRunner.from_pretrained",
+        lambda *_args, **_kwargs: runner,
+    )
+
+    _run_cell(cell, _cell_args(tmp_path))
+
+    assert len(runner.calls) == 2
+    assert runner.calls[0]["image"] is runner.calls[1]["image"]
