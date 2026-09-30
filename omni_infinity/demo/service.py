@@ -110,9 +110,9 @@ class DemoService:
             image.convert("RGB").save(path, format="PNG")
         if self.stream_service is not None:
             self.stream_service.open_session(record.id)
-        self._futures[record.id] = self.executor.submit(
-            self._execute, record.id
-        )
+        future = self.executor.submit(self._execute, record.id)
+        self._futures[record.id] = future
+        future.add_done_callback(lambda _: self._futures.pop(record.id, None))
         return record
 
     def _execute(self, demo_id: str) -> None:
