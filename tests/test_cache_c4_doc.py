@@ -11,8 +11,15 @@ def test_c4_note_states_the_reuse_rule():
             "Flex BlockMask, gather-index, and delta-rule backend caches "
             "stay in third_party/vdn-minimax-h3."
         ),
-        "The caption is not part of the BlockMask key.",
-        "A new caption length misses the inference FLASH compile.",
+        (
+            "Caption content is not keyed directly, but its derived layout "
+            "fields, including `seq_len` and `video_start`, are part of the "
+            "BlockMask key."
+        ),
+        (
+            "A new caption length changes those fields and misses the "
+            "inference FLASH compile."
+        ),
         "One seq_len is compiled per process.",
         "This issue does not add a shape cache.",
         "This plan does not modify third_party.",
