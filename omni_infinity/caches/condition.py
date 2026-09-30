@@ -17,9 +17,9 @@ from types import MappingProxyType
 import torch
 
 from omni_infinity.caches._tensor_tree import (
+    stable_image_bytes,
     tree_map,
     tree_nbytes,
-    tree_tensors,
     update_hash_for_value,
 )
 
@@ -140,9 +140,14 @@ class ConditionCache:
                 temporary = Path(handle.name)
                 torch.save(entry.values, handle)
             os.replace(temporary, self._path(key))
+        except Exception:
+            return
         finally:
-            if temporary is not None and temporary.exists():
-                temporary.unlink()
+            try:
+                if temporary is not None and temporary.exists():
+                    temporary.unlink()
+            except OSError:
+                pass
 
     def get(self, key: str) -> ConditionEntry | None:
         """Return ``key`` from memory or disk and update hit statistics."""
@@ -158,7 +163,9 @@ class ConditionCache:
                     values = torch.load(self._path(key), weights_only=True)
                     if not isinstance(values, dict):
                         raise TypeError("condition entry must be a mapping")
-                    if not all(name in values for name in self.required):
+                    if not all(
+                        values.get(name) is not None for name in self.required
+                    ):
                         raise ValueError(
                             "condition entry is missing required values"
                         )
@@ -259,15 +266,29 @@ def _input_names(pipeline) -> set[str]:
     }
 
 
-def _replay_device(call_kwargs: dict, pipeline):
+def _is_image_reference(value) -> bool:
     try:
-        for tensor in tree_tensors(call_kwargs):
-            return tensor.device
+        return any(
+            cls.__name__ == "MiniMaxH3ImageReference"
+            for cls in type(value).__mro__
+        )
     except Exception:
-        pass
+        return False
 
+
+def _media_for_key(media: tuple) -> tuple:
+    normalized = []
+    for value in media:
+        if value is not None and _is_image_reference(value):
+            normalized.append(stable_image_bytes(value.image))
+        else:
+            normalized.append(value)
+    return tuple(normalized)
+
+
+def _replay_device(pipeline):
     try:
-        device = getattr(call_kwargs.get("generator"), "device", None)
+        device = pipeline._execution_device
         if device is not None:
             return torch.device(device)
     except Exception:
@@ -306,7 +327,7 @@ def prepare(
         key = condition_key(
             namespace,
             prompt,
-            media,
+            _media_for_key(media),
             height=height,
             width=width,
             num_frames=num_frames,
@@ -333,7 +354,7 @@ def prepare(
     if reduced is None:
         return _miss(call_kwargs)
 
-    device = _replay_device(call_kwargs, reduced)
+    device = _replay_device(reduced)
     declared_inputs = _input_names(reduced)
     try:
         cached = {

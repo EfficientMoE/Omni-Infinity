@@ -57,8 +57,12 @@ class _Pipeline:
 
 
 class _ReducedBlocks(_Blocks):
+    execution_device = torch.device("cpu")
+
     def init_pipeline(self):
-        return _Pipeline(blocks=self, components={})
+        pipeline = _Pipeline(blocks=self, components={})
+        pipeline._execution_device = self.execution_device
+        return pipeline
 
 
 class _FakeSequentialPipelineBlocks:
@@ -233,6 +237,30 @@ def test_disk_load_rejects_non_tensor_payload_with_weights_only(tmp_path):
     assert cache.get("unsafe") is None
 
 
+def test_disk_load_rejects_none_for_required_value(tmp_path):
+    torch.save({"prompt_embeds": None}, tmp_path / "missing.pt")
+
+    cache = ConditionCache(cache_dir=tmp_path)
+
+    assert cache.get("missing") is None
+
+
+def test_disk_write_failure_keeps_memory_entry(tmp_path, monkeypatch):
+    cache = ConditionCache(cache_dir=tmp_path)
+
+    def fail_mkstemp(*args, **kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(
+        condition_module.tempfile, "NamedTemporaryFile", fail_mkstemp
+    )
+
+    entry = cache.put("key", {"prompt_embeds": torch.ones(1)})
+
+    assert entry is not None
+    assert cache.get("key") is entry
+
+
 def test_miss_captures_and_hit_skips_encoders(pipeline):
     cache = ConditionCache()
     generator = object()
@@ -278,9 +306,14 @@ def test_miss_captures_and_hit_skips_encoders(pipeline):
     assert second.pipeline.calls == [kwargs]
 
 
-def test_hit_moves_cached_condition_to_generator_device(pipeline):
+def test_hit_moves_cached_condition_to_pipeline_execution_device(
+    pipeline, monkeypatch
+):
     cache = ConditionCache()
-    generator = SimpleNamespace(device=torch.device("meta"))
+    monkeypatch.setattr(
+        _ReducedBlocks, "execution_device", torch.device("meta")
+    )
+    generator = SimpleNamespace(device=torch.device("cpu"))
     request = {"prompt": "p", "generator": generator}
     first = prepare(
         pipeline,
@@ -309,7 +342,7 @@ def test_hit_moves_cached_condition_to_generator_device(pipeline):
 
     assert second.hit is True
     replay_kwargs = second.call_kwargs()
-    assert replay_kwargs["prompt_embeds"].device == generator.device
+    assert replay_kwargs["prompt_embeds"].device.type == "meta"
     assert replay_kwargs["generator"] is generator
 
 
@@ -383,6 +416,41 @@ def test_unhashable_reference_fails_open(pipeline):
     assert replay.call_kwargs() is request
     replay.observe(_state(prompt_embeds=torch.ones(1)))
     assert cache.stats()["entries"] == 0
+
+
+def test_ref2va_repeated_reference_hits_and_changed_reference_misses(
+    pipeline,
+):
+    pytest.importorskip("diffusers")
+    from diffusers.modular_pipelines.minimax_h3 import (
+        MiniMaxH3ImageReference,
+    )
+    from PIL import Image
+
+    cache = ConditionCache()
+
+    def replay_for(color):
+        reference = MiniMaxH3ImageReference(
+            image=Image.new("RGB", (2, 2), color=color)
+        )
+        return prepare(
+            pipeline,
+            cache,
+            namespace="ReferenceRunner:/ckpt",
+            prompt="p",
+            media=(reference,),
+            height=368,
+            width=640,
+            num_frames=120,
+            call_kwargs={"prompt": "p", "references": [reference]},
+        )
+
+    first = replay_for("red")
+    assert first.hit is False
+    first.observe(_state(prompt_embeds=torch.ones(1)))
+
+    assert replay_for("red").hit is True
+    assert replay_for("blue").hit is False
 
 
 def test_pipeline_that_cannot_be_reduced_fails_open():
