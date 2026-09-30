@@ -17,6 +17,14 @@ Unexpected hash values, unreadable disk entries, or pipelines that cannot be
 reduced fail open to normal condition encoding. Disk entries are loaded with
 PyTorch's `weights_only=True` mode.
 
+Ref2VA requests currently always take this fail-open path: the runner
+forwards reference media as `MiniMaxH3ImageReference` objects, which the
+tensor-tree hasher rejects with `TypeError`, so `condition_key` cannot be
+computed and every Ref2VA request is a miss. C1 therefore accelerates
+FL2VA-style conditions only. Extending the hasher (or normalizing
+references to bytes before hashing) is future work and must keep the
+slot-order and image-byte sensitivity of the key.
+
 ## Warm-hit smoke gate
 
 Status: passed on RTX PRO 6000 Blackwell (sm120), 2026-09-30.
