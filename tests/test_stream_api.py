@@ -699,8 +699,19 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
         "forward",
         "activeCue",
         "endOfStream",
+        "video.play",
+        "model running",
+        "highlightCue",
+        "schedule_start",
+        "schedule_end",
+        "sourceBuffer.timestampOffset",
     ):
         assert needle in script.text
+    assert 'id="duration"' in page.text
+    assert 'id="schedule-start"' in page.text
+    assert 'id="schedule-end"' in page.text
+    for value in ("15s", "1min", "2min", "5min", "demo"):
+        assert f'value="{value}"' in page.text
 
 
 def test_readme_documents_pseudo_streaming():

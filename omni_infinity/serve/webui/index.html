@@ -378,10 +378,11 @@
       .deck {
         margin-top: 20px;
         display: grid;
-        grid-template-columns: 1fr auto;
+        grid-template-columns: 1fr 220px 168px auto;
         grid-template-areas:
-          "prompt prompt"
-          "source run";
+          "prompt prompt prompt"
+          "stack stack stack"
+          "source length window run";
         gap: 12px;
       }
 
@@ -396,6 +397,43 @@
       }
       .field--source {
         grid-area: source;
+      }
+      .field--length {
+        grid-area: length;
+        display: none;
+      }
+      form[data-mode="demo"] .field--length,
+      form[data-mode="demo"] .field--window {
+        display: flex;
+      }
+      .field--window {
+        grid-area: window;
+        display: none;
+      }
+      .window {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 6px;
+        align-items: center;
+      }
+      .window input {
+        width: 100%;
+        height: 44px;
+        padding: 0 10px;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r);
+        font: inherit;
+      }
+      .window span {
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      form[data-mode="demo"] .field--prompt {
+        display: none;
       }
 
       .field__label {
@@ -627,6 +665,48 @@
       .cue.active time {
         opacity: 1;
       }
+      .cue.rendering {
+        border-style: dashed;
+        color: var(--faint);
+      }
+      .cue.rendering time::after {
+        content: " · rendering";
+        color: var(--amber);
+      }
+      .cue.active.rendering {
+        color: var(--ink);
+        border-style: solid;
+      }
+
+      .prompt-stack {
+        display: none;
+        grid-area: stack;
+        gap: 8px;
+        max-height: 220px;
+        overflow: auto;
+        padding-right: 4px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line-strong) transparent;
+      }
+      form[data-mode="demo"] .prompt-stack {
+        display: grid;
+      }
+      .slip {
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 8px;
+        align-items: start;
+      }
+      .slip__index {
+        padding-top: 11px;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        color: var(--signal);
+      }
+      .slip textarea {
+        min-height: 0;
+        height: 58px;
+      }
 
       .artifact {
         margin-top: 16px;
@@ -700,7 +780,10 @@
           grid-template-columns: 1fr;
           grid-template-areas:
             "prompt"
+            "stack"
             "source"
+            "length"
+            "window"
             "run";
         }
         select,
@@ -734,7 +817,7 @@
       <div class="meta">
         <span class="chip chip--accent">fl2va</span>
         <span class="chip">h3-dense</span>
-        <span class="chip">256p / 120f</span>
+        <span class="chip" id="frame-chip">256p / 120f</span>
         <div class="stat" role="status" aria-live="polite">
           <span class="stat__dot" aria-hidden="true"></span>
           <span id="status">offline</span>
@@ -749,7 +832,7 @@
           <div class="scan" aria-hidden="true"></div>
         </div>
 
-        <form id="stream-form" class="deck">
+        <form id="stream-form" class="deck" data-mode="clip">
           <label class="field field--prompt">
             <span class="field__label">Prompt</span>
             <textarea
@@ -759,13 +842,48 @@
               required
             ></textarea>
           </label>
+          <div id="prompt-stack" class="prompt-stack"></div>
           <label class="field field--source">
             <span class="field__label">Chunk source</span>
             <select id="source" aria-label="Chunk source">
               <option value="clip">clip</option>
               <option value="native">native stub</option>
+              <option value="demo">multi-prompt demo</option>
             </select>
           </label>
+          <label class="field field--length">
+            <span class="field__label">Length</span>
+            <select id="duration" aria-label="Playback length">
+              <option value="15s">15 seconds — 3 clips</option>
+              <option value="1min">1 minute — 12 clips</option>
+              <option value="2min">2 minutes — 24 clips</option>
+              <option value="5min">5 minutes — 59 clips</option>
+            </select>
+          </label>
+          <div class="field field--window">
+            <span class="field__label">Prompt schedule</span>
+            <div class="window">
+              <input
+                id="schedule-start"
+                type="number"
+                min="0"
+                step="1"
+                value="1"
+                aria-label="Schedule start seconds"
+                required
+              />
+              <span>to</span>
+              <input
+                id="schedule-end"
+                type="number"
+                min="0"
+                step="1"
+                value="5"
+                aria-label="Schedule end seconds"
+                required
+              />
+            </div>
+          </div>
           <button type="submit" class="run">
             <span class="run__label">Open stream</span>
           </button>
@@ -791,8 +909,12 @@
           >Download artifact</a
         >
         <p class="hint hint--rail">
-          Interactive stub: arrow keys steer; space jumps. Input affects the
-          next native chunk and never rewrites one already shown.
+          The highlighted row is the prompt under the playhead. In the
+          multi-prompt demo, the first 124-frame clip starts playback while
+          the encoder, backbone, and decoder keep working. Each later prompt
+          starts at a random whole second from X through Y, inclusive, after
+          playback begins. Arrow keys steer the native stub;
+          space jumps. Input never rewrites a chunk already shown.
         </p>
       </aside>
     </main>

@@ -373,6 +373,41 @@ Streaming settings:
   `/v1/streams/{id}/playlist.m3u8`, `init.mp4`, `seg/{n}.m4s`, and
   `prompts.json` for passive clients.
 
+## Multi-prompt demo
+
+The stream monitor's length control is a dropdown (`15s`, `1min`, `2min`,
+`5min`). Choose **multi-prompt demo** as the chunk source. Each prompt is one
+124-frame clip at 24 fps. The dropdown asks for 3, 12, 24, or 59 prompts.
+Playback of the nominal length is 360, 1440, 2880, or 7200 frames.
+
+Playback starts when the first clip is generated. The encoder, backbone, and
+decoder then stay pipelined on the same worker: a later prompt's encoder can
+run before the previous clip's decoder. Each later prompt starts at a random
+whole second from X through Y, inclusive, after playback begins. The monitor
+defaults are X = 1 and Y = 5. The prompt row whose interval contains the
+playhead is highlighted; clips still rendering stay on the timeline.
+`POST /v1/jobs` is unchanged. H3-World weights are not included; the loaded
+runner is called once per prompt.
+
+Submit a demo with `POST /v1/demos`:
+
+```bash
+curl http://127.0.0.1:8000/v1/demos \
+  -H 'content-type: application/json' \
+  -d '{
+    "prompts": ["opening", "middle", "close"],
+    "duration": "15s",
+    "model_arch": "h3-dense",
+    "optimizations": [
+      "adaln-host-cache", "block-stream", "text-encoder-stream"
+    ],
+    "resolution": "256p",
+    "first_frame_base64": "<png-base64>"
+  }'
+```
+
+`5min` requires 59 prompts. The first clip is the one that starts playback.
+
 ## Deferred: shared `moe-kernels` package
 
 > **Deferred — shared `moe-kernels`.** Kernels currently live behind the
