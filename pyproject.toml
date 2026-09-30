@@ -37,6 +37,9 @@ serve = [
     "soundfile>=0.12,<1",
     "pillow>=10,<13",
 ]
+bench = [
+    "datasets>=2.19",
+]
 
 [project.urls]
 Homepage = "https://github.com/EfficientMoE/Omni-Infinity"
