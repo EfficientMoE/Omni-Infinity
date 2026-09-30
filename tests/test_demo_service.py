@@ -25,6 +25,9 @@ class RecordedCall:
     num_frames: int
     image: Any
     last_image: Any
+    num_inference_steps: Any = None
+    resolution: Any = None
+    num_evaluations: Any = None
 
 
 @dataclass
@@ -52,6 +55,9 @@ class FakeRunner:
                 num_frames=num_frames,
                 image=image,
                 last_image=last_image,
+                num_inference_steps=num_inference_steps,
+                resolution=resolution,
+                num_evaluations=num_evaluations,
             )
         )
         frames = np.full(
@@ -114,6 +120,21 @@ def test_run_sequential_handoff_and_stitch():
     assert progress[-1] == (total, total)
     assert [c for c, _ in progress] == list(range(1, total + 1))
     assert all(t == total for _, t in progress)
+
+
+def test_vdn_hybrid_passes_num_evaluations_without_resolution():
+    runner = FakeRunner()
+    service = DemoService(runner, "vdn-hybrid")
+    request = _request(model_arch="vdn-hybrid", resolution="768p")
+    first = Image.new("RGB", (2, 2), (255, 0, 0))
+
+    result = service.run(request, first, step_callback=lambda c, t: None)
+
+    assert len(runner.calls) == 3
+    assert [c.num_evaluations for c in runner.calls] == [8, 8, 8]
+    assert all(c.resolution is None for c in runner.calls)
+    assert all(c.num_inference_steps is None for c in runner.calls)
+    assert result.videos[0].shape[0] == 360
 
 
 def test_vdn_hybrid_requires_768p():
