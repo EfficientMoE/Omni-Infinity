@@ -4,7 +4,7 @@
 
 **Goal:** Accept an ordered prompt list and play one stitched video at 15s, 1min, 2min, or 5min, where every prompt is one 124-frame generation.
 
-**Architecture:** A new `omni_infinity/demo/` package owns the duration table, the inclusive prompt clock, frame/audio stitch, and a three-stage pipeline. Each clip is encoder, then backbone, then decoder. Those modules stay on the one job worker, but a later prompt's encoder may run before the previous clip's decoder. The first clip is produced before playback. When its fragments are sent, the playback clock starts at 0. Each later prompt draws a whole second uniformly from X through Y inclusive and its encoder does not start before that second. The finished file is still one trimmed MP4. `POST /v1/jobs` and `GenerationRequest` stay single-prompt. The stream monitor picks the length from a dropdown, sets X and Y, and highlights the prompt whose interval contains `video.currentTime`.
+**Architecture:** A new `omni_infinity/demo/` package owns the duration table, the inclusive prompt clock, frame/audio stitch, and a three-stage pipeline. Each clip flows through three pipeline slots named `encoder`, `backbone`, and `decoder`. The loaded runners are monolithic (`ReferenceRunner.generate`, `VdnRunner.generate` — one synchronous call runs text encoding, denoising, and decode), so the runner is called once per prompt inside the `backbone` slot; the `encoder` slot is the admission gate for that prompt's sampled second, and the `decoder` slot trims, fragments, pushes, and hands the last frame to the next clip. The slots stay on the one job worker, but a later prompt's encoder slot may run before the previous clip's decoder slot. The first clip is produced before playback. When its fragments are sent, the playback clock starts at 0. Each later prompt draws a whole second uniformly from X through Y inclusive and its encoder does not start before that second. The finished file is still one trimmed MP4. `POST /v1/jobs` and `GenerationRequest` stay single-prompt. The stream monitor picks the length from a dropdown, sets X and Y, and highlights the prompt whose interval contains `video.currentTime`.
 
 **Tech Stack:** Python 3.10+, FastAPI, Pydantic v2, Pillow, NumPy, PyTorch, pytest, the existing `write_artifacts` / `fragment_clip` helpers. No new dependencies. No H3-World weights.
 
@@ -17,7 +17,9 @@
 - Playback stops at the nominal duration: 15 s, 60 s, 120 s, 300 s. The final MP4 is trimmed to that duration. Fragments for the last clip stop at the same cut, before they are sent.
 - The first clip is encoded, denoised, and decoded before any later prompt starts. Sending its fragments starts the playback clock at 0. The browser plays that clip while later clips are still running.
 - `schedule_start` (X) and `schedule_end` (Y) are integers, `0 <= X <= Y`. For each prompt index `i >= 1`, the start second is `random.Random(seed).randint(X, Y)` drawn in index order. `randint` is inclusive on both ends. Prompt 0 has no draw. The encoder for prompt `i` does not start until the playback clock is at least that second.
-- Encoder, backbone, and decoder are three modules. On the single worker a tick runs every ready stage in the order backbone, encoder, decoder, each to completion. A due encoder may therefore run after the previous clip's backbone and before that clip's decoder. The backbone for clip `i > 0` still waits for clip `i - 1`'s decoded last frame. Two copies of the same module are never in flight.
+- Encoder, backbone, and decoder are pipeline slots, not a refactor of the runners. `ReferenceRunner.generate` (`omni_infinity/runner.py`) and `VdnRunner.generate` (`omni_infinity/arch/vdn.py`) stay untouched; the `backbone` slot makes exactly one `generate()` call per prompt. The `encoder` slot does no model work — it admits the prompt at its sampled second. The `decoder` slot trims the last clip, fragments, pushes, and computes the handoff frame. On the single worker a tick runs every ready slot in the order backbone, encoder, decoder, each to completion. A due encoder slot may therefore run after the previous clip's backbone and before that clip's decoder slot. The backbone for clip `i > 0` still waits for clip `i - 1`'s decoder slot, which supplies the handoff frame. Two copies of the same slot are never in flight.
+- The pipeline reads time from an injected `PlaybackClock` (`now()` / `wait_until(second)`). The streaming service anchors a monotonic clock when clip 0's fragments are pushed and its `wait_until` sleeps; tests and the non-streaming path use `SimClock`, whose `wait_until` fast-forwards instantly. `run_pipeline` itself never sleeps and, when no stage is ready, waits the clock to the earliest undrawn encoder second, so it terminates for any `X <= Y`.
+- `fragment_clip` embeds fMP4 media timestamps that start at zero for every clip it encodes; the websocket `pts` field is metadata only. The demo therefore fragments each clip separately and puts the timeline shift on the client: chunk messages carry `clip: i` and `timestamp_offset: i * 124 / 24`, the server sends each clip's own `init` segment tagged with that `clip`, and the player sets `sourceBuffer.timestampOffset` to the clip's offset before appending that clip's init segment and fragments. Message `pts` is timeline seconds: `timestamp_offset` plus the fragment's clip-local time.
 - Segment 0 uses the required first frame. Segment `i > 0` uses the last decoded frame of segment `i - 1` as its `image`. `last_image` is always `None`.
 - Segment `i` is called with `seed + i`.
 - `POST /v1/jobs` still accepts one `prompt` and `num_frames` in `120..360`. A demo id is HTTP 404 on `GET /v1/jobs/{id}`.
@@ -32,10 +34,13 @@
 ## Review Focus
 
 - `2min` with 23 prompts and `5min` with 58 prompts are 422; the covering counts are 24 and 59. Task 3.
-- No played frame or fragment has `pts` at or past the nominal duration. Task 2 and Task 6.
-- The first clip's websocket `chunk` is sent before any later encoder starts, and the player calls `video.play()` on that first chunk. Task 6 and Task 7.
-- With X = Y = 4, every later prompt's encoder waits until playback second 4. With X = 0 and Y = 0, those encoders may start at second 0. Task 8.
-- For three due clips, the stage order contains encoder of clip 2 before decoder of clip 1. Task 8.
+- No played frame or fragment has `pts` at or past the nominal duration. Task 2 and Task 7.
+- The first clip's websocket `chunk` is sent before any later encoder starts, and the player calls `video.play()` on that first chunk. Task 7 and Task 8.
+- With X = Y = 4, every later prompt's encoder waits until playback second 4. With X = 0 and Y = 0, those encoders may start at second 0. Task 6.
+- For three due clips, the stage order contains encoder of clip 2 before decoder of clip 1. Task 6.
+- `run_pipeline` finishes when `schedule_start > 0` because the injected clock's `wait_until` advances it: `SimClock` fast-forwards instantly, the streaming clock sleeps until the playback second. Task 6 and Task 7.
+- `ReferenceRunner.generate` and `VdnRunner.generate` are not modified; the backbone slot calls the monolithic runner once per prompt, and the encoder slot does no model work. Task 7.
+- Clip `i > 0` keeps zero-based timestamps inside its fMP4 bytes; the message carries `timestamp_offset = i * 124 / 24` and the player sets `sourceBuffer.timestampOffset` before appending that clip's init segment, so the browser timeline is contiguous. Task 7 and Task 8.
 - Segment 1's `image` is the last frame of segment 0, not the user first frame. Task 4.
 - `POST /v1/jobs` still rejects a body that has `prompts` and no `prompt`. Task 5.
 - A demo submit and a job submit share one executor, so the two `generate()` calls cannot overlap. Task 5.
@@ -54,6 +59,7 @@ Create:
 - `omni_infinity/demo/store.py` — `DemoStore` under `{jobs_dir.parent}/demos`.
 - `omni_infinity/demo/service.py` — `DemoService`.
 - `tests/test_demo_schedule.py`
+- `tests/test_demo_pipeline.py`
 - `tests/test_demo_stitch.py`
 - `tests/test_demo_service.py`
 - `tests/test_demo_api.py`
@@ -235,8 +241,9 @@ git commit -m "feat: validate demo prompt counts"
 **Interfaces:**
 - Consumes: `segment_count`, `playback_frames`, `PRESETS`, `last_frame_image`, `stitch_results`, `DemoRequest`.
 - Produces:
-  - `DemoService.run(request: DemoRequest, first: Image.Image, *, step_callback) -> GenerationResult`
-  - Calls `runner.generate(prompt, seed=request.seed + i, num_frames=124, image=frame, last_image=None, num_inference_steps=..., resolution=..., step_callback=...)` for `h3-dense`.
+  - `DemoService._segment(i: int, request: DemoRequest, image: Image.Image, *, step_callback) -> GenerationResult` — the single per-clip runner call. Task 7's backbone slot reuses it unchanged.
+  - `DemoService.run(request: DemoRequest, first: Image.Image, *, step_callback) -> GenerationResult` — a sequential loop over `_segment` with the last-frame handoff.
+  - `_segment` calls `runner.generate(prompt, seed=request.seed + i, num_frames=124, image=frame, last_image=None, num_inference_steps=..., resolution=..., step_callback=...)` for `h3-dense`.
   - For `vdn-hybrid`, pass `num_evaluations=request.num_inference_steps` and omit `resolution` from the runner kwargs, matching `JobService._generate`. If `request.resolution != "768p"`, raise `ValueError("vdn-hybrid requires the 768p canvas")` before the first call.
   - `step_callback(completed, total)` uses `total = segment_count * num_inference_steps` and `completed = i * num_inference_steps + segment_completed`.
   - Returns `stitch_results(..., playback_frames=playback_frames(PRESETS[request.duration]))`.
@@ -317,7 +324,55 @@ git commit -m "feat: serve the multi-prompt demo"
 
 ---
 
-### Task 6: Play the first clip while later clips generate
+### Task 6: Inclusive prompt clock and module pipeline
+
+**Files:**
+- Modify: `omni_infinity/demo/schedule.py`
+- Create: `omni_infinity/demo/pipeline.py`
+- Test: `tests/test_demo_schedule.py`
+- Test: `tests/test_demo_pipeline.py`
+
+**Interfaces:**
+- Consumes: `random.Random.randint`, which includes both endpoints.
+- Produces:
+  - `prompt_times(n: int, start: int, end: int, seed: int) -> list[int | None]` in `schedule.py`. Length `n`. Index 0 is `None`. Each later item is one `randint(start, end)` from `random.Random(seed)`, drawn in index order from that same generator.
+  - `PlaybackClock` protocol in `pipeline.py` with `now() -> float` and `wait_until(second: float) -> None`.
+  - `SimClock` implements `PlaybackClock`: `now()` starts at `0.0`; `wait_until(s)` sets the stored second to `max(now(), s)` and returns immediately. It never sleeps.
+  - `ready_stages(done: set[tuple[str, int]], times: list[int | None], now: float) -> list[tuple[str, int]]`. Stage names are `encoder`, `backbone`, and `decoder`. Returns stages not in `done` whose prerequisites are met, in backbone, encoder, decoder order. `("encoder", i)` with `i > 0` is ready only when `now >= times[i]`. `("backbone", i)` needs `("encoder", i)` done and, for `i > 0`, `("decoder", i - 1)` done. `("decoder", i)` needs `("backbone", i)` done.
+  - `run_pipeline(n: int, times: list[int | None], *, clock: PlaybackClock | None = None, run_stage: Callable[[str, int], None] | None = None) -> list[tuple[str, int]]`. `clock=None` means a fresh `SimClock`. `run_stage=None` means a no-op. Clip 0 runs `encoder`, `backbone`, `decoder` without consulting the clock; from `("decoder", 0)` on, the clock is live. Each tick evaluates `ready_stages` once with `clock.now()`, then runs every returned stage to completion in that order, calling `run_stage(name, i)` and appending `(name, i)` to the result. A stage finished mid-tick becomes ready in the next tick, so two copies of one module are never in flight. If no stage is ready and stages remain, call `clock.wait_until(t)` where `t` is the smallest `times[i]` over clips whose encoder has not run, then tick again. With `SimClock` that wait is an instant fast-forward, so `run_pipeline` terminates without sleeping. Task 7 supplies the real clock.
+
+- [ ] **Step 1: Write the failing tests**
+
+`test_prompt_times_are_inclusive` (in `tests/test_demo_schedule.py`): `prompt_times(4, 4, 4, seed=0) == [None, 4, 4, 4]`. `prompt_times(3, 0, 0, seed=1) == [None, 0, 0]`. Every value of `prompt_times(8, 2, 5, seed=7)` is `None` or in `range(2, 6)`.
+
+`test_later_encoder_waits_for_its_second` (in `tests/test_demo_pipeline.py`): `ready_stages(done={("encoder", 0), ("backbone", 0), ("decoder", 0)}, times=[None, 4], now=3)` does not contain `("encoder", 1)`. The same call with `now=4` does. `clock = SimClock()`; `run_pipeline(2, [None, 4], clock=clock)` emits `("decoder", 0)` before `("encoder", 1)` and finishes with `clock.now() == 4`.
+
+`test_next_encoder_runs_before_previous_decoder`: with `times=[None, 0, 0]`, the returned stage list contains `("encoder", 2)` before `("decoder", 1)`, and `("backbone", 2)` after `("decoder", 1)`.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_demo_schedule.py::test_prompt_times_are_inclusive tests/test_demo_pipeline.py -v`
+Expected: FAIL with import errors
+
+- [ ] **Step 3: Implement `prompt_times`, the clock protocol, `SimClock`, `ready_stages`, and `run_pipeline`**
+
+Readiness is evaluated once at the start of each tick with `clock.now()`. `run_pipeline` itself never sleeps; any waiting lives in the injected clock's `wait_until`.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_demo_schedule.py tests/test_demo_pipeline.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/schedule.py omni_infinity/demo/pipeline.py tests/test_demo_schedule.py tests/test_demo_pipeline.py
+git commit -m "feat: schedule later prompts on an inclusive clock"
+```
+
+---
+
+### Task 7: Play the first clip while later clips generate
 
 **Files:**
 - Modify: `omni_infinity/serve/stream.py`
@@ -326,12 +381,18 @@ git commit -m "feat: serve the multi-prompt demo"
 - Test: `tests/test_demo_api.py`
 
 **Interfaces:**
-- Consumes: `fragment_clip` from `omni_infinity.streaming.fragment`. `chunk_message` is `stream.py`'s current `_chunk_message` made public; keep `_chunk_message = chunk_message`.
-- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends `init` and the first clip's `chunk` messages before any later encoder starts. A later encoder also waits until the playback clock reaches that prompt's sampled second. Later clips are fragmented as each decoder returns, with `pts` shifted by `i * 124 / 24`. `end` is sent only after the last clip. Each chunk's `prompt` is that clip's prompt. `instruction` and `action` are `None`. The last chunk has `done: true`. No fragment has `pts >=` nominal seconds; the last clip is trimmed to the nominal cut before it is fragmented. The final MP4 is the stitched, trimmed timeline, written before `SUCCEEDED`. When `stream_enabled` is false, that websocket route is unregistered (404), `POST /v1/demos` still works, and the MP4 appears only after every clip has finished.
+- Consumes: `fragment_clip` from `omni_infinity.streaming.fragment`. `prompt_times`, `run_pipeline`, `PlaybackClock`, and `SimClock` from Task 6. `chunk_message` is `stream.py`'s current `_chunk_message` made public; keep `_chunk_message = chunk_message`.
+- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends clip 0's `init` and `chunk` messages before any later encoder slot runs. `DemoService` drives clips through `run_pipeline` with a real `PlaybackClock` and this `run_stage` mapping:
+  - `("encoder", i)`: no model work — record that prompt `i` is admitted. The loaded runners are monolithic, so admission is the only encoder-slot effect.
+  - `("backbone", i)`: one `DemoService._segment(i, ...)` call (Task 4). Clip 0's `image` is the request first frame; clip `i > 0` uses the handoff frame stored by decoder slot `i - 1`.
+  - `("decoder", i)`: trim clip `i` to the nominal cut if it is the last clip, call `fragment_clip` on it, send one `init` message with that clip's init segment and `clip: i`, then that clip's `chunk` messages, then store `last_frame_image` of the untrimmed clip as the next handoff frame. The `run_stage` for `("decoder", 0)` records `t0 = time.monotonic()` immediately after clip 0's messages are pushed.
+  - The clock: `now()` returns `time.monotonic() - t0`, and `wait_until(s)` sleeps in increments of at most 0.05 s until `now() >= s`, so a later encoder slot runs only once the playback clock reaches that prompt's sampled second.
+  - Messages: every `chunk` carries `clip: i`, `timestamp_offset: i * 124 / 24`, and `pts` equal to `timestamp_offset` plus the fragment's clip-local time — the fMP4 bytes themselves keep clip-local timestamps starting at zero, and the browser applies the shift (Task 8). Each chunk's `prompt` is that clip's prompt. `instruction` and `action` are `None`. Build the dict with `chunk_message` and add the demo keys. `end` is sent only after the last clip. The last chunk has `done: true`. No chunk has `pts >=` nominal seconds.
+  - The final MP4 is the stitched, trimmed timeline, written before `SUCCEEDED`. When `stream_enabled` is false, that websocket route is unregistered (404), `POST /v1/demos` still works, the service passes `SimClock()` so nothing sleeps, and the MP4 appears only after every clip has finished.
 
 - [ ] **Step 1: Write the failing test**
 
-Name it `test_stream_starts_at_the_first_clip`. With `stream_enabled=True` and `stream_chunk_frames=124`, a 15s demo uses a fake runner whose second `generate()` blocks on a `threading.Event`. The websocket, opened immediately after HTTP 202, receives `init` and a chunk with `prompts[0]` while that event is still unset. Releasing the event lets clips 2 and 3 finish. Collected `pts` values are all `< 15`, the chunk at `pts == 124/24` has `prompts[1]`, and the last chunk has `done: true`. With `stream_enabled=False`, `POST /v1/demos` returns 202 and the websocket path is 404.
+Name it `test_stream_starts_at_the_first_clip`. With `stream_enabled=True` and `stream_chunk_frames=124`, a 15s demo posts `schedule_start=0` and `schedule_end=0` so later encoders are due at playback second 0 and the test never waits on the real clock. The fake runner's second `generate()` blocks on a `threading.Event`. The websocket, opened immediately after HTTP 202, receives an `init` with `clip == 0` and a chunk with `prompts[0]` while that event is still unset. Releasing the event lets clips 2 and 3 finish. Collected `pts` values are all `< 15`. Each clip `i > 0` is preceded by its own `init` with `clip == i`. The chunk at `pts == 124/24` has `prompts[1]`, `clip == 1`, and `timestamp_offset == 124/24`; decoding that clip's `init` bytes plus its fragment bytes with `av` yields a first video packet at clip-local time 0, which proves the timeline shift lives in `timestamp_offset`, not in the media. The last chunk has `done: true`. With `stream_enabled=False`, `POST /v1/demos` returns 202 and the websocket path is 404.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -340,7 +401,7 @@ Expected: FAIL because the websocket route is missing
 
 - [ ] **Step 3: Implement per-clip send**
 
-Drive clips through `run_pipeline` from Task 8. After decoder 0, fragment that clip and push its messages before any later encoder. Do not wait for `stitch_results` before the first chunk. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
+Drive clips through `run_pipeline` from Task 6 with the real `PlaybackClock` and the `run_stage` mapping described in Interfaces. After decoder slot 0, that clip's messages are pushed before any later encoder slot. Do not modify `ReferenceRunner.generate` or `VdnRunner.generate`. Do not wait for `stitch_results` before the first chunk. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -356,7 +417,7 @@ git commit -m "feat: play the first demo clip while generating the rest"
 
 ---
 
-### Task 7: Length dropdown and playhead highlight
+### Task 8: Length dropdown and playhead highlight
 
 **Files:**
 - Modify: `omni_infinity/serve/webui/index.html`
@@ -365,16 +426,17 @@ git commit -m "feat: play the first demo clip while generating the rest"
 - Test: `tests/test_stream_api.py` (`test_webui_is_served_only_when_streaming_is_enabled`)
 
 **Interfaces:**
-- Consumes: preset ids `15s`, `1min`, `2min`, `5min` and clip counts 3, 12, 24, 59 from Task 1. Chunk messages from Task 6 carry `pts`, `duration`, and `prompt`.
+- Consumes: preset ids `15s`, `1min`, `2min`, `5min` and clip counts 3, 12, 24, 59 from Task 1. Messages from Task 7: per-clip `init` messages tagged `clip`, and `chunk` messages carrying `pts`, `duration`, `prompt`, `clip`, and `timestamp_offset`.
 - Produces:
   - `<select id="duration" aria-label="Playback length">` with those four values. Option labels name the length and the clip count (`15 seconds — 3 clips`, `1 minute — 12 clips`, `2 minutes — 24 clips`, `5 minutes — 59 clips`).
   - Source option `value="demo"`. Choosing it reveals `#prompt-stack`: one text field per clip. Changing the dropdown rebuilds the stack and keeps text already typed.
   - On submit, demo mode `POST`s `/v1/demos` with `prompts`, `duration`, and `first_frame_base64`, then opens `WS /v1/demos/{id}/ws`. Clip and native keep `POST /v1/streams`.
+  - In demo mode, an `init` message with `clip > 0` waits for pending appends to drain, sets `sourceBuffer.timestampOffset` to the message's `timestamp_offset` (`clip * 124 / 24`), appends that clip's init segment bytes, then appends its fragments. Clip 0 keeps the existing init path with `timestampOffset` 0. This is what places every clip's zero-based fMP4 timestamps onto the shared browser timeline.
   - Before any chunk, the rail lists every prompt as rendering. `highlightCue` adds `active` only to the row whose half-open `[pts, pts + duration)` contains `video.currentTime`. The first `chunk` calls `video.play()`. Until `end`, the status reads `live · model running`.
 
 - [ ] **Step 1: Extend the web UI test**
 
-In `test_webui_is_served_only_when_streaming_is_enabled`, assert the page contains `id="duration"`, `id="schedule-start"`, `id="schedule-end"`, `value="15s"`, `value="1min"`, `value="2min"`, `value="5min"`, and `value="demo"`. Assert `player.js` contains `video.play`, `model running`, `highlightCue`, `schedule_start`, and `schedule_end`.
+In `test_webui_is_served_only_when_streaming_is_enabled`, assert the page contains `id="duration"`, `id="schedule-start"`, `id="schedule-end"`, `value="15s"`, `value="1min"`, `value="2min"`, `value="5min"`, and `value="demo"`. Assert `player.js` contains `video.play`, `model running`, `highlightCue`, `schedule_start`, `schedule_end`, and `timestampOffset`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -406,54 +468,9 @@ git commit -m "feat: pick demo length from a dropdown and highlight the playhead
 
 ---
 
-### Task 8: Inclusive prompt clock and module pipeline
-
-**Files:**
-- Modify: `omni_infinity/demo/schedule.py`
-- Create: `omni_infinity/demo/pipeline.py`
-- Test: `tests/test_demo_schedule.py`
-- Test: `tests/test_demo_pipeline.py`
-
-**Interfaces:**
-- Consumes: `random.Random.randint`, which includes both endpoints.
-- Produces:
-  - `prompt_times(n: int, start: int, end: int, seed: int) -> list[int | None]`. Length `n`. Index 0 is `None`. Each later item is one `randint(start, end)` from `random.Random(seed)`, drawn in index order from that same generator.
-  - `run_pipeline(n: int, times: list[int | None]) -> list[tuple[str, int]]`. Stage names are `encoder`, `backbone`, and `decoder`. Clip 0 runs `encoder`, `backbone`, `decoder` before the clock starts. The clock then reads 0. A later `encoder` is emitted only when `times[i]` is not `None` and the clock is at least `times[i]`. After each backbone, ready stages run in the order backbone, encoder, decoder. `backbone` of clip `i > 0` is emitted only after `decoder` of clip `i - 1`.
-
-- [ ] **Step 1: Write the failing tests**
-
-`test_prompt_times_are_inclusive`: `prompt_times(4, 4, 4, seed=0) == [None, 4, 4, 4]`. `prompt_times(3, 0, 0, seed=1) == [None, 0, 0]`. Every value of `prompt_times(8, 2, 5, seed=7)` is `None` or in `range(2, 6)`.
-
-`test_later_encoder_waits_for_its_second`: `ready_stages(done={("encoder", 0), ("backbone", 0), ("decoder", 0)}, times=[None, 4], now=3)` does not contain `("encoder", 1)`. The same call with `now=4` does. `run_pipeline(2, [None, 4])` emits `("decoder", 0)` before `("encoder", 1)`.
-
-`test_next_encoder_runs_before_previous_decoder`: with `times=[None, 0, 0]`, the returned stage list contains `("encoder", 2)` before `("decoder", 1)`, and `("backbone", 2)` after `("decoder", 1)`.
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `pytest tests/test_demo_schedule.py::test_prompt_times_are_inclusive tests/test_demo_pipeline.py -v`
-Expected: FAIL with import errors
-
-- [ ] **Step 3: Implement `prompt_times`, `ready_stages`, and `run_pipeline`**
-
-`run_pipeline` starts `now` at `None` until `("decoder", 0)` has been appended, then sets `now` to 0. It does not sleep. One module has one in-flight stage; stages in a tick are appended in backbone, encoder, decoder order and complete before the next tick.
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `pytest tests/test_demo_schedule.py tests/test_demo_pipeline.py -v`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add omni_infinity/demo/schedule.py omni_infinity/demo/pipeline.py tests/test_demo_schedule.py tests/test_demo_pipeline.py
-git commit -m "feat: schedule later prompts on an inclusive clock"
-```
-
----
-
 ## Test plan
 
-Run from the repo root after Task 7:
+Run from the repo root after Task 8:
 
 ```bash
 pytest tests/test_demo_schedule.py tests/test_demo_pipeline.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py tests/test_job_api.py tests/test_stream_api.py -v
