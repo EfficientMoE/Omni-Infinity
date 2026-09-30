@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import torch
 
+import omni_infinity.caches.denoise as denoise_module
 from omni_infinity import registry
 from omni_infinity.caches.denoise import (
     DenoiseCacheConfig,
@@ -26,6 +27,20 @@ def test_config_requires_calibrated_coefficients():
 def test_config_requires_positive_threshold(threshold):
     with pytest.raises(ValueError, match="threshold"):
         DenoiseCacheConfig(coefficients=(1.0, 0.0), threshold=threshold)
+
+
+@pytest.mark.parametrize(
+    ("coefficients", "threshold"),
+    [
+        ((float("nan"), 0.0), 0.2),
+        ((float("inf"), 0.0), 0.2),
+        ((1.0, 0.0), float("nan")),
+        ((1.0, 0.0), float("inf")),
+    ],
+)
+def test_config_rejects_non_finite_calibration(coefficients, threshold):
+    with pytest.raises(ValueError, match="finite"):
+        DenoiseCacheConfig(coefficients=coefficients, threshold=threshold)
 
 
 def test_config_rejects_unsupported_mode():
@@ -95,6 +110,22 @@ def test_polynomial_can_force_middle_steps_to_compute():
     assert module.calls == 4
     assert stats.computed == 4
     assert stats.skipped == 0
+
+
+@pytest.mark.parametrize("distance", [float("nan"), float("inf")])
+def test_non_finite_distance_forces_middle_step_compute(monkeypatch, distance):
+    module = _AddOne()
+    monkeypatch.setattr(
+        denoise_module, "_relative_l1", lambda _current, _previous: distance
+    )
+
+    with denoise_step_cache(module, _config(), total_steps=3) as stats:
+        outputs = [module(torch.ones(4)) for _ in range(3)]
+
+    assert module.calls == 3
+    assert stats.computed == 3
+    assert stats.skipped == 0
+    assert outputs[1] is not outputs[0]
 
 
 def test_calls_per_step_keeps_slots_independent():
@@ -190,6 +221,25 @@ def test_enable_cache_dit_fails_closed_when_package_is_missing(monkeypatch):
 
     with pytest.raises(ImportError, match="cache-dit is not installed"):
         enable_cache_dit(object())
+
+
+def test_enable_cache_dit_reraises_missing_transitive_dependency(monkeypatch):
+    error = ModuleNotFoundError(
+        "No module named 'cache_dit_dependency'",
+        name="cache_dit_dependency",
+    )
+
+    def import_cache_dit(_name):
+        raise error
+
+    monkeypatch.setattr(
+        denoise_module.importlib, "import_module", import_cache_dit
+    )
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        enable_cache_dit(object())
+
+    assert exc_info.value is error
 
 
 def test_enable_cache_dit_calls_optional_package(monkeypatch):

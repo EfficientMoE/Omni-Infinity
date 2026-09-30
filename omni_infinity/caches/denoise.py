@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from types import MethodType
@@ -32,6 +33,10 @@ class DenoiseCacheConfig:
             raise ValueError(
                 "calibrated coefficients are required for MiniMax-H3"
             )
+        if not all(math.isfinite(value) for value in self.coefficients):
+            raise ValueError("calibrated coefficients must be finite")
+        if not math.isfinite(self.threshold):
+            raise ValueError("threshold must be finite")
         if self.threshold <= 0:
             raise ValueError("threshold must be positive")
         if self.mode not in {"output", "residual"}:
@@ -185,6 +190,7 @@ def denoise_step_cache(transformer, config, total_steps: int):
         compute = (
             boundary
             or slot.output is None
+            or not math.isfinite(distance)
             or (_polynomial(config.coefficients, distance) > config.threshold)
         )
         slot.signal = _snapshot(signal)
@@ -226,6 +232,10 @@ def enable_cache_dit(target, **kwargs):
     try:
         cache_dit = importlib.import_module("cache_dit")
         enable_cache = cache_dit.enable_cache
-    except (AttributeError, ModuleNotFoundError):
+    except ModuleNotFoundError as exc:
+        if exc.name != "cache_dit":
+            raise
+        raise ImportError("cache-dit is not installed") from None
+    except AttributeError:
         raise ImportError("cache-dit is not installed") from None
     return enable_cache(target, **kwargs)
