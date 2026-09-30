@@ -48,7 +48,11 @@ def update_hash_for_value(hasher, value) -> None:
         hasher.update(b"tensor")
         update_hash_for_value(hasher, str(value.dtype))
         update_hash_for_value(hasher, tuple(value.shape))
-        payload = value.detach().cpu().contiguous().numpy().tobytes()
+        tensor = value.detach().cpu().contiguous()
+        try:
+            payload = tensor.numpy().tobytes()
+        except TypeError:
+            payload = tensor.reshape(-1).view(torch.uint8).numpy().tobytes()
         _update_bytes(hasher, b"data", payload)
     elif isinstance(value, Image.Image):
         buffer = BytesIO()

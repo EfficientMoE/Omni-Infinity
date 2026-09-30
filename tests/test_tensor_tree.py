@@ -52,6 +52,36 @@ def test_tensor_hash_and_nbytes_include_all_bytes():
     assert tree_nbytes(tensor) == tensor.nbytes
 
 
+def test_bfloat16_tensors_hash_deterministically():
+    first = torch.tensor([1.0, 2.0], dtype=torch.bfloat16)
+    same = torch.tensor([1.0, 2.0], dtype=torch.bfloat16)
+
+    assert _digest(first) == _digest(same)
+
+
+def test_bfloat16_tensor_hash_is_content_sensitive():
+    first = torch.tensor([1.0, 2.0], dtype=torch.bfloat16)
+    changed = first.clone()
+    changed[-1] = 3.0
+
+    assert _digest(first) != _digest(changed)
+
+
+def test_bfloat16_scalar_hash_is_content_sensitive():
+    first = torch.tensor(1.0, dtype=torch.bfloat16)
+    changed = torch.tensor(2.0, dtype=torch.bfloat16)
+
+    assert _digest(first) != _digest(changed)
+
+
+def test_tensor_hash_preserves_bfloat16_dtype():
+    values = [1.0, 2.0]
+
+    assert _digest(torch.tensor(values, dtype=torch.bfloat16)) != _digest(
+        torch.tensor(values, dtype=torch.float32)
+    )
+
+
 def test_pil_images_hash_as_png_bytes():
     first = Image.new("RGB", (2, 2), "red")
     same = Image.new("RGB", (2, 2), "red")
