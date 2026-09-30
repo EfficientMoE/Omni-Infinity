@@ -162,7 +162,11 @@ def create_app(
     from omni_infinity.demo.models import DemoRequest, DemoResponse
     from omni_infinity.demo.service import DemoService
     from omni_infinity.demo.store import DemoStore
-    from omni_infinity.serve.stream import StreamRequest, StreamService
+    from omni_infinity.serve.stream import (
+        DemoStreamService,
+        StreamRequest,
+        StreamService,
+    )
 
     configured = settings or ServerSettings.from_env()
     profile = resolve_profile(
@@ -179,12 +183,17 @@ def create_app(
         demo_store.recover_interrupted()
         runner = runner_factory() if runner_factory else load_runner(configured)
         service = JobService(runner, profile, store)
+        demo_stream_service = (
+            DemoStreamService() if configured.stream_enabled else None
+        )
         demo_service = DemoService(
             runner,
             profile.model_arch,
             store=demo_store,
             executor=service.executor,
             optimizations=profile.optimizations,
+            stream_service=demo_stream_service,
+            stream_chunk_frames=configured.stream_chunk_frames,
         )
         stream_service = StreamService(
             service,
@@ -198,6 +207,7 @@ def create_app(
         app.state.service = service
         app.state.demo_store = demo_store
         app.state.demo_service = demo_service
+        app.state.demo_stream_service = demo_stream_service
         app.state.stream_service = stream_service
         app.state.profile = profile
         try:
@@ -327,6 +337,15 @@ def create_app(
             await app.state.stream_service.run_socket(websocket, stream_id)
 
         app.add_api_websocket_route("/v1/streams/{stream_id}/ws", stream_socket)
+
+        async def demo_stream_socket(
+            websocket: WebSocket, demo_id: str
+        ) -> None:
+            await app.state.demo_stream_service.run_socket(websocket, demo_id)
+
+        app.add_api_websocket_route(
+            "/v1/demos/{demo_id}/ws", demo_stream_socket
+        )
 
         if configured.stream_fallback_hls:
 

@@ -3,35 +3,62 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import Executor, Future
 
 from PIL import Image
 
 from omni_infinity.demo.models import DemoRecord, DemoRequest
+from omni_infinity.demo.pipeline import PlaybackClock, SimClock, run_pipeline
 from omni_infinity.demo.schedule import (
     PRESETS,
     SEGMENT_FRAMES,
     playback_frames,
+    prompt_times,
     segment_count,
 )
 from omni_infinity.demo.stitch import last_frame_image, stitch_results
 from omni_infinity.demo.store import DemoStore
 from omni_infinity.registry import resolve_profile
 from omni_infinity.runner import GenerationResult
-from omni_infinity.serve.artifacts import write_artifacts
+from omni_infinity.serve.artifacts import (
+    _stereo_audio,
+    _video_frames,
+    write_artifacts,
+)
 from omni_infinity.serve.models import JobStatus
 from omni_infinity.serve.service import (
     InvalidMedia,
     JobService,
     ProfileConflict,
 )
+from omni_infinity.serve.stream import DemoStreamService, chunk_message
+from omni_infinity.streaming import CODEC, MediaChunk, fragment_clip
 
 logger = logging.getLogger(__name__)
 
 StepCallback = Callable[[int, int], None]
+
+
+class _LivePlaybackClock(PlaybackClock):
+    def __init__(self) -> None:
+        self._t0: float | None = None
+
+    def start(self) -> None:
+        self._t0 = time.monotonic()
+
+    def now(self) -> float:
+        if self._t0 is None:
+            raise RuntimeError("playback clock has not started")
+        return time.monotonic() - self._t0
+
+    def wait_until(self, second: float) -> None:
+        while self.now() < second:
+            time.sleep(min(0.05, max(0.0, second - self.now())))
 
 
 class DemoService:
@@ -43,12 +70,16 @@ class DemoService:
         store: DemoStore | None = None,
         executor: Executor | None = None,
         optimizations: tuple[str, ...] = (),
+        stream_service: DemoStreamService | None = None,
+        stream_chunk_frames: int = 24,
     ):
         self.runner = runner
         self.model_arch = model_arch
         self.store = store
         self.executor = executor
         self.optimizations = optimizations
+        self.stream_service = stream_service
+        self.stream_chunk_frames = stream_chunk_frames
         self._futures: dict[str, Future] = {}
 
     def submit(self, request: DemoRequest) -> DemoRecord:
@@ -77,6 +108,8 @@ class DemoService:
         path = self.store.input_path(record.id, "input-first.png")
         with Image.open(io.BytesIO(first)) as image:
             image.convert("RGB").save(path, format="PNG")
+        if self.stream_service is not None:
+            self.stream_service.open_session(record.id)
         self._futures[record.id] = self.executor.submit(
             self._execute, record.id
         )
@@ -91,7 +124,8 @@ class DemoService:
             ) as image:
                 image.load()
                 first = image.copy()
-            result = self.run(
+            result = self._run_pipeline(
+                demo_id,
                 record.request,
                 first,
                 step_callback=lambda completed, total: (
@@ -106,6 +140,13 @@ class DemoService:
             self.store.transition(
                 demo_id, JobStatus.SUCCEEDED, artifacts=artifacts
             )
+            self._publish(
+                demo_id,
+                {
+                    "type": "end",
+                    "artifact_url": f"/v1/demos/{demo_id}/artifacts",
+                },
+            )
         except Exception as exc:
             for name in (
                 "output.mp4",
@@ -115,6 +156,10 @@ class DemoService:
             ):
                 self.store.input_path(demo_id, name).unlink(missing_ok=True)
             logger.exception("demo %s failed", demo_id)
+            self._publish(
+                demo_id,
+                {"type": "error", "detail": f"{type(exc).__name__}: {exc}"},
+            )
             try:
                 record = self.store.get(demo_id)
                 if record.status == JobStatus.RUNNING:
@@ -127,6 +172,114 @@ class DemoService:
                 logger.exception(
                     "could not persist failure for demo %s", demo_id
                 )
+
+    def _run_pipeline(
+        self,
+        demo_id: str,
+        request: DemoRequest,
+        first: Image.Image,
+        *,
+        step_callback: StepCallback | None = None,
+    ) -> GenerationResult:
+        count = len(request.prompts)
+        results: list[GenerationResult | None] = [None] * count
+        handoffs: dict[int, Image.Image] = {0: first}
+        admitted: set[int] = set()
+        live_clock = (
+            _LivePlaybackClock() if self.stream_service is not None else None
+        )
+        clock: PlaybackClock = live_clock or SimClock()
+
+        def run_stage(name: str, i: int) -> None:
+            if name == "encoder":
+                admitted.add(i)
+                return
+            if name == "backbone":
+                if i not in admitted:
+                    raise RuntimeError(f"prompt {i} was not admitted")
+                results[i] = self._segment(
+                    i,
+                    request,
+                    handoffs[i],
+                    step_callback=step_callback,
+                )
+                return
+
+            result = results[i]
+            if result is None:
+                raise RuntimeError(f"clip {i} was not generated")
+            if self.stream_service is not None:
+                self._publish_clip(demo_id, request, i, result)
+                if i == 0:
+                    assert live_clock is not None
+                    live_clock.start()
+            if i + 1 < count:
+                handoffs[i + 1] = last_frame_image(result.videos[0])
+
+        times = prompt_times(
+            count,
+            request.schedule_start,
+            request.schedule_end,
+            request.seed,
+        )
+        run_pipeline(count, times, clock=clock, run_stage=run_stage)
+        completed = [result for result in results if result is not None]
+        if len(completed) != count:
+            raise RuntimeError("demo pipeline did not generate every clip")
+        return stitch_results(
+            completed,
+            playback_frames=playback_frames(PRESETS[request.duration]),
+        )
+
+    def _publish_clip(
+        self,
+        demo_id: str,
+        request: DemoRequest,
+        i: int,
+        result: GenerationResult,
+    ) -> None:
+        nominal_frames = playback_frames(PRESETS[request.duration])
+        frame_count = min(SEGMENT_FRAMES, nominal_frames - i * SEGMENT_FRAMES)
+        frames = _video_frames(result.videos)[:frame_count]
+        sample_count = round(frame_count / 24 * result.sampling_rate)
+        audio = _stereo_audio(result.audio)[:, :sample_count]
+        init, fragments = fragment_clip(
+            frames,
+            audio,
+            result.sampling_rate,
+            chunk_frames=self.stream_chunk_frames,
+        )
+        self._publish(
+            demo_id,
+            {
+                "type": "init",
+                "codec": CODEC,
+                "init_b64": base64.b64encode(init).decode("ascii"),
+                "clip": i,
+            },
+        )
+        timestamp_offset = i * SEGMENT_FRAMES / 24
+        for position, fragment in enumerate(fragments):
+            chunk = MediaChunk(
+                index=fragment.index,
+                pts=timestamp_offset + fragment.pts,
+                duration=fragment.duration,
+                keyframe=fragment.keyframe,
+                video_bytes=fragment.video_bytes,
+                audio_bytes=None,
+                prompt=request.prompts[i],
+                done=(
+                    i == len(request.prompts) - 1
+                    and position == len(fragments) - 1
+                ),
+            )
+            message = chunk_message(chunk)
+            message.update({"clip": i, "timestamp_offset": timestamp_offset})
+            self._publish(demo_id, message)
+
+    def _publish(self, demo_id: str, message: dict) -> None:
+        if self.stream_service is not None:
+            self.stream_service.publish(demo_id, message)
 
     def run(
         self,

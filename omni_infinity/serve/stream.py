@@ -8,6 +8,7 @@ import base64
 import contextlib
 import json
 import logging
+import queue
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -169,7 +170,7 @@ def _init_message(session: StreamSession, source: ChunkSource) -> dict:
     }
 
 
-def _chunk_message(chunk: MediaChunk) -> dict:
+def chunk_message(chunk: MediaChunk) -> dict:
     return {
         "type": "chunk",
         "index": chunk.index,
@@ -185,10 +186,77 @@ def _chunk_message(chunk: MediaChunk) -> dict:
     }
 
 
+_chunk_message = chunk_message
+
+
 def _encode(payload: bytes | None) -> str | None:
     if payload is None:
         return None
     return base64.b64encode(payload).decode("ascii")
+
+
+class DemoStreamSession:
+    def __init__(self, demo_id: str) -> None:
+        self.demo_id = demo_id
+        self.connected = False
+        self.messages: queue.Queue[dict] = queue.Queue()
+
+    def push(self, message: dict) -> None:
+        self.messages.put(message)
+
+
+class DemoStreamService:
+    """Thread-safe message hand-off from demo generation to a player."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, DemoStreamSession] = {}
+        self._lock = threading.Lock()
+
+    def open_session(self, demo_id: str) -> None:
+        with self._lock:
+            self._sessions[demo_id] = DemoStreamSession(demo_id)
+
+    def publish(self, demo_id: str, message: dict) -> None:
+        with self._lock:
+            session = self._sessions.get(demo_id)
+        if session is not None:
+            session.push(message)
+
+    async def run_socket(self, websocket: WebSocket, demo_id: str) -> None:
+        await websocket.accept()
+        with self._lock:
+            session = self._sessions.get(demo_id)
+            if session is None:
+                detail = "unknown demo stream session"
+            elif session.connected:
+                detail = "demo stream session already has a player"
+            else:
+                session.connected = True
+                detail = None
+        if detail is not None:
+            await _send_error(websocket, detail)
+            await _close(websocket)
+            return
+
+        try:
+            while True:
+                try:
+                    message = session.messages.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.01)
+                    continue
+                await websocket.send_json(message)
+                if message["type"] in {"end", "error"}:
+                    break
+        except WebSocketDisconnect:
+            logger.info("demo stream %s: client disconnected", demo_id)
+        except RuntimeError as exc:
+            if not _is_closed_socket_error(exc):
+                logger.exception("demo stream %s: socket failed", demo_id)
+        finally:
+            with self._lock:
+                self._sessions.pop(demo_id, None)
+            await _close(websocket)
 
 
 class StreamService:

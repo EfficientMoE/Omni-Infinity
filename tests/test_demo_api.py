@@ -14,6 +14,7 @@ import torch
 from fastapi.testclient import TestClient
 from PIL import Image
 from pydantic import ValidationError
+from starlette.websockets import WebSocketDisconnect
 
 from omni_infinity.demo.models import DemoRequest
 from omni_infinity.demo.service import DemoService
@@ -276,3 +277,121 @@ def test_demo_and_job_services_share_the_single_executor(tmp_path):
     finally:
         runner.release_job.set()
         jobs.shutdown()
+
+
+def test_stream_starts_at_the_first_clip(tmp_path):
+    class BlockingSecondRunner:
+        def __init__(self):
+            self.calls = 0
+            self.lock = threading.Lock()
+            self.second_started = threading.Event()
+            self.release_second = threading.Event()
+
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            with self.lock:
+                self.calls += 1
+                call = self.calls
+            if call == 2:
+                self.second_started.set()
+                assert self.release_second.wait(timeout=10)
+            for completed in range(1, num_inference_steps + 1):
+                step_callback(completed, num_inference_steps)
+            return _segment_result()
+
+    prompts = ["opening", "middle", "close"]
+    runner = BlockingSecondRunner()
+    settings = ServerSettings(
+        jobs_dir=tmp_path / "streaming",
+        optimizations=(),
+        stream_enabled=True,
+        stream_chunk_frames=124,
+    )
+    messages = []
+    try:
+        with TestClient(create_app(settings, lambda: runner)) as client:
+            response = client.post(
+                "/v1/demos",
+                json=_demo_payload(
+                    prompts=prompts, schedule_start=0, schedule_end=0
+                ),
+            )
+            assert response.status_code == 202
+            demo_id = response.json()["id"]
+
+            with client.websocket_connect(f"/v1/demos/{demo_id}/ws") as socket:
+                first_init = socket.receive_json()
+                first_chunk = socket.receive_json()
+                assert first_init["type"] == "init"
+                assert first_init["clip"] == 0
+                assert first_chunk["type"] == "chunk"
+                assert first_chunk["prompt"] == prompts[0]
+                assert not runner.release_second.is_set()
+
+                runner.release_second.set()
+                while True:
+                    message = socket.receive_json()
+                    messages.append(message)
+                    if message["type"] == "end":
+                        break
+
+            finished = _poll_demo(client, demo_id)
+            assert finished["status"] == "succeeded"
+    finally:
+        runner.release_second.set()
+
+    messages = [first_init, first_chunk, *messages]
+    chunks = [message for message in messages if message["type"] == "chunk"]
+    assert all(chunk["pts"] < 15 for chunk in chunks)
+    assert chunks[-1]["done"] is True
+
+    for clip in (1, 2):
+        init_position = next(
+            i
+            for i, message in enumerate(messages)
+            if message["type"] == "init" and message["clip"] == clip
+        )
+        chunk_position = next(
+            i
+            for i, message in enumerate(messages)
+            if message["type"] == "chunk" and message["clip"] == clip
+        )
+        assert init_position < chunk_position
+
+    offset = 124 / 24
+    middle = next(chunk for chunk in chunks if chunk["pts"] == offset)
+    assert middle["prompt"] == prompts[1]
+    assert middle["clip"] == 1
+    assert middle["timestamp_offset"] == offset
+
+    middle_init = next(
+        message
+        for message in messages
+        if message["type"] == "init" and message["clip"] == 1
+    )
+    media = base64.b64decode(middle_init["init_b64"])
+    media += base64.b64decode(middle["video_b64"])
+    with av.open(io.BytesIO(media)) as container:
+        first_packet = next(
+            packet
+            for packet in container.demux(video=0)
+            if packet.pts is not None
+        )
+    assert float(first_packet.pts * first_packet.time_base) == 0
+
+    disabled = ServerSettings(
+        jobs_dir=tmp_path / "disabled", optimizations=(), stream_enabled=False
+    )
+    disabled_runner = BlockingSecondRunner()
+    disabled_runner.release_second.set()
+    with TestClient(create_app(disabled, lambda: disabled_runner)) as client:
+        response = client.post(
+            "/v1/demos",
+            json=_demo_payload(schedule_start=0, schedule_end=0),
+        )
+        assert response.status_code == 202
+        demo_id = response.json()["id"]
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"/v1/demos/{demo_id}/ws"):
+                pass
