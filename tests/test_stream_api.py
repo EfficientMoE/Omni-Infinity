@@ -704,6 +704,7 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
         "highlightCue",
         "schedule_start",
         "schedule_end",
+        "sourceBuffer.timestampOffset",
     ):
         assert needle in script.text
     assert 'id="duration"' in page.text

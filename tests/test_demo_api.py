@@ -395,6 +395,7 @@ def test_stream_starts_at_the_first_clip(tmp_path):
         for message in messages
         if message["type"] == "init" and message["clip"] == 1
     )
+    assert middle_init["timestamp_offset"] == offset
     media = base64.b64decode(middle_init["init_b64"])
     media += base64.b64decode(middle["video_b64"])
     with av.open(io.BytesIO(media)) as container:

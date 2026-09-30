@@ -105,7 +105,10 @@ function appendNext() {
   }
   const segment = appendQueue.shift();
   try {
-    sourceBuffer.appendBuffer(segment);
+    if (segment.timestampOffset !== null) {
+      sourceBuffer.timestampOffset = segment.timestampOffset;
+    }
+    sourceBuffer.appendBuffer(segment.data);
   } catch (error) {
     /* stale SourceBuffer from a superseded stream — drop the append */
   }
@@ -157,7 +160,7 @@ function highlightCue() {
   }
 }
 
-function openMedia(codec, init) {
+function openMedia(codec, init, timestampOffset) {
   const myGeneration = generation;
   const media = new MediaSource();
   mediaSource = media;
@@ -178,7 +181,10 @@ function openMedia(codec, init) {
       // Server sends init + every chunk + end in one burst, so chunk
       // payloads may already be queued. The init segment must be appended
       // first — put it at the head of the queue before draining.
-      appendQueue.unshift(bytes(init));
+      appendQueue.unshift({
+        data: bytes(init),
+        timestampOffset,
+      });
       appendNext();
       startPlayback();
     },
@@ -258,11 +264,27 @@ function armSchedule(prompts, seconds) {
 
 function receive(message) {
   if (message.type === "init") {
-    openMedia(message.codec, message.init_b64);
+    const initSegment = {
+      data: bytes(message.init_b64),
+      timestampOffset: message.timestamp_offset || 0,
+    };
+    if (mediaSource === null) {
+      openMedia(
+        message.codec,
+        message.init_b64,
+        initSegment.timestampOffset,
+      );
+    } else {
+      appendQueue.push(initSegment);
+      appendNext();
+    }
     return;
   }
   if (message.type === "chunk") {
-    appendQueue.push(bytes(message.video_b64));
+    appendQueue.push({
+      data: bytes(message.video_b64),
+      timestampOffset: null,
+    });
     if (schedule.length) {
       const row = schedule.find(
         (item) => item.pts <= message.pts && message.pts < item.pts + item.duration,
@@ -315,6 +337,7 @@ async function createStream(event) {
     socket.close();
   }
   sourceBuffer = null;
+  mediaSource = null;
   appendQueue = [];
   endRequested = false;
   cues = [];
