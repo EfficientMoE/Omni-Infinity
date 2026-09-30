@@ -53,7 +53,9 @@ class _LivePlaybackClock(PlaybackClock):
 
     def now(self) -> float:
         if self._t0 is None:
-            raise RuntimeError("playback clock has not started")
+            raise RuntimeError(
+                "playback clock has not started; decoder slot 0 must run first"
+            )
         return time.monotonic() - self._t0
 
     def wait_until(self, second: float) -> None:
@@ -204,6 +206,8 @@ class DemoService:
                     step_callback=step_callback,
                 )
                 return
+            if name != "decoder":
+                raise RuntimeError(f"unknown pipeline stage: {name}")
 
             result = results[i]
             if result is None:

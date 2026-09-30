@@ -40,7 +40,10 @@ class DemoRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_prompt_count(self):
-        expected = segment_count(PRESETS[self.duration])
+        try:
+            expected = segment_count(PRESETS[self.duration])
+        except KeyError as exc:
+            raise ValueError(f"unknown duration {self.duration}") from exc
         got = len(self.prompts)
         if got != expected:
             raise ValueError(
