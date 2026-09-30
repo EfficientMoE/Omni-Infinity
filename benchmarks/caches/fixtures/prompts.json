@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "provenance": {
+    "vidprom": "WenhaoWang/VidProM (seeded sample; refresh with: python -m benchmarks.caches.workload --refresh --source vidprom)",
+    "vbench": "Vchitect/VBench all_dimension prompt suite (seeded sample)"
+  },
+  "vidprom": [
+    "a cyberpunk city street at night, neon signs reflecting in puddles, cinematic",
+    "a golden retriever puppy running through a field of sunflowers, slow motion",
+    "an astronaut riding a horse on mars, photorealistic, 4k",
+    "ocean waves crashing on a rocky shore during a storm, dramatic lighting",
+    "a steaming cup of coffee on a wooden table, morning light through a window",
+    "time lapse of a flower blooming, macro photography",
+    "a dragon flying over a medieval castle at sunset",
+    "a chef flipping a pancake in a busy restaurant kitchen",
+    "northern lights dancing over a snowy mountain range",
+    "a vintage car driving down a coastal highway, film grain",
+    "a robot painting a portrait in an art studio",
+    "rain falling on a tokyo street, people with umbrellas, neon reflections",
+    "a hummingbird hovering next to a red flower, ultra slow motion",
+    "a sailboat gliding across a calm lake at dawn, mist rising",
+    "fireworks exploding over a city skyline at night",
+    "a cat wearing sunglasses skateboarding down a hill",
+    "lava flowing down a volcano at night, aerial view",
+    "a ballerina dancing on a rooftop at golden hour",
+    "a school of fish swimming through a coral reef, underwater camera",
+    "a train crossing a stone viaduct through autumn forest",
+    "a barista pouring latte art in a cozy cafe",
+    "wind turbines spinning on green hills under fast-moving clouds",
+    "a knight walking through a foggy forest, torchlight",
+    "a paper boat floating down a rain gutter stream"
+  ],
+  "vbench": [
+    "a person is playing guitar",
+    "a red ball bouncing",
+    "a dog running in the park",
+    "fireworks in the night sky",
+    "a windmill turning in the wind",
+    "waves crashing against the cliffs",
+    "a train moving through the countryside",
+    "a candle flame flickering in the dark"
+  ]
+}

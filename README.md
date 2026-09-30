@@ -75,6 +75,10 @@ for [issue #24](https://github.com/EfficientMoE/Omni-Infinity/issues/24).
 | C3 | `vision-cache` | Registry optimization. |
 | C5 | `--denoise-cache-coefficients` plus `--denoise-cache-threshold` | Off the registry. C5 refuses to run without H3-calibrated coefficients. |
 
+Benchmarks quantifying each cache level's contribution (microbenchmarks,
+one-factor ablation, VidProM serving trace, C5 calibration probe):
+[docs/cache_benchmarks.md](docs/cache_benchmarks.md).
+
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
 [OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
 pinned at `third_party/vdn-minimax-h3`): a frame-wise linear-attention
