@@ -75,12 +75,13 @@ ready only after the WebSocket stream has completed, so HLS TTFF is also
 
 Collection date: 2026-09-29. All rows `SKIP`:
 
-- Local Omni stacks: `POST /v1/streams` / `WS /v1/streams/{id}/ws` are not
-  present on `bench/stream-*` (issue
-  [#14](https://github.com/EfficientMoE/Omni-Infinity/issues/14) not merged
-  into these measurement branches) → `notes=issue-14-absent`.
-- External Helios / LingBot / SANA-WM: checkpoint env paths unset →
-  `notes=weights-absent`.
+- Local Omni stacks: the 2026-09-29 rows are SKIP because
+  `bench/stream-baseline`, `bench/stream-micro`, and `bench/stream-ablation`
+  do not register the stream routes. `bench/stream-harness` does.
+  `notes=issue-14-absent`.
+- External Helios / LingBot / SANA-WM stay `weights-absent` when
+  `OMNI_HELIOS_WEIGHTS`, `OMNI_LINGBOT_WEIGHTS`, and `OMNI_SANA_WM_WEIGHTS`
+  are unset.
 
 | track | stack | arch | chunk_frames | transport | rep | ttff_ms | t_job_ready_ms | chunk_rtf_p50 | stall_count | quality_vs_job | peak_gib | sustained_fps | verdict | notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -171,26 +172,50 @@ Unmeasured grid → stay on the baseline knobs and mark each axis `REPORT`:
   geometry), not H3's 24 fps.
 - Issue #14's `NativeChunker` is interface-only until H3-World lands; native
   rows are `SKIP`, never a fake pass.
-- This collection pass did not measure GPU sessions: stream API absent on the
-  bench branches, and external weight env vars were unset.
+- This collection pass did not measure GPU sessions. The stream routes were
+  absent on `bench/stream-baseline`, `bench/stream-micro`, and
+  `bench/stream-ablation`, and the external weight env vars were unset.
 
 ## How to re-run with #14
 
-```bash
-# contract + report branch
-git checkout bench/stream-harness
+1. Start the server from a checkout that contains the stream routes.
+   `bench/stream-harness` does. `bench/stream-baseline`,
+   `bench/stream-micro`, and `bench/stream-ablation` do not.
+2. A dense measurement needs the README streamed profile, plus streaming
+   flags: `OMNI_CHECKPOINT`, `OMNI_STORE_DIR`, `OMNI_STORE_COMPONENTS`,
+   `OMNI_MODEL_ARCH`, `OMNI_OPTIMIZATIONS`, `OMNI_MAX_VRAM`, and
+   `OMNI_STREAM_ENABLED=1`. VDN measurements use `vdn-hybrid` at 768p and
+   do not use the dense AdaLN cache.
+3. From `.worktrees/bench-stream-baseline`, run
+   `python benchmarks/streaming/baseline.py --base-url http://127.0.0.1:8000 --out results/streaming/baseline.csv`.
+   From `.worktrees/bench-stream-micro`, run
+   `python benchmarks/streaming/micro.py --base-url http://127.0.0.1:8000 --out results/streaming/micro.csv`.
+   Those scripts are not on the harness branch.
+4. `OMNI_MODEL_ARCH` is fixed when the server starts, so it cannot be changed
+   between rows in one live process. Run the ablation separately for each
+   architecture and use separate output files, for example:
 
-# one GPU at a time
-cd .worktrees/bench-stream-baseline
-OMNI_STREAM_ENABLED=1 python -m omni_infinity.serve &
-python benchmarks/streaming/baseline.py --out results/streaming/baseline.csv
+   ```bash
+   python benchmarks/streaming/ablation.py \
+     --out results/streaming/ablation-h3-dense.csv
+   python benchmarks/streaming/ablation.py \
+     --out results/streaming/ablation-vdn-hybrid.csv
+   ```
 
-cd ../bench-stream-micro
-python benchmarks/streaming/micro.py --out results/streaming/micro.csv
-
-cd ../bench-stream-ablation
-python benchmarks/streaming/ablation.py --out results/streaming/ablation.csv
-```
+   ablation.py writes a skip manifest for each run. The script has no
+   architecture filter. Merge the collected files by keeping
+   the header from the first file and appending the data rows from the second.
+   Each row's `restart_command` sets `OMNI_MODEL_ARCH`,
+   `OMNI_OPTIMIZATIONS`, `OMNI_STREAM_ENABLED`, `OMNI_STREAM_CHUNK_FRAMES`,
+   and `OMNI_STREAM_FALLBACK_HLS`. The operator still supplies
+   `OMNI_CHECKPOINT`, `OMNI_STORE_DIR`, and `OMNI_MAX_VRAM`, starts a fresh
+   process per row, and does not retry OOM. Run it from
+   `.worktrees/bench-stream-ablation`.
+   The normal run writes those commands in the CSV manifest named by `--out`;
+   stdout contains only the summary. With `--dry-run`, the commands are
+   printed to stdout instead and no CSV is written.
+5. Client arrival gaps stay in `arrival_gap_ms`. They do not fill
+   `chunk_produce_ms`. Measure one GPU at a time.
 
 Optional external controls: set `OMNI_HELIOS_WEIGHTS`, `OMNI_LINGBOT_WEIGHTS`,
 and `OMNI_SANA_WM_WEIGHTS` to local checkpoint directories before measuring

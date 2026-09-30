@@ -32,8 +32,16 @@ No model weights are needed:
 
 ```bash
 docker run --rm omni-infinity-vdn:latest \
-  python -m pytest tests/ -k "not parity"
+  sh -lc 'pip install --no-cache-dir -e "/workspace/omni-infinity[serve]" \
+    && python -m pytest tests/ -m "not gpu and not weights" -q'
 ```
+
+The image installs the core test dependencies, but the image build uses
+`--no-deps` for the Omni-Infinity editable install. Install the serving extra
+before collecting the full CPU suite because the streaming test modules import
+FastAPI at module scope. The image installs pytest and pytest-timeout, and
+does not install pytest-cov. The coverage floor and Ruff gate live in
+`.github/workflows/ci.yml`.
 
 ## Model cache and license
 

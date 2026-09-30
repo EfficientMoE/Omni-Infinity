@@ -267,8 +267,11 @@ message; denoising is not resumed. Queued records remain on disk but are not
 automatically resubmitted. Terminal records remain pollable directly by their
 job ID (the same 32-hex value used as `<uuid>` above). `output.wav` is an
 internal stereo sidecar; the public artifacts endpoint returns only the MP4,
-whose AAC stream contains the same audio. `type="ref2va"` is schema-valid but
-returns HTTP 501 until Task 3 / issue #8 lands. Webhooks remain deferred from
+whose AAC stream contains the same audio. `type="ref2va"` is schema-valid on
+both `POST /v1/jobs` and `POST /v1/streams`, and both return HTTP 501. The
+supported Ref2VA path is `examples/ref2va_smoke.py`. Unknown job IDs return
+HTTP 404. `OMNI_DEVICE` defaults to `cuda`. `OMNI_WORKERS` must stay `1`.
+Webhooks remain deferred from
 issue #9: the v0.1 contract is polling because callback authentication,
 signing, delivery persistence, and retry semantics have not yet been
 specified.
@@ -304,13 +307,28 @@ curl http://127.0.0.1:8000/v1/streams \
 # HTTP 202: {"stream_id":"0123456789abcdef0123456789abcdef"}
 ```
 
-Connect a WebSocket player to `WS /v1/streams/{id}/ws`. The server sends an
-`init` message containing the fMP4 initialization segment and MSE codec,
-followed by `chunk` messages carrying base64 fMP4 fragments plus their PTS,
-prompt, and optional instruction, then `end`. The `source="native"` test stub
-also accepts client `input` messages on that socket. Arrow keys map to
-forward/back/left/right and space maps to jump. The real H3-World native
-chunk producer is not included.
+The response is HTTP 202 `{"stream_id": "<32 hex>"}`.
+
+Connect a WebSocket player to `WS /v1/streams/{id}/ws`. The server sends, in
+order:
+
+- `init`: `codec`, `init_b64`, and `action_script`
+- `chunk`: `index`, `pts`, `duration`, `keyframe`, `video_b64`, `audio_b64`,
+  `prompt`, `instruction`, `action`, and `done`
+- `end`: `artifact_url`, sent after the MP4 is written
+
+`audio_b64` is null, and audio is muxed into the fMP4 fragment. Failures are
+`{"type": "error", "detail": "..."}`.
+
+`source="clip"` ignores client `input` messages. `source="native"` is the
+16×16 stub. It consumes `{"type":"input","key","down","action","prompt"}`.
+Arrow keys map to forward/back/left/right and space maps to jump. The real
+H3-World native chunk producer is not included.
+
+The behavior contract is
+[docs/streaming_chunk_playback.md](docs/streaming_chunk_playback.md). The
+metric contract and the 2026-09-29 SKIP snapshot are in
+[docs/streaming_bench.md](docs/streaming_bench.md).
 
 `source="clip"` runs the existing one-shot dense or VDN runner, then fragments
 the decoded result. ClipChunker does not overlap generation with playback.
@@ -325,15 +343,17 @@ unchanged. The local reference client is:
 ```bash
 python examples/stream_play.py \
   --url ws://127.0.0.1:8000/v1/streams/<id>/ws \
-  --player av
+  --player av \
+  --interactive
 ```
 
 Streaming settings:
 
 - `OMNI_STREAM_ENABLED` defaults off and controls all stream routes and `/`.
 - `OMNI_STREAM_MAX_SESSIONS` defaults to `1`.
-- `OMNI_STREAM_SESSION_TTL` defaults to `30` seconds and releases sessions
-  whose WebSocket or HLS client never connects.
+- `OMNI_STREAM_SESSION_TTL` defaults to `30` seconds. Sessions that never
+  connect are checked when the next session is created, then cancelled.
+  This is not a background timer.
 - `OMNI_STREAM_CHUNK_FRAMES` defaults to `24`.
 - `OMNI_STREAM_QUEUE_CHUNKS` defaults to `8` and bounds socket buffering.
 - `OMNI_STREAM_FALLBACK_HLS` defaults off. When enabled, it adds
@@ -357,6 +377,22 @@ Streaming settings:
 > fatbin). Consumers pin ranges (`>=0.x,<0.y`); the reference fallback is
 > the forward-compat valve (no lockstep releases). **Extraction = `git mv`
 > impls + swap the facade's imports; call sites are already stable.**
+
+## Development
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on Python 3.12:
+
+```bash
+pip install -e '.[dev]'
+ruff check .
+ruff format --check .
+pytest tests/ -m "not gpu and not weights" -q --timeout 180 \
+  --cov=omni_infinity --cov-report=term-missing --cov-fail-under=80
+```
+
+Tests marked `gpu` or `weights` need a CUDA device and a local checkpoint.
+CI excludes both marks. The CPU job installs a CPU torch wheel before the
+editable install.
 
 ## License
 
