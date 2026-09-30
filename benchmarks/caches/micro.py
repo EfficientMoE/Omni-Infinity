@@ -38,17 +38,12 @@ def _time_ms(fn: Callable[[], Any], reps: int, warmup: int) -> list[float]:
     use_cuda = torch.cuda.is_available()
     for _ in range(reps):
         if use_cuda:
-            start = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
-            start.record()
-            fn()
-            end.record()
             torch.cuda.synchronize()
-            samples.append(start.elapsed_time(end))
-        else:
-            t0 = time.perf_counter()
-            fn()
-            samples.append((time.perf_counter() - t0) * 1000.0)
+        t0 = time.perf_counter()
+        fn()
+        if use_cuda:
+            torch.cuda.synchronize()
+        samples.append((time.perf_counter() - t0) * 1000.0)
     return samples
 
 
