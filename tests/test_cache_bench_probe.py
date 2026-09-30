@@ -35,3 +35,13 @@ def test_probe_records_tensorless_output_without_advancing_output_state():
         module(hidden_states=torch.zeros(2, 4))
         module(hidden_states=torch.ones(2, 4))
     assert [record["output_rel_l1"] for record in records] == [None, None]
+
+
+def test_probe_preserves_the_forward_signature():
+    import inspect
+
+    module = _Toy()
+    with probe_forward(module):
+        parameters = inspect.signature(module.forward).parameters
+        assert "hidden_states" in parameters
+        module(hidden_states=torch.zeros(2))

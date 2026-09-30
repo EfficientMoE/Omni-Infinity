@@ -34,16 +34,18 @@ def _rel_l1(current, previous) -> float | None:
 
 @contextlib.contextmanager
 def probe_forward(module, signal_name: str = "hidden_states"):
-    """Yield a list that fills with one record per forward call."""
+    """Yield a list that fills with one record per forward call.
+
+    Records through ``register_forward_hook`` rather than replacing
+    ``forward``: the H3 offload machinery rebinds the transformer's
+    instance ``forward`` on the first call, which silently evicts a
+    replacement wrapper, while ``__call__`` hooks keep firing.
+    """
     records: list[dict] = []
     state = {"input": None, "output": None}
-    had_instance_forward = "forward" in module.__dict__
-    previous_instance_forward = module.__dict__.get("forward")
-    original = module.forward
 
-    def probed(*args, **kwargs):
+    def record(hooked, args, kwargs, output):
         signal = kwargs.get(signal_name, args[0] if args else None)
-        output = original(*args, **kwargs)
         from omni_infinity.caches._tensor_tree import tree_tensors
 
         leaves = tree_tensors(output)
@@ -62,14 +64,11 @@ def probe_forward(module, signal_name: str = "hidden_states"):
             state["output"] = leaf.detach()
         return output
 
-    module.forward = probed
+    handle = module.register_forward_hook(record, with_kwargs=True)
     try:
         yield records
     finally:
-        if had_instance_forward:
-            module.forward = previous_instance_forward
-        else:
-            delattr(module, "forward")
+        handle.remove()
 
 
 def main() -> int:  # pragma: no cover
@@ -91,11 +90,20 @@ def main() -> int:  # pragma: no cover
     )
     from omni_infinity.runner import ReferenceRunner, _transformer_component
 
+    store_dir = os.environ.get("OMNI_STORE_DIR")
+    store_components = tuple(
+        filter(
+            None,
+            os.environ.get("OMNI_STORE_COMPONENTS", "").split(","),
+        )
+    )
     runner = ReferenceRunner.from_pretrained(
         os.environ["OMNI_CHECKPOINT"],
         workflow="fl2va",
         offload=True,
-        store_dir=os.environ.get("OMNI_STORE_DIR"),
+        store_dir=store_dir,
+        store_components=store_components or None,
+        adaln_host_cache=bool(store_dir),
         block_stream_blocks_per_group=1,
         stream_text_encoder=True,
     )
