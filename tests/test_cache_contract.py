@@ -4,6 +4,7 @@
 import importlib.util
 import sys
 import types
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
@@ -216,3 +217,28 @@ def test_smoke_parser_exposes_opt_in_cache_flags():
     assert args.vision_cache is True
     assert args.denoise_cache_coefficients == "1.0,0.0"
     assert args.denoise_cache_threshold == 0.2
+
+
+def test_parity_suites_do_not_enable_caches():
+    for name in (
+        "test_reference_parity.py",
+        "test_ref2va_parity.py",
+        "test_vdn_parity.py",
+    ):
+        text = (Path("tests") / name).read_text()
+        assert "condition_cache" not in text
+        assert "vision_cache" not in text
+        assert "denoise_cache" not in text
+        assert "condition-cache" not in text
+        assert "vision-cache" not in text
+
+
+def test_readme_points_at_the_cache_stack():
+    text = Path("README.md").read_text()
+    for sentence in (
+        "Nothing is on by default.",
+        "C2 is deferred.",
+        "C5 refuses to run without H3-calibrated coefficients.",
+        "C4 is unchanged upstream.",
+    ):
+        assert sentence in text
