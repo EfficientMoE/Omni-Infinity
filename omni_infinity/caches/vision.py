@@ -68,13 +68,14 @@ def _visual_module(text_encoder):
     raise AttributeError("text encoder has no visual module")
 
 
-def _cache_key(args, kwargs) -> bytes:
+def _call_key(args, kwargs, namespace: str | None = None) -> bytes:
     hasher = hashlib.sha256()
     update_hash_for_value(hasher, "omni-vision-v1")
-    update_hash_for_value(hasher, args)
-    for key in sorted(kwargs):
-        update_hash_for_value(hasher, key)
-        update_hash_for_value(hasher, kwargs[key])
+    update_hash_for_value(hasher, namespace)
+    update_hash_for_value(hasher, tuple(args))
+    update_hash_for_value(
+        hasher, {name: kwargs[name] for name in sorted(kwargs)}
+    )
     return hasher.digest()
 
 
@@ -127,15 +128,21 @@ def enable_vision_cache(
     *,
     max_entries: int = 4,
 ) -> VisionCacheController:
-    """Cache complete calls to the encoder's vision tower."""
+    """Cache complete calls to the encoder's vision tower,
+    namespaced by tower identity."""
     module = _visual_module(text_encoder)
     cache = cache or VisionEmbedCache(max_entries=max_entries)
     original_forward = module.forward
     had_instance_forward = "forward" in module.__dict__
     previous_instance_forward = module.__dict__.get("forward")
 
+    module_type = type(module)
+    namespace = (
+        f"{module_type.__module__}.{module_type.__qualname__}:{id(module)}"
+    )
+
     def cached_forward(*args, **kwargs):
-        key = _cache_key(args, kwargs)
+        key = _call_key(args, kwargs, namespace)
         cached = cache.get(key)
         if cached is not None:
             device = _first_tensor_device(args, kwargs)

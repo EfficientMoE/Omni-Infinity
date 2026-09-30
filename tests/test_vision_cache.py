@@ -16,14 +16,15 @@ from omni_infinity.caches.vision import (
 
 
 class _Tower(torch.nn.Module):
-    def __init__(self, *, tuple_output=False):
+    def __init__(self, *, tuple_output=False, scale=1.0):
         super().__init__()
         self.calls = 0
         self.tuple_output = tuple_output
+        self.scale = scale
 
     def forward(self, *args, **_kwargs):
         self.calls += 1
-        output = args[0] + 1
+        output = args[0] * self.scale
         if self.tuple_output:
             return output, output + 1
         return output
@@ -126,19 +127,16 @@ def test_close_restores_an_existing_instance_forward():
     assert tower.forward is custom
 
 
-def test_controllers_can_share_a_cache_entry():
-    cache = VisionEmbedCache()
-    first_tower = _Tower()
-    second_tower = _Tower()
-    enable_vision_cache(SimpleNamespace(visual=first_tower), cache)
-    enable_vision_cache(SimpleNamespace(visual=second_tower), cache)
-
-    first_tower(torch.ones(2))
-    second_tower(torch.ones(2))
-
-    assert first_tower.calls == 1
-    assert second_tower.calls == 0
-    assert cache.stats()["entries"] == 1
+def test_shared_cache_instance_is_namespaced_by_tower():
+    cache = VisionEmbedCache(max_entries=8)
+    tower_a, tower_b = _Tower(scale=2.0), _Tower(scale=3.0)
+    enable_vision_cache(SimpleNamespace(visual=tower_a), cache)
+    enable_vision_cache(SimpleNamespace(visual=tower_b), cache)
+    pixels = torch.ones(2)
+    output_a = tower_a(pixels)
+    output_b = tower_b(pixels)
+    assert tower_a.calls == 1 and tower_b.calls == 1
+    assert not torch.equal(output_a, output_b)
 
 
 def test_vision_cache_is_an_opt_in_registry_optimization():
