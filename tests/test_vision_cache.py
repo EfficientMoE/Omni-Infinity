@@ -19,13 +19,14 @@ from omni_infinity.caches.vision import (
 
 
 class FakeVisualTower(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, scale=2.0):
         super().__init__()
         self.calls = 0
+        self.scale = scale
 
     def forward(self, pixel_values, grid_thw=None):
         self.calls += 1
-        return pixel_values * 2.0
+        return pixel_values * self.scale
 
 
 class FakeTupleTower(torch.nn.Module):
@@ -145,12 +146,13 @@ def test_missing_visual_tower_raises():
         enable_vision_cache(torch.nn.Module())
 
 
-def test_shared_cache_instance_across_towers():
+def test_shared_cache_instance_is_namespaced_by_tower():
     cache = VisionEmbedCache(max_entries=8)
-    tower_a, tower_b = FakeVisualTower(), FakeVisualTower()
+    tower_a, tower_b = FakeVisualTower(2.0), FakeVisualTower(3.0)
     enable_vision_cache(FakeEncoder(tower_a), cache)
     enable_vision_cache(FakeEncoder(tower_b), cache)
     pixels = torch.ones(2, 2)
-    tower_a(pixels)
-    tower_b(pixels)
-    assert tower_a.calls == 1 and tower_b.calls == 0
+    output_a = tower_a(pixels)
+    output_b = tower_b(pixels)
+    assert tower_a.calls == 1 and tower_b.calls == 1
+    assert not torch.equal(output_a, output_b)

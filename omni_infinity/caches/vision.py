@@ -75,9 +75,10 @@ class VisionEmbedCache:
             }
 
 
-def _call_key(args, kwargs) -> str:
+def _call_key(args, kwargs, namespace: str | None = None) -> str:
     hasher = hashlib.sha256()
     update_hash_for_value(hasher, "omni-vision-v1")
+    update_hash_for_value(hasher, namespace)
     update_hash_for_value(hasher, tuple(args))
     update_hash_for_value(
         hasher, {name: kwargs[name] for name in sorted(kwargs)}
@@ -114,9 +115,13 @@ class VisionCacheController:
         self._had_instance_forward = "forward" in module.__dict__
         self._previous_forward = module.__dict__.get("forward")
         original = module.forward
+        module_type = type(module)
+        namespace = (
+            f"{module_type.__module__}.{module_type.__qualname__}:{id(module)}"
+        )
 
         def cached_forward(*args, **kwargs):
-            key = _call_key(args, kwargs)
+            key = _call_key(args, kwargs, namespace)
             hit = cache.get(key)
             if hit is not None:
                 device = _first_tensor_device(args, kwargs)
