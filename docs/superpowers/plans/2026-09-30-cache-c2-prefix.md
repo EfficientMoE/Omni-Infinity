@@ -4,7 +4,7 @@
 
 **Goal:** Record why the Qwen3-VL prefix cache is not in this stack, and pin a test that fails if someone adds it quietly.
 
-**Architecture:** No cache module. The document holds the reuse rule and the function signature a later resident-encoder change must implement. This PR's test deletes that signature's file if it appears.
+**Architecture:** No cache module. The document holds the reuse rule and the function signature a later resident-encoder change must implement. This PR's test fails if that signature's file appears.
 
 **Tech Stack:** Markdown and pytest. No new dependencies.
 
