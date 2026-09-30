@@ -70,10 +70,30 @@ def build_cell_command(
     ]
 
 
+def _cell_payload(stdout: str) -> dict:
+    """The cell's JSON document from possibly noisy stdout.
+
+    Generation libraries write warnings and progress bars around the
+    cell's single JSON line, so scan lines from the end for the last
+    one that parses to the payload object.
+    """
+    for line in reversed(stdout.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and "cell" in payload:
+            return payload
+    raise ValueError("no cell payload found in stdout")
+
+
 def rows_from_cell_output(cell: Cell, stdout: str) -> list[dict]:
     """Convert one cell's JSON stdout into complete contract rows."""
     try:
-        rows = _rows_from_cell_payload(cell, json.loads(stdout))
+        rows = _rows_from_cell_payload(cell, _cell_payload(stdout))
         if not rows:
             raise ValueError("cell output has no rows")
         return rows

@@ -97,3 +97,23 @@ def test_bad_cell_output_becomes_a_complete_failure_row():
     assert set(rows[0]) == set(FIELDS)
     assert rows[0]["verdict"] == "FAIL"
     assert rows[0]["notes"] == "cell-badoutput"
+
+
+def test_noisy_stdout_still_yields_the_payload_rows():
+    cell = GRID[0]
+    payload = {
+        "cell": cell.name,
+        "phases": [{"phase": "cold", "e2e_ms": 100.0, "stats": {}}],
+    }
+    stdout = "\n".join(
+        (
+            "`num_frames` has to be of the form 17 * n + 5; rounding.",
+            "100%|##########| 7/7 [00:20<00:00,  2.94s/it]",
+            '{"not": "the payload"}',
+            json.dumps(payload),
+            "",
+        )
+    )
+    rows = rows_from_cell_output(cell, stdout)
+    assert rows[0]["phase"] == "cold"
+    assert rows[0]["e2e_ms"] == 100.0
