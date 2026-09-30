@@ -10,6 +10,31 @@
 
 **Spec:** Issue [#24](https://github.com/EfficientMoE/Omni-Infinity/issues/24) item C5, and `denoise_step_cache` in `docs/superpowers/plans/2026-09-30-caches-contract.md`.
 
+## Prerequisites (stacked plan — read first)
+
+This plan is stacked on the shared cache contract and cannot start before it:
+
+- **Branch:** `plan/cache-c5-denoise`, based on `plan/caches-contract`.
+- **Prerequisite plan:** `docs/superpowers/plans/2026-09-30-caches-contract.md`
+  must be **fully executed** on the base branch before Task 1 here begins.
+  That plan — not this one — creates:
+  - `omni_infinity/caches/__init__.py` and
+    `omni_infinity/caches/_tensor_tree.py` (`tree_map`, `tree_tensors`
+    consumed by Task 2 here) — contract Task 1;
+  - `omni_infinity/caches/attach.py`, whose `bind_generation(...).denoise()`
+    imports `denoise_step_cache` from this module when a config is passed —
+    contract Task 3;
+  - `tests/test_cache_contract.py` — contract Tasks 2–4.
+- At planning time none of those files exist in the repository. Their
+  absence from this PR's diff is expected and is not an error in this plan.
+  Every "stop" condition below is an **execution-time preflight** that
+  verifies the contract plan has been executed on your branch — it is not a
+  claim about the current checkout.
+- C5 stays off the registry by design: the contract's
+  `load_cache_optimizations()` deliberately does **not** import
+  `omni_infinity.caches.denoise`, which is why Task 2 asserts
+  `denoise-cache` remains unknown to `runner_kwargs_for`.
+
 ## Global Constraints
 
 - Not a registry optimization. Do not add `denoise-cache` to `OPTIMIZATIONS`, `load_cache_optimizations`, or `GenerationRequest`.
@@ -17,7 +42,7 @@
 - Do not add an H3 coefficient table. Do not add a GPU CLIP/SSIM/PSNR test. That gate waits on a calibration the literature does not publish for MiniMax-H3.
 - Do not publish text K or V. The wrapper stores the forward output, or a residual of the named inputs, for this generation only.
 - Do not modify `third_party/`, runners, `attach.py`, `serve/`, or `examples/fl2va_smoke.py`.
-- If `attach.py` does not import `denoise_step_cache`, stop.
+- Preflight before Task 1: run `grep -n "denoise_step_cache" omni_infinity/caches/attach.py`. If the file is missing or lacks that name, stop and execute the contract plan first (see Prerequisites).
 - New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
 - Fresh context: this plan and the contract Interfaces. Do not open the other cache plans or draft PR #25.
 
