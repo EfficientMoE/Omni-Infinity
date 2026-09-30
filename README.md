@@ -197,6 +197,10 @@ C2 (encoder prefix cache) is deferred until a resident-encoder
 deployment exists; C4 (VDN's shape caches) stays untouched upstream —
 both are documented in [docs/caches.md](docs/caches.md).
 
+Benchmarks quantifying each cache level's contribution (microbenchmarks,
+one-factor ablation, VidProM serving trace, C5 calibration probe):
+[docs/cache_benchmarks.md](docs/cache_benchmarks.md).
+
 ## Job-serving API
 
 Install the optional serving stack:
