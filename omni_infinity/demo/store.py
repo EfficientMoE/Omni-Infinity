@@ -6,14 +6,14 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from pathlib import Path
 
 from pydantic import ValidationError
 
 from omni_infinity.demo.models import DemoRecord, DemoRequest
 from omni_infinity.demo.schedule import PRESETS, segment_count
 from omni_infinity.serve.models import JobStatus, Progress
-from omni_infinity.serve.store import CorruptJob, JobNotFound, JobStore
+from omni_infinity.serve.store import CorruptJob, JobNotFound, JobStore, _now
 
 
 class DemoStore(JobStore):
@@ -21,7 +21,7 @@ class DemoStore(JobStore):
         with self._lock:
             demo_id = uuid.uuid4().hex
             self.job_dir(demo_id).mkdir()
-            now = datetime.now(timezone.utc)
+            now = _now()
             total_steps = (
                 segment_count(PRESETS[request.duration])
                 * request.num_inference_steps
@@ -48,7 +48,7 @@ class DemoStore(JobStore):
             except (json.JSONDecodeError, OSError, ValidationError) as exc:
                 raise CorruptJob(f"demo {job_id!r} is corrupt: {exc}") from exc
 
-    def _record_path(self, job_id: str):
+    def _record_path(self, job_id: str) -> Path:
         try:
             return self.job_dir(job_id) / "demo.json"
         except ValueError:

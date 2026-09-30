@@ -8,7 +8,7 @@ import io
 import logging
 import time
 from collections.abc import Callable
-from concurrent.futures import Executor, Future
+from concurrent.futures import Executor
 
 from PIL import Image
 
@@ -82,7 +82,6 @@ class DemoService:
         self.optimizations = optimizations
         self.stream_service = stream_service
         self.stream_chunk_frames = stream_chunk_frames
-        self._futures: dict[str, Future] = {}
 
     def submit(self, request: DemoRequest) -> DemoRecord:
         if self.store is None or self.executor is None:
@@ -105,16 +104,15 @@ class DemoService:
         first = JobService._decode_image(
             request.first_frame_base64, "first frame"
         )
-        assert first is not None
+        if first is None:
+            raise InvalidMedia("first frame is required")
         record = self.store.create(request)
         path = self.store.input_path(record.id, "input-first.png")
         with Image.open(io.BytesIO(first)) as image:
             image.convert("RGB").save(path, format="PNG")
         if self.stream_service is not None:
             self.stream_service.open_session(record.id)
-        future = self.executor.submit(self._execute, record.id)
-        self._futures[record.id] = future
-        future.add_done_callback(lambda _: self._futures.pop(record.id, None))
+        self.executor.submit(self._execute, record.id)
         return record
 
     def _execute(self, demo_id: str) -> None:
@@ -299,7 +297,8 @@ class DemoService:
                 i, request, frame, step_callback=step_callback
             )
             results.append(result)
-            frame = last_frame_image(result.videos[0])
+            if i + 1 < len(request.prompts):
+                frame = last_frame_image(result.videos[0])
         return stitch_results(
             results,
             playback_frames=playback_frames(PRESETS[request.duration]),
