@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import random
 
 FPS: int = 24
 SEGMENT_FRAMES: int = 124
@@ -24,3 +25,11 @@ def playback_frames(duration_s: int) -> int:
 
 def generated_frames(duration_s: int) -> int:
     return segment_count(duration_s) * SEGMENT_FRAMES
+
+
+def prompt_times(n: int, start: int, end: int, seed: int) -> list[int | None]:
+    rng = random.Random(seed)
+    times: list[int | None] = [None]
+    for _ in range(1, n):
+        times.append(rng.randint(start, end))
+    return times
