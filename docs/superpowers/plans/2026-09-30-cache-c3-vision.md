@@ -10,12 +10,40 @@
 
 **Spec:** Issue [#24](https://github.com/EfficientMoE/Omni-Infinity/issues/24) item C3, and `enable_vision_cache` in `docs/superpowers/plans/2026-09-30-caches-contract.md`.
 
+## Prerequisites (stacked plan — read first)
+
+This plan is stacked on the shared cache contract and cannot start before it:
+
+- **Branch:** `plan/cache-c3-vision`, based on `plan/caches-contract`.
+- **Prerequisite plan:** `docs/superpowers/plans/2026-09-30-caches-contract.md`
+  must be **fully executed** on the base branch before Task 1 here begins.
+  That plan — not this one — creates:
+  - `omni_infinity/caches/__init__.py` and
+    `omni_infinity/caches/_tensor_tree.py` (`update_hash_for_value`,
+    `tree_map`, `tree_nbytes`) — contract Task 1;
+  - `registry.load_cache_optimizations()` plus the `runner_kwargs_for`
+    fallback — contract Task 2;
+  - `omni_infinity/caches/attach.py`, whose functions import
+    `enable_vision_cache` from this module — contract Task 3;
+  - `tests/test_cache_contract.py` — contract Tasks 2–4.
+- At planning time none of those files exist in the repository. Their
+  absence from this PR's diff is expected and is not an error in this plan.
+  Every "stop" condition below is an **execution-time preflight** that
+  verifies the contract plan has been executed on your branch — it is not a
+  claim about the current checkout.
+- `vision-cache` requires **no edit to `registry.py`**: the contract's
+  `load_cache_optimizations()` dynamically imports
+  `omni_infinity.caches.vision` and publishes this module's `OPTIMIZATION`.
+  Creating `vision.py` with `OPTIMIZATION` (Task 2 below) is exactly what
+  makes `registry.runner_kwargs_for(..., ["vision-cache"])` resolve — no
+  registry change, so the `registry.py` constraint below holds.
+
 ## Global Constraints
 
 - Opt-in through `OPTIMIZATION` name `vision-cache`. Do not change default optimizations.
 - Do not split a multi-image call into per-image entries. That split belongs to C2.
 - Do not modify `third_party/`, runners, `registry.py`, `serve/`, `examples/fl2va_smoke.py`, `attach.py`, or any parity test.
-- If `attach.py` does not import `enable_vision_cache` from `omni_infinity.caches.vision`, stop.
+- Preflight before Task 1: run `grep -n "enable_vision_cache" omni_infinity/caches/attach.py`. If the file is missing or lacks that name, stop and execute the contract plan first (see Prerequisites).
 - CPU tests. Fake modules only. No checkpoint.
 - New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
 - Fresh context: this plan and the contract Interfaces. Do not open the other cache plans or draft PR #25.
