@@ -76,7 +76,13 @@ def test_attach_caches_records_disabled_state_and_namespace():
 
 
 @pytest.mark.parametrize("cache_name", ["condition_cache", "vision_cache"])
-def test_attach_caches_fails_closed_when_module_is_missing(cache_name):
+def test_attach_caches_fails_closed_when_module_is_missing(
+    cache_name, monkeypatch
+):
+    module_name = cache_name.removesuffix("_cache")
+    monkeypatch.setitem(
+        sys.modules, f"omni_infinity.caches.{module_name}", None
+    )
     kwargs = {"condition_cache": False, "vision_cache": False}
     kwargs[cache_name] = True
 
@@ -156,7 +162,8 @@ def test_bind_generation_is_noop_without_enabled_caches():
         assert controller is None
 
 
-def test_bind_generation_fails_closed_for_missing_denoise_cache():
+def test_bind_generation_fails_closed_for_missing_denoise_cache(monkeypatch):
+    monkeypatch.setitem(sys.modules, "omni_infinity.caches.denoise", None)
     runner = _Runner()
     runner.condition_cache = None
 
@@ -223,7 +230,8 @@ def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
     assert config.threshold == 0.2
 
 
-def test_denoise_config_fails_closed_when_module_is_missing():
+def test_denoise_config_fails_closed_when_module_is_missing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "omni_infinity.caches.denoise", None)
     args = SimpleNamespace(
         denoise_cache_coefficients="1.0,0.0",
         denoise_cache_threshold=0.2,
