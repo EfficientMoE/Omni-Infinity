@@ -9,6 +9,8 @@ import pytest
 import torch
 from PIL import Image
 
+from omni_infinity.demo import DemoRequest as ExportedDemoRequest
+from omni_infinity.demo import DemoService as ExportedDemoService
 from omni_infinity.demo.models import DemoRequest
 from omni_infinity.demo.service import DemoService
 from omni_infinity.demo.stitch import last_frame_image
@@ -16,6 +18,11 @@ from omni_infinity.runner import GenerationResult
 
 SAMPLING_RATE = 48000
 SEGMENT_FRAMES = 124
+
+
+def test_demo_package_reexports_public_api():
+    assert ExportedDemoRequest is DemoRequest
+    assert ExportedDemoService is DemoService
 
 
 @dataclass

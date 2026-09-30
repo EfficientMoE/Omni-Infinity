@@ -21,7 +21,7 @@ from omni_infinity.demo.schedule import (
     prompt_times,
     segment_count,
 )
-from omni_infinity.demo.stitch import last_frame_image, stitch_results
+from omni_infinity.demo.stitch import ResultStitcher, last_frame_image
 from omni_infinity.demo.store import DemoStore
 from omni_infinity.registry import resolve_profile
 from omni_infinity.runner import GenerationResult
@@ -183,6 +183,8 @@ class DemoService:
     ) -> GenerationResult:
         count = len(request.prompts)
         results: list[GenerationResult | None] = [None] * count
+        stitcher = ResultStitcher(playback_frames(PRESETS[request.duration]))
+        stitched_count = 0
         handoffs: dict[int, Image.Image] = {0: first}
         admitted: set[int] = set()
         live_clock = (
@@ -191,6 +193,7 @@ class DemoService:
         clock: PlaybackClock = live_clock or SimClock()
 
         def run_stage(name: str, i: int) -> None:
+            nonlocal stitched_count
             if name == "encoder":
                 admitted.add(i)
                 return
@@ -217,6 +220,9 @@ class DemoService:
                     live_clock.start()
             if i + 1 < count:
                 handoffs[i + 1] = last_frame_image(result.videos[0])
+            stitcher.append(result)
+            results[i] = None
+            stitched_count += 1
 
         times = prompt_times(
             count,
@@ -225,13 +231,9 @@ class DemoService:
             request.seed,
         )
         run_pipeline(count, times, clock=clock, run_stage=run_stage)
-        completed = [result for result in results if result is not None]
-        if len(completed) != count:
+        if stitched_count != count:
             raise RuntimeError("demo pipeline did not generate every clip")
-        return stitch_results(
-            completed,
-            playback_frames=playback_frames(PRESETS[request.duration]),
-        )
+        return stitcher.finish()
 
     def _publish_clip(
         self,
@@ -251,6 +253,7 @@ class DemoService:
             result.sampling_rate,
             chunk_frames=self.stream_chunk_frames,
         )
+        timestamp_offset = i * SEGMENT_FRAMES / 24
         self._publish(
             demo_id,
             {
@@ -258,9 +261,9 @@ class DemoService:
                 "codec": CODEC,
                 "init_b64": base64.b64encode(init).decode("ascii"),
                 "clip": i,
+                "timestamp_offset": timestamp_offset,
             },
         )
-        timestamp_offset = i * SEGMENT_FRAMES / 24
         for position, fragment in enumerate(fragments):
             chunk = MediaChunk(
                 index=fragment.index,
@@ -290,19 +293,16 @@ class DemoService:
         *,
         step_callback: StepCallback | None = None,
     ) -> GenerationResult:
-        results: list[GenerationResult] = []
+        stitcher = ResultStitcher(playback_frames(PRESETS[request.duration]))
         frame: Image.Image = first
         for i in range(len(request.prompts)):
             result = self._segment(
                 i, request, frame, step_callback=step_callback
             )
-            results.append(result)
             if i + 1 < len(request.prompts):
                 frame = last_frame_image(result.videos[0])
-        return stitch_results(
-            results,
-            playback_frames=playback_frames(PRESETS[request.duration]),
-        )
+            stitcher.append(result)
+        return stitcher.finish()
 
     def _segment(
         self,

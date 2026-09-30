@@ -42,10 +42,12 @@ def test_stitch_results_basic():
     assert stitched.videos[0].shape[0] == 6
 
     # Assert the first 4 frames equal result0 frames
-    np.testing.assert_allclose(stitched.videos[0][:4], result0.videos[0])
+    np.testing.assert_array_equal(stitched.videos[0][:4], result0.videos[0])
 
     # Assert the next 2 frames equal the first two frames of result1
-    np.testing.assert_allclose(stitched.videos[0][4:6], result1.videos[0][:2])
+    np.testing.assert_array_equal(
+        stitched.videos[0][4:6], result1.videos[0][:2]
+    )
 
     # Assert audio shape is (2, 6)
     assert stitched.audio.shape == (2, 6)
@@ -53,6 +55,25 @@ def test_stitch_results_basic():
     # Assert latents and audio_latents are None
     assert stitched.latents is None
     assert stitched.audio_latents is None
+
+
+def test_stitch_results_uses_disk_backed_video_without_concatenate(monkeypatch):
+    results = [make_result(4), make_result(4, scale=0.5)]
+
+    def reject_concatenate(*args, **kwargs):
+        raise AssertionError(
+            "stitching must not materialize a concatenated copy"
+        )
+
+    monkeypatch.setattr(stitch.np, "concatenate", reject_concatenate)
+
+    stitched = stitch.stitch_results(results, playback_frames=6)
+
+    assert isinstance(stitched.videos[0], np.memmap)
+    np.testing.assert_array_equal(stitched.videos[0][:4], results[0].videos[0])
+    np.testing.assert_array_equal(
+        stitched.videos[0][4:], results[1].videos[0][:2]
+    )
 
 
 def test_last_frame_image():
