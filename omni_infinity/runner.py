@@ -282,7 +282,9 @@ class ReferenceRunner:
         substituted = tuple(store_components) if store_dir else ()
         pipeline = MiniMaxH3ModularPipeline.from_pretrained(
             checkpoint,
-            workflow=workflow,
+            # The dense partition serves both text-only and keyframed calls;
+            # leave its conditional blocks intact so inputs select t2va/fl2va.
+            workflow=None if workflow == "fl2va" else workflow,
             components_manager=components_manager,
         )
         # The Qwen3-VL processor's component spec resolves by repo id, which

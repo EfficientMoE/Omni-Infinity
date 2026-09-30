@@ -309,5 +309,7 @@ def test_from_pretrained_threads_fp8_scale_into_store_loader(monkeypatch):
     )
 
     assert captured["fp8_mode"] == "per_row"
-    assert captured["workflow"] == "fl2va"
+    # Dense runners must retain the pipeline's automatic t2va/fl2va dispatch:
+    # the smoke path has no keyframe, while serving may supply one later.
+    assert captured["workflow"] is None
     assert captured["built"]["transformer"] == "fake-transformer"
