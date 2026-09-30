@@ -5,6 +5,8 @@ const form = document.querySelector("#stream-form");
 const prompt = document.querySelector("#prompt");
 const source = document.querySelector("#source");
 const duration = document.querySelector("#duration");
+const scheduleStart = document.querySelector("#schedule-start");
+const scheduleEnd = document.querySelector("#schedule-end");
 const promptStack = document.querySelector("#prompt-stack");
 const frameChip = document.querySelector("#frame-chip");
 const artifactLink = document.querySelector("#artifact");
@@ -228,6 +230,8 @@ function syncMode() {
   const demo = source.value === "demo";
   prompt.disabled = demo;
   prompt.required = !demo;
+  scheduleStart.disabled = !demo;
+  scheduleEnd.disabled = !demo;
   if (demo) {
     renderPromptStack();
     return;
@@ -339,6 +343,18 @@ async function createStream(event) {
   const prompts = demo
     ? [...promptStack.querySelectorAll("textarea")].map((node) => node.value)
     : [];
+  const scheduleStartSeconds = Number(scheduleStart.value);
+  const scheduleEndSeconds = Number(scheduleEnd.value);
+  if (
+    demo &&
+    (!Number.isInteger(scheduleStartSeconds) ||
+      !Number.isInteger(scheduleEndSeconds) ||
+      scheduleStartSeconds < 0 ||
+      scheduleEndSeconds < scheduleStartSeconds)
+  ) {
+    setStatus("schedule end is before schedule start");
+    return;
+  }
   if (demo) {
     armSchedule(prompts, DEMO_SECONDS[duration.value]);
     modelRunning = true;
@@ -351,6 +367,8 @@ async function createStream(event) {
         ? {
             prompts,
             duration: duration.value,
+            schedule_start: scheduleStartSeconds,
+            schedule_end: scheduleEndSeconds,
             model_arch: "h3-dense",
             optimizations: [
               "adaln-host-cache",
@@ -413,6 +431,8 @@ function sendKey(event, down) {
     focused === prompt ||
     focused === source ||
     focused === duration ||
+    focused === scheduleStart ||
+    focused === scheduleEnd ||
     (promptStack && promptStack.contains(focused))
   ) {
     return;
@@ -433,6 +453,7 @@ function sendKey(event, down) {
 }
 
 setStatus("offline");
+syncMode();
 source.addEventListener("change", syncMode);
 duration.addEventListener("change", () => {
   if (source.value === "demo") {

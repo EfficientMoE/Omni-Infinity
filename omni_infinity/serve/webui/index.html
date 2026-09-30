@@ -378,11 +378,11 @@
       .deck {
         margin-top: 20px;
         display: grid;
-        grid-template-columns: 1fr 220px auto;
+        grid-template-columns: 1fr 220px 168px auto;
         grid-template-areas:
           "prompt prompt prompt"
           "stack stack stack"
-          "source length run";
+          "source length window run";
         gap: 12px;
       }
 
@@ -402,8 +402,35 @@
         grid-area: length;
         display: none;
       }
-      form[data-mode="demo"] .field--length {
+      form[data-mode="demo"] .field--length,
+      form[data-mode="demo"] .field--window {
         display: flex;
+      }
+      .field--window {
+        grid-area: window;
+        display: none;
+      }
+      .window {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 6px;
+        align-items: center;
+      }
+      .window input {
+        width: 100%;
+        height: 44px;
+        padding: 0 10px;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r);
+        font: inherit;
+      }
+      .window span {
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
       }
       form[data-mode="demo"] .field--prompt {
         display: none;
@@ -756,6 +783,7 @@
             "stack"
             "source"
             "length"
+            "window"
             "run";
         }
         select,
@@ -832,6 +860,30 @@
               <option value="5min">5 minutes — 59 clips</option>
             </select>
           </label>
+          <div class="field field--window">
+            <span class="field__label">Prompt schedule</span>
+            <div class="window">
+              <input
+                id="schedule-start"
+                type="number"
+                min="0"
+                step="1"
+                value="1"
+                aria-label="Schedule start seconds"
+                required
+              />
+              <span>to</span>
+              <input
+                id="schedule-end"
+                type="number"
+                min="0"
+                step="1"
+                value="5"
+                aria-label="Schedule end seconds"
+                required
+              />
+            </div>
+          </div>
           <button type="submit" class="run">
             <span class="run__label">Open stream</span>
           </button>
@@ -859,7 +911,9 @@
         <p class="hint hint--rail">
           The highlighted row is the prompt under the playhead. In the
           multi-prompt demo, the first 124-frame clip starts playback while
-          later clips are still rendering. Arrow keys steer the native stub;
+          the encoder, backbone, and decoder keep working. Each later prompt
+          starts at a random whole second from X through Y, inclusive, after
+          playback begins. Arrow keys steer the native stub;
           space jumps. Input never rewrites a chunk already shown.
         </p>
       </aside>

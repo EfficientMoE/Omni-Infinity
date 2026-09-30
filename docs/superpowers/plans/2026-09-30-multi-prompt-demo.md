@@ -4,7 +4,7 @@
 
 **Goal:** Accept an ordered prompt list and play one stitched video at 15s, 1min, 2min, or 5min, where every prompt is one 124-frame generation.
 
-**Architecture:** A new `omni_infinity/demo/` package owns the duration table, frame/audio stitch, and the sequential runner loop. `POST /v1/demos` queues that loop on the existing job executor so the GPU still runs one generation at a time. As soon as the first 124-frame clip returns, its fMP4 fragments are sent and the browser starts playback. Later clips keep generating on that same worker and are appended as they finish. The finished file is still one trimmed MP4, written after the last clip. `POST /v1/jobs` and `GenerationRequest` stay single-prompt. The stream monitor picks the length from a dropdown and highlights the prompt whose interval contains `video.currentTime`.
+**Architecture:** A new `omni_infinity/demo/` package owns the duration table, the inclusive prompt clock, frame/audio stitch, and a three-stage pipeline. Each clip is encoder, then backbone, then decoder. Those modules stay on the one job worker, but a later prompt's encoder may run before the previous clip's decoder. The first clip is produced before playback. When its fragments are sent, the playback clock starts at 0. Each later prompt draws a whole second uniformly from X through Y inclusive and its encoder does not start before that second. The finished file is still one trimmed MP4. `POST /v1/jobs` and `GenerationRequest` stay single-prompt. The stream monitor picks the length from a dropdown, sets X and Y, and highlights the prompt whose interval contains `video.currentTime`.
 
 **Tech Stack:** Python 3.10+, FastAPI, Pydantic v2, Pillow, NumPy, PyTorch, pytest, the existing `write_artifacts` / `fragment_clip` helpers. No new dependencies. No H3-World weights.
 
@@ -15,7 +15,9 @@
 - Each segment is exactly 124 frames at 24 fps (`17*7+5`, 124/24 s). `num_frames` is not a demo request field.
 - Presets and the smallest covering prompt counts are exactly: `15s` → 3 prompts (372 generated frames, play 360), `1min` → 12 (1488 generated, play 1440), `2min` → 24 (2976 generated, play 2880), `5min` → 59 (7316 generated, play 7200). 23 prompts is 118.8 s and is rejected for `2min`. 58 prompts is 299.7 s and is rejected for `5min`.
 - Playback stops at the nominal duration: 15 s, 60 s, 120 s, 300 s. The final MP4 is trimmed to that duration. Fragments for the last clip stop at the same cut, before they are sent.
-- The first clip is fragmented and sent before `generate()` for the second clip starts. The browser plays that clip while later clips are still running. One executor, so generations stay serial; they overlap playback, not each other.
+- The first clip is encoded, denoised, and decoded before any later prompt starts. Sending its fragments starts the playback clock at 0. The browser plays that clip while later clips are still running.
+- `schedule_start` (X) and `schedule_end` (Y) are integers, `0 <= X <= Y`. For each prompt index `i >= 1`, the start second is `random.Random(seed).randint(X, Y)` drawn in index order. `randint` is inclusive on both ends. Prompt 0 has no draw. The encoder for prompt `i` does not start until the playback clock is at least that second.
+- Encoder, backbone, and decoder are three modules. On the single worker a tick runs every ready stage in the order backbone, encoder, decoder, each to completion. A due encoder may therefore run after the previous clip's backbone and before that clip's decoder. The backbone for clip `i > 0` still waits for clip `i - 1`'s decoded last frame. Two copies of the same module are never in flight.
 - Segment 0 uses the required first frame. Segment `i > 0` uses the last decoded frame of segment `i - 1` as its `image`. `last_image` is always `None`.
 - Segment `i` is called with `seed + i`.
 - `POST /v1/jobs` still accepts one `prompt` and `num_frames` in `120..360`. A demo id is HTTP 404 on `GET /v1/jobs/{id}`.
@@ -23,7 +25,7 @@
 - Profile mismatch is HTTP 409 with detail `request profile does not match the loaded server profile`. A bad prompt count is HTTP 422 with detail `duration {duration} requires {n} prompts, got {got}`. A missing first frame is HTTP 422 with detail `first frame is required`. Invalid image bytes reuse `JobService._decode_image` errors.
 - `vdn-hybrid` with `resolution != "768p"` raises `ValueError("vdn-hybrid requires the 768p canvas")` before any `generate()`.
 - `OMNI_STREAM_ENABLED` unset leaves `WS /v1/demos/{id}/ws` unregistered. `POST /v1/demos` stays registered either way.
-- The length control is `<select id="duration">` with options `15s`, `1min`, `2min`, `5min`. It is not a free-text field. The prompt row whose half-open interval contains `video.currentTime` has class `active`. Rows for clips the server has not sent yet stay visible and are marked rendering.
+- The length control is `<select id="duration">` with options `15s`, `1min`, `2min`, `5min`. It is not a free-text field. X and Y are `<input id="schedule-start">` and `<input id="schedule-end">`, integer seconds, defaults 1 and 5. The prompt row whose half-open interval contains `video.currentTime` has class `active`. Rows for clips the server has not sent yet stay visible and are marked rendering.
 - CPU tests, fake runners, no checkpoint loads. Do not modify `third_party/`.
 - New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
 
@@ -31,7 +33,9 @@
 
 - `2min` with 23 prompts and `5min` with 58 prompts are 422; the covering counts are 24 and 59. Task 3.
 - No played frame or fragment has `pts` at or past the nominal duration. Task 2 and Task 6.
-- The first clip's websocket `chunk` is sent before the second `generate()` starts, and the player calls `video.play()` on that first chunk. Task 6 and Task 7.
+- The first clip's websocket `chunk` is sent before any later encoder starts, and the player calls `video.play()` on that first chunk. Task 6 and Task 7.
+- With X = Y = 4, every later prompt's encoder waits until playback second 4. With X = 0 and Y = 0, those encoders may start at second 0. Task 8.
+- For three due clips, the stage order contains encoder of clip 2 before decoder of clip 1. Task 8.
 - Segment 1's `image` is the last frame of segment 0, not the user first frame. Task 4.
 - `POST /v1/jobs` still rejects a body that has `prompts` and no `prompt`. Task 5.
 - A demo submit and a job submit share one executor, so the two `generate()` calls cannot overlap. Task 5.
@@ -43,7 +47,8 @@
 Create:
 
 - `omni_infinity/demo/__init__.py` — re-exports `segment_count`, `DemoRequest`, `DemoService`.
-- `omni_infinity/demo/schedule.py` — preset table and frame counts.
+- `omni_infinity/demo/schedule.py` — preset table, frame counts, and inclusive prompt times.
+- `omni_infinity/demo/pipeline.py` — encoder, backbone, and decoder tick order.
 - `omni_infinity/demo/stitch.py` — last-frame image, concatenate, trim.
 - `omni_infinity/demo/models.py` — `DemoRequest`, `DemoRecord`, `DemoResponse`.
 - `omni_infinity/demo/store.py` — `DemoStore` under `{jobs_dir.parent}/demos`.
@@ -185,7 +190,8 @@ git commit -m "feat: stitch and trim demo segments"
 **Interfaces:**
 - Consumes: `PRESETS`, `segment_count` from Task 1. Optimization literals match `GenerationRequest.optimizations`.
 - Produces:
-  - `DemoRequest` fields: `prompts: list[str]` (each length 1..20000), `duration: Literal["15s","1min","2min","5min"]`, `model_arch: Literal["h3-dense","vdn-hybrid"] = "h3-dense"`, `optimizations` (same names and unique-name rule as `GenerationRequest`), `seed: int = 0`, `num_inference_steps: int = Field(default=8, ge=1, le=100)`, `resolution: Literal["256p","512p","768p"] = "256p"`, `first_frame_base64: str | None = None`.
+  - `DemoRequest` fields: `prompts: list[str]` (each length 1..20000), `duration: Literal["15s","1min","2min","5min"]`, `schedule_start: int = Field(default=1, ge=0)`, `schedule_end: int = Field(default=5, ge=0)`, `model_arch: Literal["h3-dense","vdn-hybrid"] = "h3-dense"`, `optimizations` (same names and unique-name rule as `GenerationRequest`), `seed: int = 0`, `num_inference_steps: int = Field(default=8, ge=1, le=100)`, `resolution: Literal["256p","512p","768p"] = "256p"`, `first_frame_base64: str | None = None`.
+  - If `schedule_end < schedule_start`, `ValueError` with message `schedule end is before schedule start`.
   - Model validator: `len(prompts) == segment_count(PRESETS[duration])`, else `ValueError` with message `duration {duration} requires {n} prompts, got {got}`.
   - `DemoRecord` and `DemoResponse` mirror `JobRecord` / `JobResponse` with `request: DemoRequest`.
 
@@ -321,7 +327,7 @@ git commit -m "feat: serve the multi-prompt demo"
 
 **Interfaces:**
 - Consumes: `fragment_clip` from `omni_infinity.streaming.fragment`. `chunk_message` is `stream.py`'s current `_chunk_message` made public; keep `_chunk_message = chunk_message`.
-- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends `init` and the first clip's `chunk` messages before the second `runner.generate` starts. Later clips are fragmented as each `generate()` returns, with `pts` shifted by `i * 124 / 24`. `end` is sent only after the last clip. Each chunk's `prompt` is that clip's prompt. `instruction` and `action` are `None`. The last chunk has `done: true`. No fragment has `pts >=` nominal seconds; the last clip is trimmed to the nominal cut before it is fragmented. The final MP4 is the stitched, trimmed timeline, written before `SUCCEEDED`. When `stream_enabled` is false, that websocket route is unregistered (404), `POST /v1/demos` still works, and the MP4 appears only after every clip has finished.
+- Produces: when `stream_enabled` is true, `WS /v1/demos/{id}/ws` sends `init` and the first clip's `chunk` messages before any later encoder starts. A later encoder also waits until the playback clock reaches that prompt's sampled second. Later clips are fragmented as each decoder returns, with `pts` shifted by `i * 124 / 24`. `end` is sent only after the last clip. Each chunk's `prompt` is that clip's prompt. `instruction` and `action` are `None`. The last chunk has `done: true`. No fragment has `pts >=` nominal seconds; the last clip is trimmed to the nominal cut before it is fragmented. The final MP4 is the stitched, trimmed timeline, written before `SUCCEEDED`. When `stream_enabled` is false, that websocket route is unregistered (404), `POST /v1/demos` still works, and the MP4 appears only after every clip has finished.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -334,7 +340,7 @@ Expected: FAIL because the websocket route is missing
 
 - [ ] **Step 3: Implement per-clip send**
 
-Inside the segment loop, after each `generate()`, fragment that clip and push its messages to the connected socket before the next `generate()`. Do not wait for `stitch_results` before the first chunk. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
+Drive clips through `run_pipeline` from Task 8. After decoder 0, fragment that clip and push its messages before any later encoder. Do not wait for `stitch_results` before the first chunk. Do not call `ClipChunker`. Do not register the route unless `configured.stream_enabled`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -368,7 +374,7 @@ git commit -m "feat: play the first demo clip while generating the rest"
 
 - [ ] **Step 1: Extend the web UI test**
 
-In `test_webui_is_served_only_when_streaming_is_enabled`, assert the page contains `id="duration"`, `value="15s"`, `value="1min"`, `value="2min"`, `value="5min"`, and `value="demo"`. Assert `player.js` contains `video.play`, `model running`, and `highlightCue`.
+In `test_webui_is_served_only_when_streaming_is_enabled`, assert the page contains `id="duration"`, `id="schedule-start"`, `id="schedule-end"`, `value="15s"`, `value="1min"`, `value="2min"`, `value="5min"`, and `value="demo"`. Assert `player.js` contains `video.play`, `model running`, `highlightCue`, `schedule_start`, and `schedule_end`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -400,16 +406,61 @@ git commit -m "feat: pick demo length from a dropdown and highlight the playhead
 
 ---
 
+### Task 8: Inclusive prompt clock and module pipeline
+
+**Files:**
+- Modify: `omni_infinity/demo/schedule.py`
+- Create: `omni_infinity/demo/pipeline.py`
+- Test: `tests/test_demo_schedule.py`
+- Test: `tests/test_demo_pipeline.py`
+
+**Interfaces:**
+- Consumes: `random.Random.randint`, which includes both endpoints.
+- Produces:
+  - `prompt_times(n: int, start: int, end: int, seed: int) -> list[int | None]`. Length `n`. Index 0 is `None`. Each later item is one `randint(start, end)` from `random.Random(seed)`, drawn in index order from that same generator.
+  - `run_pipeline(n: int, times: list[int | None]) -> list[tuple[str, int]]`. Stage names are `encoder`, `backbone`, and `decoder`. Clip 0 runs `encoder`, `backbone`, `decoder` before the clock starts. The clock then reads 0. A later `encoder` is emitted only when `times[i]` is not `None` and the clock is at least `times[i]`. After each backbone, ready stages run in the order backbone, encoder, decoder. `backbone` of clip `i > 0` is emitted only after `decoder` of clip `i - 1`.
+
+- [ ] **Step 1: Write the failing tests**
+
+`test_prompt_times_are_inclusive`: `prompt_times(4, 4, 4, seed=0) == [None, 4, 4, 4]`. `prompt_times(3, 0, 0, seed=1) == [None, 0, 0]`. Every value of `prompt_times(8, 2, 5, seed=7)` is `None` or in `range(2, 6)`.
+
+`test_later_encoder_waits_for_its_second`: `ready_stages(done={("encoder", 0), ("backbone", 0), ("decoder", 0)}, times=[None, 4], now=3)` does not contain `("encoder", 1)`. The same call with `now=4` does. `run_pipeline(2, [None, 4])` emits `("decoder", 0)` before `("encoder", 1)`.
+
+`test_next_encoder_runs_before_previous_decoder`: with `times=[None, 0, 0]`, the returned stage list contains `("encoder", 2)` before `("decoder", 1)`, and `("backbone", 2)` after `("decoder", 1)`.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_demo_schedule.py::test_prompt_times_are_inclusive tests/test_demo_pipeline.py -v`
+Expected: FAIL with import errors
+
+- [ ] **Step 3: Implement `prompt_times`, `ready_stages`, and `run_pipeline`**
+
+`run_pipeline` starts `now` at `None` until `("decoder", 0)` has been appended, then sets `now` to 0. It does not sleep. One module has one in-flight stage; stages in a tick are appended in backbone, encoder, decoder order and complete before the next tick.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_demo_schedule.py tests/test_demo_pipeline.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add omni_infinity/demo/schedule.py omni_infinity/demo/pipeline.py tests/test_demo_schedule.py tests/test_demo_pipeline.py
+git commit -m "feat: schedule later prompts on an inclusive clock"
+```
+
+---
+
 ## Test plan
 
 Run from the repo root after Task 7:
 
 ```bash
-pytest tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py tests/test_job_api.py tests/test_stream_api.py -v
+pytest tests/test_demo_schedule.py tests/test_demo_pipeline.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py tests/test_job_api.py tests/test_stream_api.py -v
 ruff check omni_infinity/demo omni_infinity/serve/app.py omni_infinity/serve/stream.py tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py
 ruff format --check omni_infinity/demo omni_infinity/serve/app.py omni_infinity/serve/stream.py tests/test_demo_schedule.py tests/test_demo_stitch.py tests/test_demo_service.py tests/test_demo_api.py
 ```
 
 Expected: pytest PASS, ruff clean.
 
-Out of scope for these tests: loading H3-World or MiniMax-H3 weights, and a real GPU generation. The 1min, 2min, and 5min presets are covered by the schedule, the validation tests, and the dropdown markup, not by generating 59 fake clips. The HTTP generation test uses the 15s preset only. `test_stream_starts_at_the_first_clip` is the check that playback media leaves the server before the second clip's `generate()` returns. The page test checks the dropdown and that `highlightCue` still keys off `video.currentTime`.
+Out of scope for these tests: loading H3-World or MiniMax-H3 weights, and a real GPU generation. The 1min, 2min, and 5min presets are covered by the schedule, the validation tests, and the dropdown markup, not by generating 59 fake clips. The HTTP generation test uses the 15s preset only. `test_stream_starts_at_the_first_clip` is the check that playback media leaves the server before a later encoder starts. `test_prompt_times_are_inclusive` and `test_next_encoder_runs_before_previous_decoder` cover the X–Y clock and the encoder/backbone/decoder order. The page test checks the length dropdown, the X and Y inputs, and that `highlightCue` still keys off `video.currentTime`.

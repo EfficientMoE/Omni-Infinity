@@ -347,11 +347,14 @@ The stream monitor's length control is a dropdown (`15s`, `1min`, `2min`,
 124-frame clip at 24 fps. The dropdown asks for 3, 12, 24, or 59 prompts.
 Playback of the nominal length is 360, 1440, 2880, or 7200 frames.
 
-Playback starts when the first clip is generated. Later clips keep running on
-the same single GPU worker and append as they finish. The prompt row whose
-interval contains the playhead is highlighted; clips still rendering stay on
-the timeline. `POST /v1/jobs` is unchanged. H3-World weights are not included;
-the loaded runner is called once per prompt.
+Playback starts when the first clip is generated. The encoder, backbone, and
+decoder then stay pipelined on the same worker: a later prompt's encoder can
+run before the previous clip's decoder. Each later prompt starts at a random
+whole second from X through Y, inclusive, after playback begins. The monitor
+defaults are X = 1 and Y = 5. The prompt row whose interval contains the
+playhead is highlighted; clips still rendering stay on the timeline.
+`POST /v1/jobs` is unchanged. H3-World weights are not included; the loaded
+runner is called once per prompt.
 
 ```bash
 curl http://127.0.0.1:8000/v1/demos \
