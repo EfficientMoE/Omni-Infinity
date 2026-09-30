@@ -356,6 +356,8 @@ playhead is highlighted; clips still rendering stay on the timeline.
 `POST /v1/jobs` is unchanged. H3-World weights are not included; the loaded
 runner is called once per prompt.
 
+Submit a demo with `POST /v1/demos`:
+
 ```bash
 curl http://127.0.0.1:8000/v1/demos \
   -H 'content-type: application/json' \
