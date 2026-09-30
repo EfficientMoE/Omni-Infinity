@@ -41,6 +41,7 @@ Land this branch before any cache branch. The cache PRs use this branch as their
 | `2026-09-30-cache-c5-denoise.md` | `plan/cache-c5-denoise` | `caches/denoise.py` |
 | `2026-09-30-cache-c4-shape.md` | `plan/cache-c4-shape` | `docs/caches_c4_shape.md` |
 | `2026-09-30-cache-c2-prefix.md` | `plan/cache-c2-prefix` | deferral only |
+| `2026-09-30-cache-benchmarks.md` | `plan/cache-benchmarks` | `benchmarks/caches/` (micro, ablation, serve trace, C5 probe) — executes only after the contract and C1/C3/C5 plans have been implemented |
 
 `Refs #24`. Do not write `Closes #24`.
 
@@ -63,7 +64,7 @@ Modify:
 - `omni_infinity/serve/app.py` — `condition_cache_dir` setting, passed through only when the resolved kwargs already contain `condition_cache=True`.
 - `examples/fl2va_smoke.py` — the three flags below.
 - `tests/test_server_settings.py` — one assertion, and the env key list.
-- `README.md` — one short section. Do not document cache behavior beyond the table in Task 6.
+- `README.md` — one short section. Do not document cache behavior beyond the table in Task 5.
 
 ---
 
