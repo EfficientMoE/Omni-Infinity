@@ -159,6 +159,9 @@ def create_app(
     settings: ServerSettings | None = None,
     runner_factory: Callable[[], object] | None = None,
 ) -> FastAPI:
+    from omni_infinity.demo.models import DemoRequest, DemoResponse
+    from omni_infinity.demo.service import DemoService
+    from omni_infinity.demo.store import DemoStore
     from omni_infinity.serve.stream import StreamRequest, StreamService
 
     configured = settings or ServerSettings.from_env()
@@ -172,8 +175,17 @@ def create_app(
     async def lifespan(app: FastAPI):
         store = JobStore(configured.jobs_dir)
         store.recover_interrupted()
+        demo_store = DemoStore(configured.jobs_dir.parent / "demos")
+        demo_store.recover_interrupted()
         runner = runner_factory() if runner_factory else load_runner(configured)
         service = JobService(runner, profile, store)
+        demo_service = DemoService(
+            runner,
+            profile.model_arch,
+            store=demo_store,
+            executor=service.executor,
+            optimizations=profile.optimizations,
+        )
         stream_service = StreamService(
             service,
             max_sessions=configured.stream_max_sessions,
@@ -184,6 +196,8 @@ def create_app(
         )
         app.state.store = store
         app.state.service = service
+        app.state.demo_store = demo_store
+        app.state.demo_service = demo_service
         app.state.stream_service = stream_service
         app.state.profile = profile
         try:
@@ -227,6 +241,47 @@ def create_app(
             path,
             media_type="video/mp4",
             filename=f"{job_id}.mp4",
+        )
+
+    def create_demo(request, response: Response):
+        try:
+            record = app.state.demo_service.submit(request)
+        except ProfileConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except InvalidMedia as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        response.headers["Location"] = f"/v1/demos/{record.id}"
+        return DemoResponse.from_record(record)
+
+    create_demo.__annotations__["request"] = DemoRequest
+    app.add_api_route(
+        "/v1/demos",
+        create_demo,
+        methods=["POST"],
+        response_model=DemoResponse,
+        status_code=202,
+    )
+
+    @app.get("/v1/demos/{demo_id}", response_model=DemoResponse)
+    def get_demo(demo_id: str):
+        try:
+            return DemoResponse.from_record(app.state.demo_store.get(demo_id))
+        except JobNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/v1/demos/{demo_id}/artifacts")
+    def get_demo_artifact(demo_id: str):
+        try:
+            record = app.state.demo_store.get(demo_id)
+        except JobNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        path = app.state.demo_store.video_path(demo_id)
+        if record.status != JobStatus.SUCCEEDED or not path.is_file():
+            raise HTTPException(status_code=409, detail="artifact is not ready")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            filename=f"{demo_id}.mp4",
         )
 
     if configured.stream_enabled:
