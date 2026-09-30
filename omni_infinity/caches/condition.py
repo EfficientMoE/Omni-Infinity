@@ -19,6 +19,7 @@ import torch
 from omni_infinity.caches._tensor_tree import (
     tree_map,
     tree_nbytes,
+    tree_tensors,
     update_hash_for_value,
 )
 
@@ -258,6 +259,36 @@ def _input_names(pipeline) -> set[str]:
     }
 
 
+def _replay_device(call_kwargs: dict, pipeline):
+    try:
+        for tensor in tree_tensors(call_kwargs):
+            return tensor.device
+    except Exception:
+        pass
+
+    try:
+        device = getattr(call_kwargs.get("generator"), "device", None)
+        if device is not None:
+            return torch.device(device)
+    except Exception:
+        pass
+
+    try:
+        components = pipeline.components.values()
+        for component in components:
+            for accessor_name in ("parameters", "buffers"):
+                try:
+                    accessor = getattr(component, accessor_name)
+                    tensor = next(iter(accessor()), None)
+                    if tensor is not None:
+                        return tensor.device
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return torch.device("cpu")
+
+
 def prepare(
     pipeline,
     cache: ConditionCache,
@@ -302,13 +333,16 @@ def prepare(
     if reduced is None:
         return _miss(call_kwargs)
 
-    device = getattr(pipeline, "_execution_device", None) or "cpu"
+    device = _replay_device(call_kwargs, reduced)
     declared_inputs = _input_names(reduced)
-    cached = {
-        name: value
-        for name, value in entry.to(device).items()
-        if name in declared_inputs
-    }
+    try:
+        cached = {
+            name: value
+            for name, value in entry.to(device).items()
+            if name in declared_inputs
+        }
+    except Exception:
+        return _miss(call_kwargs)
     replay_kwargs = {
         name: value
         for name, value in call_kwargs.items()

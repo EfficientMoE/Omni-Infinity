@@ -278,6 +278,41 @@ def test_miss_captures_and_hit_skips_encoders(pipeline):
     assert second.pipeline.calls == [kwargs]
 
 
+def test_hit_moves_cached_condition_to_generator_device(pipeline):
+    cache = ConditionCache()
+    generator = SimpleNamespace(device=torch.device("meta"))
+    request = {"prompt": "p", "generator": generator}
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+    first.observe(_state(prompt_embeds=torch.ones(2)))
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+
+    assert second.hit is True
+    replay_kwargs = second.call_kwargs()
+    assert replay_kwargs["prompt_embeds"].device == generator.device
+    assert replay_kwargs["generator"] is generator
+
+
 def test_miss_observe_accepts_a_mapping(pipeline):
     cache = ConditionCache()
     replay = prepare(
