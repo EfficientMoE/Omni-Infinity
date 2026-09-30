@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from diffusers.hooks import HookRegistry, ModelHook
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 from omni_infinity import registry
 from omni_infinity.caches.vision import (
@@ -76,6 +78,26 @@ def test_repeated_call_skips_the_tower():
     controller.close()
 
 
+def test_cache_survives_removal_of_an_earlier_diffusers_hook():
+    tower = _Tower()
+    registry = HookRegistry.check_if_exists_or_initialize(tower)
+
+    class _SelfRemovingHook(ModelHook):
+        def post_forward(self, module, output):
+            module._diffusers_hook.remove_hook("temporary-hook", recurse=False)
+            return output
+
+    registry.register_hook(_SelfRemovingHook(), "temporary-hook")
+    controller = enable_vision_cache(SimpleNamespace(visual=tower))
+
+    tower(torch.ones(2))
+    tower(torch.ones(2))
+
+    assert tower.calls == 1
+    assert controller.cache.stats()["hits"] == 1
+    controller.close()
+
+
 def test_a_changed_second_tensor_is_a_miss():
     tower = _Tower()
     encoder = SimpleNamespace(visual=tower)
@@ -101,6 +123,28 @@ def test_tuple_output_is_stored_on_cpu_and_returned_on_the_input_device():
     assert all(torch.equal(left, right) for left, right in zip(first, second))
     assert all(tensor.device.type == "cpu" for tensor in cached)
     assert all(tensor.device == value.device for tensor in second)
+
+
+def test_transformers_model_output_type_is_preserved_on_a_hit():
+    tower = _Tower()
+
+    def model_output_forward(value):
+        tower.calls += 1
+        return BaseModelOutputWithPooling(
+            last_hidden_state=value,
+            pooler_output=value + 1,
+        )
+
+    tower.forward = model_output_forward
+    encoder = SimpleNamespace(visual=tower)
+    enable_vision_cache(encoder)
+
+    encoder.visual(torch.ones(2))
+    cached = encoder.visual(torch.ones(2))
+
+    assert isinstance(cached, BaseModelOutputWithPooling)
+    assert torch.equal(cached.pooler_output, torch.full((2,), 2.0))
+    assert tower.calls == 1
 
 
 def test_close_removes_an_installed_instance_forward():

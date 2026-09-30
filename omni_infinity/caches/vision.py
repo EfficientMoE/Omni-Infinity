@@ -94,6 +94,16 @@ def _first_tensor_device(args, kwargs):
     return device
 
 
+def _map_output_tensors(fn, output):
+    if isinstance(output, dict) and type(output) is not dict:
+        mapped = {key: tree_map(fn, value) for key, value in output.items()}
+        try:
+            return type(output)(**mapped)
+        except TypeError:
+            return type(output)(mapped)
+    return tree_map(fn, output)
+
+
 class VisionCacheController:
     """Own the reversible instance-level vision ``forward`` wrapper."""
 
@@ -104,18 +114,25 @@ class VisionCacheController:
         original_forward,
         previous_instance_forward,
         had_instance_forward: bool,
+        forward_delegate=None,
+        guardian_handle=None,
     ):
         self.module = module
         self.cache = cache
         self.original_forward = original_forward
         self.previous_instance_forward = previous_instance_forward
         self.had_instance_forward = had_instance_forward
+        self.forward_delegate = forward_delegate
+        self.guardian_handle = guardian_handle
         self._closed = False
 
     def close(self) -> None:
         if self._closed:
             return
-        if self.had_instance_forward:
+        if self.guardian_handle is not None:
+            self.guardian_handle.remove()
+            self.module.forward = self.forward_delegate[0]
+        elif self.had_instance_forward:
             self.module.forward = self.previous_instance_forward
         else:
             del self.module.forward
@@ -141,6 +158,8 @@ def enable_vision_cache(
         f"{module_type.__module__}.{module_type.__qualname__}:{id(module)}"
     )
 
+    forward_delegate = [original_forward]
+
     def cached_forward(*args, **kwargs):
         key = _call_key(args, kwargs, namespace)
         cached = cache.get(key)
@@ -148,22 +167,36 @@ def enable_vision_cache(
             device = _first_tensor_device(args, kwargs)
             if device is None:
                 return cached
-            return tree_map(lambda tensor: tensor.to(device), cached)
+            return _map_output_tensors(lambda tensor: tensor.to(device), cached)
 
-        output = original_forward(*args, **kwargs)
+        output = forward_delegate[0](*args, **kwargs)
         cache.put(
             key,
-            tree_map(lambda tensor: tensor.detach().to("cpu"), output),
+            _map_output_tensors(
+                lambda tensor: tensor.detach().to("cpu"), output
+            ),
         )
         return output
 
     module.forward = cached_forward
+    guardian_handle = None
+    if hasattr(module, "_diffusers_hook"):
+
+        def preserve_wrapper(current_module, _args, output):
+            if current_module.forward is not cached_forward:
+                forward_delegate[0] = current_module.forward
+                current_module.forward = cached_forward
+            return output
+
+        guardian_handle = module.register_forward_hook(preserve_wrapper)
     return VisionCacheController(
         module,
         cache,
         original_forward,
         previous_instance_forward,
         had_instance_forward,
+        forward_delegate=forward_delegate,
+        guardian_handle=guardian_handle,
     )
 
 
