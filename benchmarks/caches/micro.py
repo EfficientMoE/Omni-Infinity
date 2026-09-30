@@ -113,12 +113,12 @@ def run_micro(
         )
     }
     disk_dir = out_path.parent / "c1-disk"
-    cache = ConditionCache(max_entries=4, cache_dir=disk_dir)
+    memory_cache = ConditionCache(max_entries=4)
     key = make_condition_key()
     rows.append(
         _row(
             "c1_mem_put",
-            _time_ms(lambda: cache.put(key, dict(entry)), reps, warmup),
+            _time_ms(lambda: memory_cache.put(key, dict(entry)), reps, warmup),
             reps,
             embed_rows=embed_rows,
         )
@@ -126,11 +126,14 @@ def run_micro(
     rows.append(
         _row(
             "c1_mem_get",
-            _time_ms(lambda: cache.get(key), reps, warmup),
+            _time_ms(lambda: memory_cache.get(key), reps, warmup),
             reps,
             embed_rows=embed_rows,
         )
     )
+
+    disk_cache = ConditionCache(max_entries=4, cache_dir=disk_dir)
+    disk_cache.put(key, dict(entry))
 
     def cold_get():
         cold = ConditionCache(max_entries=4, cache_dir=disk_dir)
