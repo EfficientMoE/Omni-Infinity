@@ -10,12 +10,39 @@
 
 **Spec:** Issue [#24](https://github.com/EfficientMoE/Omni-Infinity/issues/24) item C1, and the Interfaces in `docs/superpowers/plans/2026-09-30-caches-contract.md`.
 
+## Prerequisites (stacked plan — read first)
+
+This plan is stacked on the shared cache contract and cannot start before it:
+
+- **Branch:** `plan/cache-c1-condition`, based on `plan/caches-contract`.
+- **Prerequisite plan:** `docs/superpowers/plans/2026-09-30-caches-contract.md`
+  must be **fully executed** on the base branch before Task 1 here begins.
+  That plan — not this one — creates:
+  - `omni_infinity/caches/__init__.py` and
+    `omni_infinity/caches/_tensor_tree.py` (`update_hash_for_value`,
+    `tree_map`, `tree_nbytes`, `tree_tensors`) — contract Task 1;
+  - `registry.load_cache_optimizations()` plus the `runner_kwargs_for`
+    fallback — contract Task 2;
+  - `omni_infinity/caches/attach.py`, whose functions import
+    `ConditionCache` and `prepare` from this module — contract Task 3;
+  - `tests/test_cache_contract.py` — contract Tasks 2–4.
+- At planning time none of those files exist in the repository. Their
+  absence from this PR's diff is expected and is not an error in this plan.
+  Every "stop" condition below is an **execution-time preflight** that
+  verifies the contract plan has been executed on your branch — it is not a
+  claim about the current checkout.
+- `condition-cache` requires **no edit to `registry.py`**: the contract's
+  `load_cache_optimizations()` dynamically imports
+  `omni_infinity.caches.condition` and publishes this module's
+  `OPTIMIZATION`. Creating `condition.py` (Tasks 1–3 below) is exactly what
+  makes that loader resolve `condition-cache`.
+
 ## Global Constraints
 
 - Opt-in. This module's `OPTIMIZATION` is what turns `condition_cache=True` on. Do not change default server optimizations.
 - A hit requires the entire condition. Do not implement prefix matching or `[Shot N]` reordering.
 - Do not modify `third_party/`, `runner.py`, `arch/vdn.py`, `registry.py`, `serve/`, `examples/fl2va_smoke.py`, or any parity test.
-- Do not edit `attach.py`. It already imports `ConditionCache` and `prepare`. If those names are absent from `attach.py`, stop; the contract is not on this branch.
+- Do not edit `attach.py`. Once the contract plan has been executed, its `attach.py` imports `ConditionCache` and `prepare` from this module inside its functions. Preflight before Task 1: run `grep -n "ConditionCache" omni_infinity/caches/attach.py`. If the file is missing or lacks that name, stop and execute the contract plan first (see Prerequisites).
 - CPU tests with fake pipelines. The diffusers structural test uses `pytest.importorskip` and must not download weights.
 - New Python files start with `# Copyright (c) EfficientMoE.` and `# SPDX-License-Identifier: Apache-2.0`. Ruff line length stays 80.
 - Fresh context: read this plan and the contract Interfaces only. Do not open the other cache plans or draft PR #25.
