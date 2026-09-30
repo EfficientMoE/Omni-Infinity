@@ -191,13 +191,29 @@ Unmeasured grid → stay on the baseline knobs and mark each axis `REPORT`:
    From `.worktrees/bench-stream-micro`, run
    `python benchmarks/streaming/micro.py --base-url http://127.0.0.1:8000 --out results/streaming/micro.csv`.
    Those scripts are not on the harness branch.
-4. ablation.py writes a skip manifest. It prints one `restart_command`
-   per row. That command sets `OMNI_MODEL_ARCH`, `OMNI_OPTIMIZATIONS`,
-   `OMNI_STREAM_ENABLED`, `OMNI_STREAM_CHUNK_FRAMES`, and
-   `OMNI_STREAM_FALLBACK_HLS`. The operator still supplies
+4. `OMNI_MODEL_ARCH` is fixed when the server starts, so it cannot be changed
+   between rows in one live process. Run the ablation separately for each
+   architecture and use separate output files, for example:
+
+   ```bash
+   python benchmarks/streaming/ablation.py \
+     --out results/streaming/ablation-h3-dense.csv
+   python benchmarks/streaming/ablation.py \
+     --out results/streaming/ablation-vdn-hybrid.csv
+   ```
+
+   ablation.py writes a skip manifest for each run. The script has no
+   architecture filter. Merge the collected files by keeping
+   the header from the first file and appending the data rows from the second.
+   Each row's `restart_command` sets `OMNI_MODEL_ARCH`,
+   `OMNI_OPTIMIZATIONS`, `OMNI_STREAM_ENABLED`, `OMNI_STREAM_CHUNK_FRAMES`,
+   and `OMNI_STREAM_FALLBACK_HLS`. The operator still supplies
    `OMNI_CHECKPOINT`, `OMNI_STORE_DIR`, and `OMNI_MAX_VRAM`, starts a fresh
    process per row, and does not retry OOM. Run it from
    `.worktrees/bench-stream-ablation`.
+   The normal run writes those commands in the CSV manifest named by `--out`;
+   stdout contains only the summary. With `--dry-run`, the commands are
+   printed to stdout instead and no CSV is written.
 5. Client arrival gaps stay in `arrival_gap_ms`. They do not fill
    `chunk_produce_ms`. Measure one GPU at a time.
 

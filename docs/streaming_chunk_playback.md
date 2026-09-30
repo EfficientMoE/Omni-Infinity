@@ -69,8 +69,9 @@ New package `omni_infinity/streaming/`.
 
 - `index`, `pts`, `duration`, `keyframe`
 - `video_bytes`: one fMP4 media fragment, or `None` before media exists
-- `audio_bytes` is null on the wire; audio is muxed into the fMP4 fragment
-  carried by `video_bytes`
+- On the wire, the serialized field is `audio_b64`, and it is null because
+  audio is muxed into the fMP4 fragment carried by `video_b64`.
+  Internally, the corresponding `MediaChunk` attribute is `audio_bytes`.
 - `prompt`: the active prompt string
 - `instruction`, `action`: optional, `None` for a static FL2VA prompt
 - `done`: true on the last chunk of the session
