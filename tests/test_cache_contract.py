@@ -163,9 +163,9 @@ def test_bind_generation_is_noop_without_enabled_caches():
 
 
 def test_bind_generation_fails_closed_for_missing_denoise_cache(monkeypatch):
-    monkeypatch.setitem(sys.modules, "omni_infinity.caches.denoise", None)
     runner = _Runner()
     runner.condition_cache = None
+    monkeypatch.setitem(sys.modules, "omni_infinity.caches.denoise", None)
 
     with pytest.raises(RuntimeError, match="not installed"):
         bind_generation(
@@ -231,11 +231,11 @@ def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
 
 
 def test_denoise_config_fails_closed_when_module_is_missing(monkeypatch):
-    monkeypatch.setitem(sys.modules, "omni_infinity.caches.denoise", None)
     args = SimpleNamespace(
         denoise_cache_coefficients="1.0,0.0",
         denoise_cache_threshold=0.2,
     )
+    monkeypatch.setitem(sys.modules, "omni_infinity.caches.denoise", None)
     with pytest.raises(RuntimeError, match="not installed"):
         denoise_config_from_args(args)
 
