@@ -17,6 +17,30 @@ def _update_bytes(hasher, tag: bytes, payload: bytes) -> None:
     hasher.update(payload)
 
 
+def stable_image_bytes(value) -> bytes:
+    """Return a type-preserving byte representation of an image value."""
+    if isinstance(value, Image.Image):
+        buffer = BytesIO()
+        value.save(buffer, format="PNG")
+        return b"pil-png\0" + buffer.getvalue()
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().cpu().contiguous()
+        try:
+            payload = tensor.numpy().tobytes()
+        except TypeError:
+            payload = tensor.reshape(-1).view(torch.uint8).numpy().tobytes()
+        metadata = f"{tensor.dtype}:{tuple(tensor.shape)}".encode("ascii")
+        return b"torch\0" + metadata + b"\0" + payload
+    if type(value).__module__.startswith("numpy"):
+        try:
+            payload = memoryview(value).tobytes(order="C")
+            metadata = f"{value.dtype}:{tuple(value.shape)}".encode("ascii")
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise TypeError("unsupported reference image") from exc
+        return b"numpy\0" + metadata + b"\0" + payload
+    raise TypeError(f"unsupported reference image: {type(value).__name__}")
+
+
 def update_hash_for_value(hasher, value) -> None:
     """Update ``hasher`` with a type-preserving representation of ``value``."""
     if value is None:
@@ -55,9 +79,7 @@ def update_hash_for_value(hasher, value) -> None:
             payload = tensor.reshape(-1).view(torch.uint8).numpy().tobytes()
         _update_bytes(hasher, b"data", payload)
     elif isinstance(value, Image.Image):
-        buffer = BytesIO()
-        value.save(buffer, format="PNG")
-        _update_bytes(hasher, b"image", buffer.getvalue())
+        _update_bytes(hasher, b"image", stable_image_bytes(value))
     else:
         raise TypeError(f"unsupported hash value: {type(value).__name__}")
 
