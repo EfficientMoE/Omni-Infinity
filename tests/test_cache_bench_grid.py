@@ -4,6 +4,7 @@
 """CPU tests: ablation grid construction and cell-command building."""
 
 import json
+import sys
 
 from benchmarks.caches.ablation import (
     GRID,
@@ -22,7 +23,7 @@ def test_grid_covers_every_cache_config_for_h3():
 def test_cell_command_is_a_module_invocation():
     cell = GRID[0]
     argv = build_cell_command(cell, results_dir="results/x")
-    assert argv[:3] == ["python", "-m", "benchmarks.caches.ablation"]
+    assert argv[:3] == [sys.executable, "-m", "benchmarks.caches.ablation"]
     assert "--cell" in argv
     assert cell.name in argv
 
@@ -87,3 +88,12 @@ def test_rows_from_cell_output_orders_fields_and_scores():
     assert warm["c1_hits"] == 1
     assert warm["verdict"] == "PASS"
     assert set(warm) == set(FIELDS)
+
+
+def test_bad_cell_output_becomes_a_complete_failure_row():
+    cell = GRID[0]
+    rows = rows_from_cell_output(cell, "stray output before JSON")
+    assert len(rows) == 1
+    assert set(rows[0]) == set(FIELDS)
+    assert rows[0]["verdict"] == "FAIL"
+    assert rows[0]["notes"] == "cell-badoutput"

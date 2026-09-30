@@ -58,6 +58,11 @@ Cells without weights are `SKIP` with `weights-absent`. C5 has no invented
 default calibration, so it is `SKIP` with `c5-uncalibrated` unless calibrated
 coefficients and a threshold are supplied.
 
+The C3 and all-exact cells pass `tests/fixtures/ref.png` as image conditioning
+in both phases. This identical cold/warm image exercises the visual tower and
+therefore makes C3 vision-cache hits measurable without changing comparison
+inputs.
+
 ### Serve trace
 
 `benchmarks.caches.serve_trace` replays a seeded VidProM trace through the job
@@ -136,6 +141,10 @@ required cache reports at least one hit. C5 warm rows pass only when
 `rms_rel <= rms_rel_max`. `weights-absent`, `c5-uncalibrated`, and
 `server-down` are `SKIP`, not failures. Baselines and micro/serve-trace rows
 are reports rather than accuracy claims.
+
+The frozen name `speedup_vs_baseline` means the cold-to-warm speedup within
+the same cell. It does not compare a cache-enabled cell against the baseline
+configuration.
 
 ## Run all checks
 

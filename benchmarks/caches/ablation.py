@@ -7,6 +7,8 @@ The orchestrator spawns one subprocess per grid cell for CUDA-state
 isolation and writes rows in the frozen metric contract. Cell mode builds a
 runner, executes cold and warm generations, and prints one JSON document.
 Missing weights and missing C5 calibration produce explicit SKIP rows.
+The frozen ``speedup_vs_baseline`` field compares cold and warm phases within
+the same cell; it does not compare against the baseline cache configuration.
 """
 
 from __future__ import annotations
@@ -57,7 +59,7 @@ def build_cell_command(
 ) -> list[str]:
     """Build an isolated module invocation for one grid cell."""
     return [
-        "python",
+        sys.executable,
         "-m",
         "benchmarks.caches.ablation",
         "--cell",
@@ -70,7 +72,16 @@ def build_cell_command(
 
 def rows_from_cell_output(cell: Cell, stdout: str) -> list[dict]:
     """Convert one cell's JSON stdout into complete contract rows."""
-    payload = json.loads(stdout)
+    try:
+        rows = _rows_from_cell_payload(cell, json.loads(stdout))
+        if not rows:
+            raise ValueError("cell output has no rows")
+        return rows
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return [_failure_row(cell, "cell-badoutput")]
+
+
+def _rows_from_cell_payload(cell: Cell, payload: dict) -> list[dict]:
     base = {field: "" for field in FIELDS}
     base.update(
         suite="ablation",
@@ -162,6 +173,8 @@ def _run_cell(cell: Cell, args) -> dict:
             coefficients=tuple(args.c5_coefficients),
             threshold=args.c5_threshold,
             mode="output",
+            calls_per_step=args.c5_calls_per_step,
+            signal_name=args.c5_signal_name,
         )
 
     from omni_infinity.runner import ReferenceRunner, _transformer_component
@@ -169,6 +182,19 @@ def _run_cell(cell: Cell, args) -> dict:
     runner = ReferenceRunner.from_pretrained(
         os.environ["OMNI_CHECKPOINT"], **_runner_kwargs(cell, args)
     )
+    image = None
+    if config.vision_cache:
+        from PIL import Image
+
+        fixture = Path(__file__).parents[2] / "tests" / "fixtures" / "ref.png"
+        image = Image.open(fixture).convert("RGB")
+    generate_kwargs = {
+        "seed": SEED,
+        "num_inference_steps": STEPS,
+        "resolution": RESOLUTION,
+        "num_frames": FRAMES,
+        "image": image,
+    }
     phases = []
     reference = None
     for phase in ("cold", "warm"):
@@ -186,18 +212,12 @@ def _run_cell(cell: Cell, args) -> dict:
             ) as c5_stats:
                 result = runner.generate(
                     PROMPT,
-                    seed=SEED,
-                    num_inference_steps=STEPS,
-                    resolution=RESOLUTION,
-                    num_frames=FRAMES,
+                    **generate_kwargs,
                 )
         else:
             result = runner.generate(
                 PROMPT,
-                seed=SEED,
-                num_inference_steps=STEPS,
-                resolution=RESOLUTION,
-                num_frames=FRAMES,
+                **generate_kwargs,
             )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         entry: dict = {"phase": phase, "e2e_ms": elapsed_ms, "stats": {}}
@@ -237,23 +257,28 @@ def _poll_vram(stop: threading.Event, peaks: list[float]) -> None:
             return
 
 
-def _crash_row(cell: Cell) -> dict:
+def _failure_row(cell: Cell, notes: str) -> dict:
     return dict(
         {field: "" for field in FIELDS},
         suite="ablation",
         arch=cell.arch,
         cache_config=cell.config.name,
         verdict="FAIL",
-        notes="cell-crashed",
+        notes=notes,
     )
 
 
 def _orchestrate(args) -> int:
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
-    extra: tuple[str, ...] = ()
+    extra = (
+        "--c5-calls-per-step",
+        str(args.c5_calls_per_step),
+        "--c5-signal-name",
+        args.c5_signal_name,
+    )
     if args.c5_coefficients:
-        extra = (
+        extra += (
             "--c5-coefficients",
             ",".join(str(value) for value in args.c5_coefficients),
             "--c5-threshold",
@@ -286,16 +311,16 @@ def _orchestrate(args) -> int:
             poller.join(timeout=2)
         if proc.returncode != 0:
             sys.stderr.write(proc.stderr)
-            rows = [_crash_row(cell)]
+            rows = [_failure_row(cell, "cell-crashed")]
         else:
             rows = rows_from_cell_output(cell, proc.stdout)
             if peaks:
                 for row in rows:
                     row["vram_peak_gib"] = max(peaks)
         (results_dir / f"{cell.name}.json").write_text(
-            proc.stdout
-            if proc.returncode == 0
-            else json.dumps({"stderr": proc.stderr})
+            json.dumps({"stdout": proc.stdout, "stderr": proc.stderr})
+            if proc.returncode != 0 or rows[0]["notes"] == "cell-badoutput"
+            else proc.stdout
         )
         all_rows.extend(rows)
     if not args.dry_run:
@@ -320,6 +345,8 @@ def main() -> int:
     parser.add_argument("--c5-coefficients", type=_parse_coeffs, default=())
     parser.add_argument("--c5-threshold", type=float, default=0.1)
     parser.add_argument("--c5-rms-rel-max", type=float, default=0.1)
+    parser.add_argument("--c5-calls-per-step", type=int, default=1)
+    parser.add_argument("--c5-signal-name", default="hidden_states")
     args = parser.parse_args()
     if args.cell:
         cell = next(
