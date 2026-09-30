@@ -40,18 +40,17 @@ class DemoRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_prompt_count(self):
-        if self.duration and self.prompts is not None:
-            expected = segment_count(PRESETS[self.duration])
-            got = len(self.prompts)
-            if got != expected:
-                raise ValueError(
-                    f"duration {self.duration} requires {expected} "
-                    f"prompts, got {got}"
-                )
+        expected = segment_count(PRESETS[self.duration])
+        got = len(self.prompts)
+        if got != expected:
+            raise ValueError(
+                f"duration {self.duration} requires {expected} "
+                f"prompts, got {got}"
+            )
         return self
 
     @model_validator(mode="after")
-    def unique_optimizations(self):
+    def validate_unique_optimizations(self):
         if len(set(self.optimizations)) != len(self.optimizations):
             raise ValueError("optimization names must be unique")
         return self

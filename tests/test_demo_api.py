@@ -28,6 +28,25 @@ def test_prompt_count_rejects_short_lists():
     assert d.duration == "15s"
 
 
+def test_schedule_range_rejects_reversed():
+    with pytest.raises(ValidationError) as e:
+        DemoRequest(
+            prompts=["a"] * 3,
+            duration="15s",
+            schedule_start=5,
+            schedule_end=2,
+        )
+    assert "schedule end is before schedule start" in str(e.value)
+
+    d = DemoRequest(
+        prompts=["a"] * 3,
+        duration="15s",
+        schedule_start=3,
+        schedule_end=3,
+    )
+    assert d.schedule_start == d.schedule_end == 3
+
+
 def test_duplicate_optimizations_rejected():
     with pytest.raises(ValidationError) as e:
         DemoRequest(
