@@ -11,7 +11,6 @@ from omni_infinity import registry
 from omni_infinity.caches import condition as condition_module
 from omni_infinity.caches.condition import (
     ConditionCache,
-    build_conditioned_pipeline,
     condition_key,
     prepare,
 )
@@ -575,6 +574,46 @@ def test_pipeline_that_cannot_be_reduced_fails_open():
     assert cache.stats()["entries"] == 1
 
 
+def test_hit_missing_required_cached_input_fails_open(pipeline):
+    cache = ConditionCache()
+    condition_input = pipeline.blocks.sub_blocks["denoise"].inputs[2]
+    condition_input.required = True
+    request = {"prompt": "p", "generator": object()}
+    first = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+    first.observe(
+        _state(
+            prompt_embeds=torch.ones(2),
+            text_token_tags=torch.ones(2, dtype=torch.long),
+        )
+    )
+
+    second = prepare(
+        pipeline,
+        cache,
+        namespace="ReferenceRunner:/ckpt",
+        prompt="p",
+        media=(),
+        height=368,
+        width=640,
+        num_frames=120,
+        call_kwargs=request,
+    )
+
+    assert second.hit is False
+    assert second.pipeline is None
+    assert second.call_kwargs() is request
+
+
 def test_loader_publishes_condition_cache():
     optimizations = registry.load_cache_optimizations()
 
@@ -587,7 +626,7 @@ def test_loader_publishes_condition_cache():
     }
 
 
-def test_h3_blocks_can_drop_encoders():
+def test_h3_fl2va_pipeline_uses_text_only_view_without_keyframes():
     pytest.importorskip("diffusers")
     from diffusers import MiniMaxH3Blocks
     from diffusers.modular_pipelines import SequentialPipelineBlocks
@@ -595,15 +634,31 @@ def test_h3_blocks_can_drop_encoders():
     monkeypatch_target = condition_module.SequentialPipelineBlocks
     condition_module.SequentialPipelineBlocks = SequentialPipelineBlocks
     try:
-        pipeline = MiniMaxH3Blocks().init_pipeline()
+        pipeline = MiniMaxH3Blocks().get_workflow("fl2va").init_pipeline()
         names = set(pipeline.blocks.sub_blocks)
         assert {"text_encoder", "vae_encoder"}.issubset(names)
 
-        reduced = build_conditioned_pipeline(pipeline)
+        replay = prepare(
+            pipeline,
+            ConditionCache(),
+            namespace="ReferenceRunner:/ckpt",
+            prompt="p",
+            media=(),
+            height=368,
+            width=640,
+            num_frames=120,
+            call_kwargs={"prompt": "p", "height": 368, "width": 640},
+        )
 
+        reduced = replay.pipeline
+        assert replay.hit is False
         assert reduced is not None
-        assert "text_encoder" not in reduced.blocks.sub_blocks
+        assert "text_encoder" in reduced.blocks.sub_blocks
         assert "vae_encoder" not in reduced.blocks.sub_blocks
+        assert not any(
+            type(block).__name__ == "MiniMaxH3PrepareConditionLatentsStep"
+            for block in reduced.blocks.sub_blocks.values()
+        )
         shared = set(pipeline.components) & set(reduced.components)
         for name in shared:
             if pipeline.components[name] is not None:
