@@ -15,6 +15,7 @@ on the same kernel stack. Re-record on stack upgrades.
 import os
 from pathlib import Path
 
+import diffusers
 import pytest
 import torch
 
@@ -33,6 +34,18 @@ def test_reference_runner_reproduces_golden_latents():
     payload = torch.load(GOLDENS, weights_only=False)
     if payload["torch_version"] != torch.__version__:
         pytest.skip("goldens recorded on a different torch; re-record")
+    # Upstream now routes text-only requests through the `t2va` graph, so the
+    # image-less FL2VA call below is invalid on a mismatched diffusers. This
+    # golden predates version-pinned recording and has no `diffusers_version`,
+    # so the absent-key case must skip too.
+    golden_diffusers = payload.get("diffusers_version")
+    if golden_diffusers != diffusers.__version__:
+        pytest.skip(
+            "FL2VA goldens carry no matching diffusers_version "
+            f"(recorded={golden_diffusers!r}, installed="
+            f"{diffusers.__version__!r}); bitwise parity is only defined on "
+            "the recording stack — re-record"
+        )
     recorded_gpu = payload.get("gpu_name")
     if recorded_gpu and recorded_gpu != torch.cuda.get_device_name(0):
         pytest.skip(
@@ -42,12 +55,15 @@ def test_reference_runner_reproduces_golden_latents():
 
     runner = ReferenceRunner.from_pretrained(
         os.environ.get("OMNI_H3_CHECKPOINT", "MiniMaxAI/MiniMax-H3"),
-        offload=os.environ.get("OMNI_H3_OFFLOAD", "0") == "1",
+        # Default on: the full FL2VA set exceeds a single GPU, so parity runs
+        # the offload path (matching Ref2VA). Set OMNI_H3_OFFLOAD=0 only when
+        # the whole pipeline fits resident.
+        offload=os.environ.get("OMNI_H3_OFFLOAD", "1") == "1",
         store_dir=os.environ.get("OMNI_H3_STORE"),
         store_components=tuple(
-            os.environ.get("OMNI_H3_STORE_COMPONENTS", "vae,audio_vae").split(
-                ","
-            )
+            os.environ.get(
+                "OMNI_H3_STORE_COMPONENTS", "transformer,vae,audio_vae"
+            ).split(",")
         ),
         adaln_host_cache=os.environ.get("OMNI_H3_ADALN_CACHE", "0") == "1",
         block_stream_blocks_per_group=int(
