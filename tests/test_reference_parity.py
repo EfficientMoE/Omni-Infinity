@@ -5,13 +5,16 @@
 
 """Bitwise golden-latent parity against the recorded reference run.
 
-Goldens are produced by ``examples/fl2va_smoke.py --record-goldens
-tests/fixtures/goldens`` (256p/120-frame latents are <1 MB and are
-committed). The test needs a GPU and skips unless the local torch version
+Goldens are produced by ``examples/fl2va_smoke.py --first-frame
+tests/fixtures/ref.png --record-goldens tests/fixtures/goldens`` (256p/
+120-frame latents are <1 MB and are committed). FL2VA requires a keyframe;
+an image-less request routes through the separate ``t2va`` graph upstream.
+The test needs a GPU and skips unless the local torch/diffusers versions
 and GPU model match the recording — bitwise reproduction is only defined
 on the same kernel stack. Re-record on stack upgrades.
 """
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -20,6 +23,7 @@ import pytest
 import torch
 
 GOLDENS = Path(__file__).parent / "fixtures" / "goldens" / "fl2va_goldens.pt"
+REFERENCE = Path(__file__).parent / "fixtures" / "ref.png"
 
 
 @pytest.mark.gpu
@@ -34,14 +38,10 @@ def test_reference_runner_reproduces_golden_latents():
     payload = torch.load(GOLDENS, weights_only=False)
     if payload["torch_version"] != torch.__version__:
         pytest.skip("goldens recorded on a different torch; re-record")
-    # Upstream now routes text-only requests through the `t2va` graph, so the
-    # image-less FL2VA call below is invalid on a mismatched diffusers. This
-    # golden predates version-pinned recording and has no `diffusers_version`,
-    # so the absent-key case must skip too.
     golden_diffusers = payload.get("diffusers_version")
     if golden_diffusers != diffusers.__version__:
         pytest.skip(
-            "FL2VA goldens carry no matching diffusers_version "
+            "goldens recorded with a different diffusers "
             f"(recorded={golden_diffusers!r}, installed="
             f"{diffusers.__version__!r}); bitwise parity is only defined on "
             "the recording stack — re-record"
@@ -51,6 +51,11 @@ def test_reference_runner_reproduces_golden_latents():
         pytest.skip(
             f"goldens recorded on {recorded_gpu!r}; bitwise parity is only "
             "guaranteed on the same GPU model"
+        )
+    reference_sha = hashlib.sha256(REFERENCE.read_bytes()).hexdigest()
+    if payload.get("first_frame_sha256") != reference_sha:
+        pytest.skip(
+            "first-frame fixture SHA differs from the golden; re-record"
         )
 
     runner = ReferenceRunner.from_pretrained(
@@ -72,8 +77,11 @@ def test_reference_runner_reproduces_golden_latents():
         stream_text_encoder=os.environ.get("OMNI_H3_STREAM_TEXT_ENCODER", "0")
         == "1",
     )
+    from PIL import Image
+
     result = runner.generate(
         payload["prompt"],
+        image=Image.open(REFERENCE).convert("RGB"),
         seed=payload["seed"],
         num_inference_steps=payload["steps"],
         resolution=payload["resolution"],
