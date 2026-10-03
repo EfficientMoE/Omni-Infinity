@@ -229,9 +229,10 @@ def record_goldens(result, goldens_dir: Path, args) -> None:
     import diffusers
 
     goldens_dir.mkdir(parents=True, exist_ok=True)
+    first_frame_path = getattr(args, "first_frame", None)
     first_frame_sha = (
-        hashlib.sha256(args.first_frame.read_bytes()).hexdigest()
-        if args.first_frame is not None
+        hashlib.sha256(first_frame_path.read_bytes()).hexdigest()
+        if first_frame_path is not None
         else None
     )
     payload = {
@@ -292,10 +293,11 @@ def main() -> int:
         probe = DenoiseMemoryProbe(args.device)
         probe.attach(runner.pipeline)
     first_frame = None
-    if args.first_frame is not None:
+    first_frame_path = getattr(args, "first_frame", None)
+    if first_frame_path is not None:
         from PIL import Image
 
-        first_frame = Image.open(args.first_frame).convert("RGB")
+        first_frame = Image.open(first_frame_path).convert("RGB")
     start = time.perf_counter()
     if args.max_vram is not None and args.vram_window == "full":
         torch.cuda.reset_peak_memory_stats(args.device)
