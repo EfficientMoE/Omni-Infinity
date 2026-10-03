@@ -18,6 +18,7 @@ Runs the full-resident reference pipeline on a large-VRAM host. With
 from __future__ import annotations
 
 import argparse
+import hashlib
 import time
 from pathlib import Path
 
@@ -36,6 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--resolution", default="256p", choices=sorted(RESOLUTIONS)
     )
     parser.add_argument("--frames", type=int, default=8)
+    parser.add_argument(
+        "--first-frame",
+        type=Path,
+        default=None,
+        help="keyframe image the video starts from; FL2VA requires one "
+        "(image-less requests route through the separate t2va graph)",
+    )
     parser.add_argument("--checkpoint", default="MiniMaxAI/MiniMax-H3")
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
@@ -218,14 +226,23 @@ def export_outputs(result, output_dir: Path) -> None:
 
 
 def record_goldens(result, goldens_dir: Path, args) -> None:
+    import diffusers
+
     goldens_dir.mkdir(parents=True, exist_ok=True)
+    first_frame_sha = (
+        hashlib.sha256(args.first_frame.read_bytes()).hexdigest()
+        if args.first_frame is not None
+        else None
+    )
     payload = {
         "prompt": args.prompt,
+        "first_frame_sha256": first_frame_sha,
         "seed": args.seed,
         "steps": args.steps,
         "resolution": args.resolution,
         "frames": args.frames,
         "torch_version": torch.__version__,
+        "diffusers_version": diffusers.__version__,
         "gpu_name": (
             torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
         ),
@@ -274,11 +291,17 @@ def main() -> int:
     if args.max_vram is not None and args.vram_window == "denoise":
         probe = DenoiseMemoryProbe(args.device)
         probe.attach(runner.pipeline)
+    first_frame = None
+    if args.first_frame is not None:
+        from PIL import Image
+
+        first_frame = Image.open(args.first_frame).convert("RGB")
     start = time.perf_counter()
     if args.max_vram is not None and args.vram_window == "full":
         torch.cuda.reset_peak_memory_stats(args.device)
     result = runner.generate(
         args.prompt,
+        image=first_frame,
         seed=args.seed,
         num_inference_steps=args.steps,
         resolution=args.resolution,
