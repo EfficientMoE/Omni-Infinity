@@ -36,6 +36,11 @@ DEFAULT_CAPTURE = (
     "audio_condition_latents",
 )
 ENCODE_BLOCKS = ("text_encoder", "vae_encoder")
+_TEXT_ONLY_SKIP_BLOCKS = (
+    "vae_encoder",
+    "denoise.prepare_condition_latents",
+    "denoise.prepare_latents_fl2va",
+)
 _ENCODER_ARGUMENTS = frozenset((*DEFAULT_CAPTURE, "prompt"))
 _HOST_REPLAY_VALUES = frozenset(
     ("text_token_tags", "condition_latents", "audio_condition_latents")
@@ -219,10 +224,15 @@ class ConditionCache:
             }
 
 
-def build_conditioned_pipeline(pipeline, skip_blocks=ENCODE_BLOCKS):
+def build_conditioned_pipeline(
+    pipeline, skip_blocks=ENCODE_BLOCKS, call_kwargs=None
+):
     """Return a pipeline view without condition encoders, or ``None``."""
     try:
         blocks = pipeline.blocks
+        resolver = getattr(blocks, "get_execution_blocks", None)
+        if call_kwargs is not None and callable(resolver):
+            blocks = resolver(**call_kwargs)
         sub_blocks = blocks.sub_blocks
         if SequentialPipelineBlocks is None:
             return None
@@ -230,6 +240,7 @@ def build_conditioned_pipeline(pipeline, skip_blocks=ENCODE_BLOCKS):
             name: block
             for name, block in sub_blocks.items()
             if name not in skip_blocks
+            and name.partition(".")[0] not in skip_blocks
         }
         reduced_blocks = SequentialPipelineBlocks.from_blocks_dict(retained)
         reduced = reduced_blocks.init_pipeline()
@@ -279,6 +290,16 @@ def _input_names(pipeline) -> set[str]:
     }
 
 
+def _required_input_names(pipeline) -> set[str]:
+    inputs = getattr(getattr(pipeline, "blocks", None), "inputs", ())
+    return {
+        spec.name
+        for spec in inputs
+        if isinstance(getattr(spec, "name", None), str)
+        and getattr(spec, "required", False)
+    }
+
+
 def _is_image_reference(value) -> bool:
     try:
         return any(
@@ -323,6 +344,13 @@ def _replay_device(pipeline):
     return torch.device("cpu")
 
 
+def _is_text_only(call_kwargs: dict) -> bool:
+    return all(
+        call_kwargs.get(name) is None
+        for name in ("image", "last_image", "references")
+    )
+
+
 def prepare(
     pipeline,
     cache: ConditionCache,
@@ -361,14 +389,34 @@ def prepare(
                 values[name] = value
             cache.put(key, values)
 
+        if _is_text_only(call_kwargs) and callable(
+            getattr(pipeline.blocks, "get_execution_blocks", None)
+        ):
+            reduced = build_conditioned_pipeline(
+                pipeline,
+                skip_blocks=_TEXT_ONLY_SKIP_BLOCKS,
+                call_kwargs=call_kwargs,
+            )
+            if reduced is not None:
+                return ConditionReplay(False, reduced, call_kwargs, observe)
         return _miss(call_kwargs, observe)
 
-    reduced = build_conditioned_pipeline(pipeline)
+    skip_blocks = ENCODE_BLOCKS
+    if _is_text_only(call_kwargs):
+        skip_blocks = (*skip_blocks, *_TEXT_ONLY_SKIP_BLOCKS)
+    reduced = build_conditioned_pipeline(
+        pipeline, skip_blocks=skip_blocks, call_kwargs=call_kwargs
+    )
     if reduced is None:
         return _miss(call_kwargs)
 
     device = _replay_device(reduced)
     declared_inputs = _input_names(reduced)
+    required_cached_inputs = _required_input_names(reduced).intersection(
+        cache.capture
+    )
+    if not required_cached_inputs.issubset(entry.values):
+        return _miss(call_kwargs)
     try:
         cached = {
             name: value
