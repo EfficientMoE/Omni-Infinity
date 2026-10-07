@@ -14,6 +14,8 @@ by topic.
   lifecycle.
 - [Contributing](../CONTRIBUTING.md) — development setup, the Ruff and pytest
   gates, coding standards, and commit/PR conventions.
+- [Security](../SECURITY.md) — supported versions, how to report a
+  vulnerability, and the server's operational-security note.
 - [VDN-Minimax-H3 reproduction (sm120)](repro_vdn.md) — end-to-end dense and
   hybrid reproduction, environment pins, and the two cross-repo gotchas.
 - [Docker image](../docker/README.md) — reproducible CUDA 12.9 / Python 3.12

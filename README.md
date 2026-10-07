@@ -40,7 +40,7 @@ design contracts, and measurement reports.
 - [Roadmap and status](#roadmap-and-status)
 - [Architecture](#architecture)
 - [Development](#development)
-- [Contributing](#contributing)
+- [Contributing and Security](#contributing-and-security)
 - [Citation](#citation)
 - [License](#license)
 
@@ -535,12 +535,16 @@ Tests marked `gpu` or `weights` need a CUDA device and a local checkpoint.
 CI excludes both marks. The CPU job installs a CPU torch wheel before the
 editable install.
 
-## Contributing
+## Contributing and Security
 
-Development setup, the Ruff and pytest gates, coding standards, and the commit
-and pull-request conventions are documented in
-**[CONTRIBUTING.md](CONTRIBUTING.md)**; the quick commands are in
-[Development](#development) above.
+- **Contributing.** Development setup, the Ruff and pytest gates, coding
+  standards, and the commit and pull-request conventions are documented in
+  **[CONTRIBUTING.md](CONTRIBUTING.md)**; the quick commands are in
+  [Development](#development) above.
+- **Security.** See **[SECURITY.md](SECURITY.md)** for how to report a
+  vulnerability. Note that the job-serving server has no built-in
+  authentication and binds `127.0.0.1` by default — do not expose it on an
+  untrusted network without your own auth or reverse proxy.
 
 ## Citation
 
