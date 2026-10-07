@@ -66,3 +66,13 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
   the published VDN-H3 speedup (hypotheses H1–H6).
 - [Attribution runlog](attribution_vdn_runlog.md) — the raw replay commands
   and QA output backing the attribution study.
+
+## Research notes
+
+- [SM120 optimization gap analysis](sm120_gap_analysis.md) — what vLLM and
+  SGLang ship for omni models, the SM120 kernel ecosystem, and the ranked
+  gaps in Omni-Infinity on consumer/workstation Blackwell.
+- [Text-to-video optimization survey](t2v_optimization_survey.md) — the
+  T2V serving framework landscape (FastVideo, SGLang diffusion, vLLM-omni,
+  TensorRT-LLM VisualGen, xDiT), attention/caching/quantization techniques,
+  and a ranked porting list for this stack.
