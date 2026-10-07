@@ -1,50 +1,84 @@
 # Omni-Infinity
 
+[![CI](https://github.com/EfficientMoE/Omni-Infinity/actions/workflows/ci.yml/badge.svg)](https://github.com/EfficientMoE/Omni-Infinity/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+
 Cost-effective single-server inference for **dense omni-modal generative
 models** — starting with **MiniMax-H3-Base** — on memory-constrained GPUs.
 
-Sibling project of [MoE-Infinity](https://github.com/EfficientMoE/MoE-Infinity)
-(same philosophy: run models bigger than your GPU by exploiting structure +
-fast storage), scoped by the RFC in
+## Overview
+
+Omni-Infinity runs omni-modal generation models that are bigger than your GPU
+by exploiting model structure and fast storage. It is the sibling project of
+[MoE-Infinity](https://github.com/EfficientMoE/MoE-Infinity) (same philosophy),
+scoped by the RFC in
 [MoE-Infinity#222](https://github.com/EfficientMoE/MoE-Infinity/issues/222).
-Where MoE-Infinity's lever is routed-expert offloading, H3-class models have
-no routed experts; Omni-Infinity's levers are:
 
-1. **Component-level offloading** — the H3-Base pipeline spans a 33B
-   transformer, a Qwen3-VL-32B text encoder, and two VAEs that never need to
-   be co-resident: encode text → release encoder → denoise → decode latents,
-   swapping components through the GPU with prefetch overlap.
-2. **AdaLN branch caching** — ~13B of H3's 33B params are AdaLN branches
-   that are cacheable at inference; keep them in host memory/SSD and
-   materialize per-modality on demand.
-3. **Denoising-step scheduling** — overlap weight transfers with denoising
-   compute across steps; step-granular checkpointing for preemption.
-4. **Latent/VRAM budgeting** — paged latent buffers instead of paged KV.
-5. **Job-oriented serving** — generation jobs with progress/webhooks, not
-   OpenAI chat completions.
+Where MoE-Infinity's lever is routed-expert offloading, H3-class models have no
+routed experts, so Omni-Infinity's levers are **component-level offloading**,
+**AdaLN branch caching**, **denoising-step scheduling**, **latent/VRAM
+budgeting**, and **job-oriented serving**. The full encode → denoise → decode
+window for MiniMax-H3-Base fits under a **22 GiB** budget while reproducing the
+reference latents **bitwise**.
 
-## Storage
+Start at the [Documentation Hub](docs/README.md) for the longer guides,
+design contracts, and measurement reports.
 
-Omni-Infinity consumes [moe-store](https://github.com/EfficientMoE/moe-store)
-(>= 0.2.1) for checkpoint conversion and the arch-aware v2 on-disk store.
-`moe-store convert MiniMaxAI/MiniMax-H3 <store>` ingests the full modular
-pipeline: per-block non-AdaLN groups, per-block AdaLN bundle groups, and one
-group per VAE/encoder shard. The transfer engine is Omni-Infinity's own
-step-synchronous loop, not shared with MoE-Infinity.
+## Contents
 
-## Scope (v0.1)
+- [Documentation Hub](docs/README.md)
+- [Key Features](#key-features)
+- [Supported model architectures](#supported-model-architectures)
+- [Opt-in caches](#opt-in-caches)
+- [Storage](#storage)
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+- [Job-serving API](#job-serving-api)
+- [Streaming playback](#streaming-playback)
+- [Multi-prompt demo](#multi-prompt-demo)
+- [Roadmap and status](#roadmap-and-status)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Contributing](#contributing)
+- [Citation](#citation)
+- [License](#license)
 
-- **Target:** MiniMax-H3-Base only (`MiniMaxAI/MiniMax-H3`, FL2VA + Ref2VA,
-  768p). H3-Context-IR and H3-Regenerate-2K are hosted/API-only and out of
-  local scope until (if ever) their weights are released.
-- **Memory story:** component offload + AdaLN caching + FP8 weights (FP4
-  where kernels allow).
-- **Non-goals:** multimodal understanding on MoE backbones (that is
-  MoE-Infinity, [#221](https://github.com/EfficientMoE/MoE-Infinity/issues/221));
-  sparse-attention inference (the H3 open release supports full attention
-  only).
+## Key Features
 
-## Model archs & optimizations
+- **Component-level offloading.** The H3-Base pipeline spans a 33B transformer,
+  a Qwen3-VL-32B text encoder, and two VAEs that never need to be co-resident:
+  encode text → release encoder → denoise → decode latents, swapping components
+  through the GPU with prefetch overlap.
+- **AdaLN branch caching.** ~13B of H3's 33B params are AdaLN branches that are
+  cacheable at inference. Keeping them host-resident and materializing them
+  per-modality on demand drops the GPU-resident set from **66.28 → 40.26 GB**
+  with bitwise parity.
+- **bf16 block-streaming.** Native group offload streams the transformer blocks
+  (and the 64-layer Qwen3-VL text encoder, leaf-level) through the GPU instead
+  of holding them resident. The whole encode+denoise+decode window peaks at
+  **9.96 GiB** under an emulated 22 GiB envelope, bitwise-identical to the
+  goldens.
+- **FP8 weight-only kernel (opt-in).** A fused block-scaled Triton GEMM behind
+  the `omni_infinity/kernels/` facade halves FP8 weight bytes and lowers peak
+  memory on large Linears. H3 is not FP8-native, so FP8 is an opt-in
+  memory/bandwidth tradeoff, not the accuracy-preserving default.
+- **Denoising-step scheduling.** Cross-step weight prefetch overlaps H2D copies
+  with denoising compute (measured H2D/compute overlap of **0.637** and
+  **0.599** at steps 2 and 3), with step-granular checkpointing for preemption.
+- **Opt-in caches (C1–C5).** Exact condition, vision-embedding, and
+  calibrated denoise-step caches. Nothing is on by default; contributions are
+  quantified in [docs/cache_benchmarks.md](docs/cache_benchmarks.md).
+- **Job-oriented serving.** Generation jobs with progress and artifact polling
+  — not OpenAI chat completions — plus opt-in WebSocket streaming playback and
+  a multi-prompt demo.
+- **VDN-Minimax-H3 hybrid.** A frame-wise linear-attention branch + window
+  softmax + merged LoRA adapters on the frozen H3 backbone: dense→hybrid+fp8
+  **2.15×** per-NFE with bitwise golden parity, block-streamed to ~20 GiB.
+- **moe-store backed.** Checkpoint conversion and an arch-aware v2 on-disk store
+  via [moe-store](https://github.com/EfficientMoE/moe-store).
+
+## Supported model architectures
 
 Two orthogonal category axes (`omni_infinity/registry.py`) describe every
 supported configuration; the smoke CLIs and the ablation harness
@@ -62,6 +96,18 @@ supported configuration; the smoke CLIs and the ablation harness
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
+`vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
+[OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
+pinned at `third_party/vdn-minimax-h3`): a frame-wise linear-attention
+branch + window softmax + two merged LoRA adapters on the frozen H3
+backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
+[docs/repro_vdn.md](docs/repro_vdn.md) — dense→hybrid+fp8 **2.15×**
+per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
+streaming ~20 GiB peak. Ablation study:
+[docs/ablation_vdn.md](docs/ablation_vdn.md). Speedup attribution study:
+[docs/attribution_vdn.md](docs/attribution_vdn.md). Tracking:
+[#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
+
 ### Opt-in caches
 
 Nothing is on by default. The shared interfaces are tracked by the
@@ -77,91 +123,42 @@ for [issue #24](https://github.com/EfficientMoE/Omni-Infinity/issues/24).
 
 Benchmarks quantifying each cache level's contribution (microbenchmarks,
 one-factor ablation, VidProM serving trace, C5 calibration probe):
-[docs/cache_benchmarks.md](docs/cache_benchmarks.md).
+[docs/cache_benchmarks.md](docs/cache_benchmarks.md). The per-level design
+notes are indexed in the [Documentation Hub](docs/README.md#caches-opt-in-issue-24).
 
-`vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
-[OpenVDN/vdn-minimax-h3](https://github.com/OpenVDN/vdn-minimax-h3),
-pinned at `third_party/vdn-minimax-h3`): a frame-wise linear-attention
-branch + window softmax + two merged LoRA adapters on the frozen H3
-backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
-[docs/repro_vdn.md](docs/repro_vdn.md) — dense→hybrid+fp8 **2.15×**
-per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
-streaming ~20 GiB peak. Ablation study:
-[docs/ablation_vdn.md](docs/ablation_vdn.md). Speedup attribution study:
-[docs/attribution_vdn.md](docs/attribution_vdn.md). Tracking:
-[#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
+## Storage
 
-## Status
+Omni-Infinity consumes [moe-store](https://github.com/EfficientMoE/moe-store)
+(>= 0.2.1) for checkpoint conversion and the arch-aware v2 on-disk store.
+`moe-store convert MiniMaxAI/MiniMax-H3 <store>` ingests the full modular
+pipeline: per-block non-AdaLN groups, per-block AdaLN bundle groups, and one
+group per VAE/encoder shard. The transfer engine is Omni-Infinity's own
+step-synchronous loop, not shared with MoE-Infinity.
 
-Bootstrap in progress — see the
-[task list](https://github.com/EfficientMoE/MoE-Infinity/issues/222):
+## Installation
 
-- [x] Task 0 — moe-store multi-component H3 converter with AdaLN bundle
-      groups ([moe-store#9](https://github.com/EfficientMoE/moe-store/pull/9),
-      released in v0.2.1)
-- [x] Task 1 — repo skeleton + reference-parity harness: runner API
-      (`omni_infinity/runner.py`), smoke CLI (`examples/fl2va_smoke.py`),
-      and the bitwise parity gate (`tests/test_reference_parity.py`) —
-      validated on real H3-Base weights: a fresh generation reproduces the
-      committed golden latents bitwise
-      ([#1](https://github.com/EfficientMoE/Omni-Infinity/issues/1))
-- [~] Task 2 — component offload + AdaLN caching + FP8 on a single 24 GB GPU
-      ([#2](https://github.com/EfficientMoE/Omni-Infinity/issues/2)):
-  - [x] Store-sourced components (`StoreComponentSource`, one-read group
-        fetches) reproduce the goldens bitwise (inc 1, 2, 2b)
-  - [x] Host-resident AdaLN branch cache — 66.28 → 40.26 GB GPU-resident,
-        bitwise parity (inc 3)
-  - [x] FP8 weight path (opt-in) + offline QA harness — validated 40.26 →
-        20.19 GB, but H3 is not FP8-native so it can't meet `rtol=2e-2`
-        (~16-25% latent error); memory tradeoff only (inc 4)
-  - [x] bf16 block-streaming — native `enable_group_offload(block_level)`
-        streams the transformer blocks (attn/ff) with prefetch; the AdaLN
-        host cache is untouched. Reproduces the goldens **bitwise**
-        (`rms_rel=0.0000`) with a trivial transformer weight footprint (inc 5)
-  - [x] Text-encoder streaming — the 64-layer Qwen3-VL encoder is
-        leaf-level group-offloaded (bf16), so its layers stream through the GPU
-        instead of the whole 64 GB staying resident. Reproduces the goldens
-        **bitwise** with the transformer block-streamed too (inc 6). `leaf_level`
-        (not `block_level`) is required so `embed_tokens` self-onloads.
-  - [x] Whole-pipeline ≤22 GiB gate — the full encode+denoise+decode window
-        peaks at **9.96 GiB** under the emulated 22 GiB offload envelope, with
-        `rms_rel=0.0000`, elementwise `allclose(rtol=2e-2)`, and 38.1 s
-        wall-clock (inc 7)
-  - [x] Fused block-scaled FP8 weight-only kernel — vendored+hardened
-        Triton GEMM behind an `omni_infinity/kernels/` facade (op-centric,
-        pure-torch reference fallback). `ScaledFp8Linear` and the AdaLN FP8
-        branch dequantize *inside* the GEMM (no bf16 weight
-        materialization); block-wise 128×128 scaling. Benchmark: FP8
-        weight bytes halved and lower peak memory on large Linears (e.g.
-        N=28672: 3330→2600 MB); latency ~matches/trails bf16 at large M
-        (bf16 MMA, no fp8-TC on the weight-only path). **Accuracy gate
-        (256p/120f vs goldens): block `rms_rel=0.2135`, per-row `0.2373` —
-        both FAIL `allclose(rtol=2e-2)`. H3 is not FP8-native; block-wise
-        beats per-row but does not close the gap.** FP8 remains an
-        **opt-in memory/bandwidth tradeoff** (select via `--fp8-scale
-        block`); bf16 block-streaming stays the accuracy-preserving
-        default (inc 5-7). (inc 8)
-  - [ ] Confirm the emulated envelope on a true 24 GB card before release
-- [x] Task 3 — Ref2VA store path + denoising-step prefetch overlap
-      ([#8](https://github.com/EfficientMoE/Omni-Infinity/issues/8)):
-  - Ref2VA selects `transformer_ref` and passes an ordered
-    `MiniMaxH3ImageReference` list. Its packed reference rows now use the same
-    store-backed, host-AdaLN, bf16 block-streamed, and text-encoder-streamed
-    execution path as FL2VA.
-  - The final transformer weight group now prefetches the first group for the
-    next denoising step. CUDA-event QA measured H2D/compute overlap ratios of
-    **0.637** and **0.599** for destination steps 2 and 3.
-  - The required 256p/120-frame smoke reproduced the full-resident video and
-    audio latents bitwise in **77.0 s**, peaking at **10.72 GiB**.
-
-Required Ref2VA smoke gate:
+Omni-Infinity targets Python 3.12 (CI) and depends on `torch>=2.0` and
+`moe-store>=0.2.1`.
 
 ```bash
-python examples/ref2va_smoke.py --ref tests/fixtures/ref.png --seed 0 --steps 8 --resolution 256p --frames 120 --max-vram 22GiB
+# core runtime
+pip install -e .
+
+# + job-serving / streaming stack (FastAPI, uvicorn, websockets, av, soundfile, pillow)
+pip install -e '.[serve]'
+
+# + benchmark dataset refresh (datasets)
+pip install -e '.[bench]'
+
+# development: tests, ruff, coverage, and the serving deps
+pip install -e '.[dev]'
 ```
 
-See [docs/ref2va_step_overlap.md](docs/ref2va_step_overlap.md) for golden
-provenance, store inspection, parity, and overlap commands.
+A reproducible CUDA 12.9 / Python 3.12 Docker image for the VDN-Minimax-H3
+results — including the parity gate and the upstream native ladder — is
+documented in [docker/README.md](docker/README.md).
+
+## Quickstart
 
 Reference smoke (diffusers >= 0.40; `--offload` runs components
 sequentially when the ~144 GB FL2VA set exceeds one GPU; H3 generates
@@ -184,6 +181,14 @@ python examples/fl2va_smoke.py --prompt "a red ball bouncing" \
     --store-dir <moe-store> --store-components transformer,vae,audio_vae \
     --adaln-host-cache --block-stream-blocks-per-group 1 \
     --goldens tests/fixtures/goldens/fl2va_goldens.pt
+```
+
+Ref2VA store path + denoising-step prefetch overlap (see
+[docs/ref2va_step_overlap.md](docs/ref2va_step_overlap.md) for golden
+provenance, store inspection, parity, and overlap commands):
+
+```bash
+python examples/ref2va_smoke.py --ref tests/fixtures/ref.png --seed 0 --steps 8 --resolution 256p --frames 120 --max-vram 22GiB
 ```
 
 ## Job-serving API
@@ -412,7 +417,83 @@ curl http://127.0.0.1:8000/v1/demos \
 
 `5min` requires 59 prompts. The first clip is the one that starts playback.
 
-## Deferred: shared `moe-kernels` package
+## Roadmap and status
+
+### Scope (v0.1)
+
+- **Target:** MiniMax-H3-Base only (`MiniMaxAI/MiniMax-H3`, FL2VA + Ref2VA,
+  768p). H3-Context-IR and H3-Regenerate-2K are hosted/API-only and out of
+  local scope until (if ever) their weights are released.
+- **Memory story:** component offload + AdaLN caching + FP8 weights (FP4
+  where kernels allow).
+- **Non-goals:** multimodal understanding on MoE backbones (that is
+  MoE-Infinity, [#221](https://github.com/EfficientMoE/MoE-Infinity/issues/221));
+  sparse-attention inference (the H3 open release supports full attention
+  only).
+
+### Bootstrap task list
+
+Tracked in the [task list](https://github.com/EfficientMoE/MoE-Infinity/issues/222):
+
+- [x] Task 0 — moe-store multi-component H3 converter with AdaLN bundle
+      groups ([moe-store#9](https://github.com/EfficientMoE/moe-store/pull/9),
+      released in v0.2.1)
+- [x] Task 1 — repo skeleton + reference-parity harness: runner API
+      (`omni_infinity/runner.py`), smoke CLI (`examples/fl2va_smoke.py`),
+      and the bitwise parity gate (`tests/test_reference_parity.py`) —
+      validated on real H3-Base weights: a fresh generation reproduces the
+      committed golden latents bitwise
+      ([#1](https://github.com/EfficientMoE/Omni-Infinity/issues/1))
+- [~] Task 2 — component offload + AdaLN caching + FP8 on a single 24 GB GPU
+      ([#2](https://github.com/EfficientMoE/Omni-Infinity/issues/2)):
+  - [x] Store-sourced components (`StoreComponentSource`, one-read group
+        fetches) reproduce the goldens bitwise (inc 1, 2, 2b)
+  - [x] Host-resident AdaLN branch cache — 66.28 → 40.26 GB GPU-resident,
+        bitwise parity (inc 3)
+  - [x] FP8 weight path (opt-in) + offline QA harness — validated 40.26 →
+        20.19 GB, but H3 is not FP8-native so it can't meet `rtol=2e-2`
+        (~16-25% latent error); memory tradeoff only (inc 4)
+  - [x] bf16 block-streaming — native `enable_group_offload(block_level)`
+        streams the transformer blocks (attn/ff) with prefetch; the AdaLN
+        host cache is untouched. Reproduces the goldens **bitwise**
+        (`rms_rel=0.0000`) with a trivial transformer weight footprint (inc 5)
+  - [x] Text-encoder streaming — the 64-layer Qwen3-VL encoder is
+        leaf-level group-offloaded (bf16), so its layers stream through the GPU
+        instead of the whole 64 GB staying resident. Reproduces the goldens
+        **bitwise** with the transformer block-streamed too (inc 6). `leaf_level`
+        (not `block_level`) is required so `embed_tokens` self-onloads.
+  - [x] Whole-pipeline ≤22 GiB gate — the full encode+denoise+decode window
+        peaks at **9.96 GiB** under the emulated 22 GiB offload envelope, with
+        `rms_rel=0.0000`, elementwise `allclose(rtol=2e-2)`, and 38.1 s
+        wall-clock (inc 7)
+  - [x] Fused block-scaled FP8 weight-only kernel — vendored+hardened
+        Triton GEMM behind an `omni_infinity/kernels/` facade (op-centric,
+        pure-torch reference fallback). `ScaledFp8Linear` and the AdaLN FP8
+        branch dequantize *inside* the GEMM (no bf16 weight
+        materialization); block-wise 128×128 scaling. Benchmark: FP8
+        weight bytes halved and lower peak memory on large Linears (e.g.
+        N=28672: 3330→2600 MB); latency ~matches/trails bf16 at large M
+        (bf16 MMA, no fp8-TC on the weight-only path). **Accuracy gate
+        (256p/120f vs goldens): block `rms_rel=0.2135`, per-row `0.2373` —
+        both FAIL `allclose(rtol=2e-2)`. H3 is not FP8-native; block-wise
+        beats per-row but does not close the gap.** FP8 remains an
+        **opt-in memory/bandwidth tradeoff** (select via `--fp8-scale
+        block`); bf16 block-streaming stays the accuracy-preserving
+        default (inc 5-7). (inc 8)
+  - [ ] Confirm the emulated envelope on a true 24 GB card before release
+- [x] Task 3 — Ref2VA store path + denoising-step prefetch overlap
+      ([#8](https://github.com/EfficientMoE/Omni-Infinity/issues/8)):
+  - Ref2VA selects `transformer_ref` and passes an ordered
+    `MiniMaxH3ImageReference` list. Its packed reference rows now use the same
+    store-backed, host-AdaLN, bf16 block-streamed, and text-encoder-streamed
+    execution path as FL2VA.
+  - The final transformer weight group now prefetches the first group for the
+    next denoising step. CUDA-event QA measured H2D/compute overlap ratios of
+    **0.637** and **0.599** for destination steps 2 and 3.
+  - The required 256p/120-frame smoke reproduced the full-resident video and
+    audio latents bitwise in **77.0 s**, peaking at **10.72 GiB**.
+
+### Deferred: shared `moe-kernels` package
 
 > **Deferred — shared `moe-kernels`.** Kernels currently live behind the
 > `omni_infinity/kernels/` facade. **Extract to a standalone `moe-kernels`
@@ -430,6 +511,14 @@ curl http://127.0.0.1:8000/v1/demos \
 > the forward-compat valve (no lockstep releases). **Extraction = `git mv`
 > impls + swap the facade's imports; call sites are already stable.**
 
+## Architecture
+
+For a contributor-oriented map of the codebase — the core inference path
+(`registry` → `ReferenceRunner`/`VdnRunner` → store / AdaLN / FP8 / kernels /
+caches), the job-serving and streaming paths under `omni_infinity/serve/`, the
+module layout, and the request lifecycle — see
+**[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
 ## Development
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on Python 3.12:
@@ -445,6 +534,37 @@ pytest tests/ -m "not gpu and not weights" -q --timeout 180 \
 Tests marked `gpu` or `weights` need a CUDA device and a local checkpoint.
 CI excludes both marks. The CPU job installs a CPU torch wheel before the
 editable install.
+
+## Contributing
+
+Development setup, the Ruff and pytest gates, coding standards, and the commit
+and pull-request conventions are documented in
+**[CONTRIBUTING.md](CONTRIBUTING.md)**; the quick commands are in
+[Development](#development) above.
+
+## Citation
+
+Omni-Infinity is scoped by the RFC in
+[MoE-Infinity#222](https://github.com/EfficientMoE/MoE-Infinity/issues/222)
+and is the sibling of
+[MoE-Infinity](https://github.com/EfficientMoE/MoE-Infinity). If you use
+MoE-Infinity for your research, please cite the
+[paper](https://arxiv.org/abs/2401.14361):
+
+```bibtex
+@misc{moe-infinity,
+  author       = {Leyang Xue and
+                  Yao Fu and
+                  Zhan Lu and
+                  Chuanhao Sun and
+                  Luo Mai and
+                  Mahesh Marina},
+  title        = {MoE{-}Infinity: Efficient MoE Inference on Personal Machines with Sparsity-Aware Expert Cache},
+  archivePrefix= {arXiv},
+  eprint       = {2401.14361},
+  year         = {2024}
+}
+```
 
 ## License
 
