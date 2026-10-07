@@ -1,5 +1,9 @@
 # Omni-Infinity
 
+[![CI](https://github.com/EfficientMoE/Omni-Infinity/actions/workflows/ci.yml/badge.svg)](https://github.com/EfficientMoE/Omni-Infinity/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+
 Cost-effective single-server inference for **dense omni-modal generative
 models** — starting with **MiniMax-H3-Base** — on memory-constrained GPUs.
 
@@ -34,7 +38,9 @@ design contracts, and measurement reports.
 - [Streaming playback](#streaming-playback)
 - [Multi-prompt demo](#multi-prompt-demo)
 - [Roadmap and status](#roadmap-and-status)
+- [Architecture](#architecture)
 - [Development](#development)
+- [Contributing](#contributing)
 - [Citation](#citation)
 - [License](#license)
 
@@ -505,6 +511,14 @@ Tracked in the [task list](https://github.com/EfficientMoE/MoE-Infinity/issues/2
 > the forward-compat valve (no lockstep releases). **Extraction = `git mv`
 > impls + swap the facade's imports; call sites are already stable.**
 
+## Architecture
+
+For a contributor-oriented map of the codebase — the core inference path
+(`registry` → `ReferenceRunner`/`VdnRunner` → store / AdaLN / FP8 / kernels /
+caches), the job-serving and streaming paths under `omni_infinity/serve/`, the
+module layout, and the request lifecycle — see
+**[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
 ## Development
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on Python 3.12:
@@ -520,6 +534,13 @@ pytest tests/ -m "not gpu and not weights" -q --timeout 180 \
 Tests marked `gpu` or `weights` need a CUDA device and a local checkpoint.
 CI excludes both marks. The CPU job installs a CPU torch wheel before the
 editable install.
+
+## Contributing
+
+Development setup, the Ruff and pytest gates, coding standards, and the commit
+and pull-request conventions are documented in
+**[CONTRIBUTING.md](CONTRIBUTING.md)**; the quick commands are in
+[Development](#development) above.
 
 ## Citation
 

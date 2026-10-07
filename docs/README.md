@@ -9,6 +9,11 @@ by topic.
 
 - [Project README](../README.md) — overview, key features, installation,
   job-serving API, streaming playback, and the multi-prompt demo.
+- [Architecture](../ARCHITECTURE.md) — contributor map of the codebase: the
+  core inference path, the serving and streaming paths, and the request
+  lifecycle.
+- [Contributing](../CONTRIBUTING.md) — development setup, the Ruff and pytest
+  gates, coding standards, and commit/PR conventions.
 - [VDN-Minimax-H3 reproduction (sm120)](repro_vdn.md) — end-to-end dense and
   hybrid reproduction, environment pins, and the two cross-repo gotchas.
 - [Docker image](../docker/README.md) — reproducible CUDA 12.9 / Python 3.12
