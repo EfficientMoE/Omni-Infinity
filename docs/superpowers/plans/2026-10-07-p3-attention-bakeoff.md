@@ -1,5 +1,7 @@
 # P3 — Attention backend bake-off for the window-softmax branch (SM120)
 
+> **Tracking PR** — implementation for this plan lands on this branch. Roadmap: #42.
+
 Tracking: [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42) (P3).
 Refs: [t2v survey](../../t2v_optimization_survey.md) §2, [repro_vdn](../../repro_vdn.md).
 
