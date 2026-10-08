@@ -131,3 +131,6 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
 - Post an honest P2 summary comment on issue #42 (graph-only is the sole fast +
   bitwise config; compile/compile+graph fail the golden gate; resident/large-GPU
   scope; block-stream demoted in Phase 0). Do not close the issue.
+- Issue #42 updated via comment (evidence for plan checkbox 6):
+  https://github.com/EfficientMoE/Omni-Infinity/issues/42#issuecomment-6061938884
+  Issue left OPEN (roadmap tracker).
