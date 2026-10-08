@@ -75,3 +75,26 @@
   120 frames to `17*n+5`; raw JSON records both values.
 - Resident-only P2 is a large-GPU scope: its 71.89 GiB peak does not satisfy
   the separate 22 GiB memory-constrained serving envelope.
+
+## [2026-10-08] Phase 1 regional compile
+
+- `compile_repeated_blocks(fullgraph=True, dynamic=True)` compiled the 50 H3
+  blocks and 2 token-refiner blocks into 3 unique Dynamo graphs. No new graph
+  appeared after the cold forward, so timestep changes did not cause a storm.
+- Same-GPU-4 canonical result: OFF 1483.38 ms vs ON 1579.38 ms median step wall
+  (0.939x); compute improved 507.70 -> 471.05 ms and kernels fell 2487 -> 983,
+  but variable host-AdaLN H2D dominated and erased the fusion win.
+- Cold first forward was 26.75 s. Always use a fresh
+  `TORCHINDUCTOR_CACHE_DIR` for compiler-option experiments: the global cache
+  reused a `force_same_precision` kernel after the environment flag was
+  removed, contaminating a nominal default rerun.
+- Provenance-valid Server Edition compile parity failed: video-latent
+  `rms_rel=0.0726177`, not bitwise, and not elementwise allclose at
+  `rtol=atol=2e-2`; the paired eager control stayed bitwise. The benchmark now
+  writes evidence before returning nonzero on mismatch/failure.
+  `TORCHINDUCTOR_FORCE_SAME_PRECISION=1` improved a GPU-2
+  probe from ~7.26% to ~3.89% RMS error but still failed; eager precision-cast
+  emulation did not improve it.
+- AdaLN materialization is inside each repeated H3 block's forward in diffusers
+  0.40.0; only cache installation and C5's skip decision are outside regional
+  compilation. C5 still safely bypasses compiled blocks on a cache hit.
