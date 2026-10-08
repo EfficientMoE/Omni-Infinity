@@ -15,7 +15,12 @@ from PIL import Image, UnidentifiedImageError
 
 from omni_infinity.registry import ResolvedProfile, resolve_profile
 from omni_infinity.serve.artifacts import write_artifacts
-from omni_infinity.serve.models import GenerationRequest, JobRecord, JobStatus
+from omni_infinity.serve.models import (
+    GenerationRequest,
+    GraphTelemetry,
+    JobRecord,
+    JobStatus,
+)
 from omni_infinity.serve.store import InvalidTransition, JobStore
 
 logger = logging.getLogger(__name__)
@@ -122,8 +127,21 @@ class JobService:
                 self.store.job_dir(job_id),
                 artifact_url=f"/v1/jobs/{job_id}/artifacts",
             )
+            telemetry = None
+            manager = getattr(self.runner, "cuda_graph_manager", None)
+            if manager is not None:
+                try:
+                    telemetry = GraphTelemetry(**manager.stats_snapshot())
+                except Exception:
+                    logger.exception(
+                        "could not capture CUDA graph telemetry for job %s",
+                        job_id,
+                    )
             self.store.transition(
-                job_id, JobStatus.SUCCEEDED, artifacts=artifacts
+                job_id,
+                JobStatus.SUCCEEDED,
+                artifacts=artifacts,
+                graph_telemetry=telemetry,
             )
         except Exception as exc:
             self.store.video_path(job_id).unlink(missing_ok=True)

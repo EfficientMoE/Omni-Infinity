@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from omni_infinity.registry import resolve_profile
 from omni_infinity.runner import GenerationResult
 from omni_infinity.serve import artifacts as artifact_module
+from omni_infinity.serve import models as serve_models
 from omni_infinity.serve.app import ServerSettings, create_app
 from omni_infinity.serve.artifacts import write_artifacts
 from omni_infinity.serve.models import (
@@ -32,6 +33,7 @@ from omni_infinity.serve.models import (
     ArtifactMetadata,
     GenerationRequest,
     JobRecord,
+    JobResponse,
     JobStatus,
     Progress,
 )
@@ -47,6 +49,22 @@ from omni_infinity.serve.store import (
     JobStore,
     JobStoreError,
 )
+
+GRAPH_TELEMETRY_PAYLOAD = {
+    "captures": 1,
+    "replays": 3,
+    "capture_failures": 0,
+    "graph_pool_bytes": 34_539_520,
+    "capture_time_ms": 2561.91,
+    "warmup_calls": 3,
+    "capture_warmup_calls": 2,
+    "graphs": 1,
+    "generation": 0,
+    "fallback_reasons": {
+        "warmup_not_done": 2,
+        "shape_bucket_miss": 1,
+    },
+}
 
 
 @pytest.fixture
@@ -142,6 +160,52 @@ def test_job_store_reads_persisted_record_and_rejects_missing(
     assert fresh.get(record.id) == record
     with pytest.raises(JobNotFound):
         fresh.get("f" * 32)
+
+
+def test_job_store_persists_graph_telemetry_on_success(tmp_path, fl2va_request):
+    store = JobStore(tmp_path)
+    record = store.create(fl2va_request)
+    store.transition(record.id, JobStatus.RUNNING)
+    telemetry = serve_models.GraphTelemetry(**GRAPH_TELEMETRY_PAYLOAD)
+
+    succeeded = store.transition(
+        record.id,
+        JobStatus.SUCCEEDED,
+        graph_telemetry=telemetry,
+    )
+
+    assert succeeded.graph_telemetry == telemetry
+    payload = json.loads((store.job_dir(record.id) / "job.json").read_text())
+    assert payload["graph_telemetry"] == GRAPH_TELEMETRY_PAYLOAD
+    assert JobStore(tmp_path).get(record.id).graph_telemetry == telemetry
+
+
+def test_job_response_carries_graph_telemetry(tmp_path, fl2va_request):
+    store = JobStore(tmp_path)
+    record = store.create(fl2va_request)
+    store.transition(record.id, JobStatus.RUNNING)
+    telemetry = serve_models.GraphTelemetry(**GRAPH_TELEMETRY_PAYLOAD)
+    succeeded = store.transition(
+        record.id,
+        JobStatus.SUCCEEDED,
+        graph_telemetry=telemetry,
+    )
+
+    response = JobResponse.from_record(succeeded)
+
+    assert response.graph_telemetry == telemetry
+
+
+def test_job_record_loads_legacy_payload_without_graph_telemetry(
+    tmp_path, fl2va_request
+):
+    record = JobStore(tmp_path).create(fl2va_request)
+    legacy_payload = record.model_dump(mode="json")
+    legacy_payload.pop("graph_telemetry", None)
+
+    loaded = JobRecord.model_validate(legacy_payload)
+
+    assert loaded.graph_telemetry is None
 
 
 def test_job_store_reports_corrupt_json(tmp_path, fl2va_request):
@@ -294,8 +358,87 @@ def test_job_service_serializes_jobs_and_persists_artifacts(
         assert runner.max_active == 1
         assert first_done.progress.completed_steps == 8
         assert second_done.progress.completed_steps == 8
+        assert first_done.graph_telemetry is None
+        assert second_done.graph_telemetry is None
         assert store.video_path(first.id).is_file()
         assert store.video_path(second.id).is_file()
+    finally:
+        service.shutdown()
+
+
+def test_job_service_persists_cuda_graph_manager_telemetry(
+    tmp_path, artifact_result
+):
+    class FakeGraphManager:
+        def stats_snapshot(self):
+            return {
+                **GRAPH_TELEMETRY_PAYLOAD,
+                "fallback_reasons": dict(
+                    GRAPH_TELEMETRY_PAYLOAD["fallback_reasons"]
+                ),
+            }
+
+    class FakeRunner:
+        def __init__(self):
+            self.cuda_graph_manager = FakeGraphManager()
+
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            for completed in range(1, num_inference_steps + 1):
+                step_callback(completed, num_inference_steps)
+            return artifact_result
+
+    store = JobStore(tmp_path)
+    service = JobService(FakeRunner(), resolve_profile("h3-dense", []), store)
+    try:
+        record = service.submit(
+            GenerationRequest(type="fl2va", prompt="prompt")
+        )
+
+        succeeded = _wait_for_terminal(store, record.id)
+
+        assert succeeded.status == JobStatus.SUCCEEDED
+        assert succeeded.graph_telemetry.model_dump() == GRAPH_TELEMETRY_PAYLOAD
+    finally:
+        service.shutdown()
+
+
+def test_job_service_succeeds_when_graph_telemetry_snapshot_fails(
+    tmp_path, artifact_result
+):
+    class FailingGraphManager:
+        def __init__(self):
+            self.called = False
+
+        def stats_snapshot(self):
+            self.called = True
+            raise RuntimeError("stats unavailable")
+
+    class FakeRunner:
+        def __init__(self):
+            self.cuda_graph_manager = FailingGraphManager()
+
+        def generate(
+            self, prompt, *, step_callback, num_inference_steps, **kwargs
+        ):
+            for completed in range(1, num_inference_steps + 1):
+                step_callback(completed, num_inference_steps)
+            return artifact_result
+
+    runner = FakeRunner()
+    store = JobStore(tmp_path)
+    service = JobService(runner, resolve_profile("h3-dense", []), store)
+    try:
+        record = service.submit(
+            GenerationRequest(type="fl2va", prompt="prompt")
+        )
+
+        succeeded = _wait_for_terminal(store, record.id)
+
+        assert runner.cuda_graph_manager.called
+        assert succeeded.status == JobStatus.SUCCEEDED
+        assert succeeded.graph_telemetry is None
     finally:
         service.shutdown()
 
