@@ -180,6 +180,65 @@ NCCL_P2P_DISABLE=1
   chan8, cross-socket SYS collapse) on the torch stack before relying on
   them in production tuning.
 
+## Phase 1 throughput — stage pipelining (measured)
+
+Measured with `benchmarks/role_pipeline_bench.py` on this host
+(2026-10-08): FL2VA, 256p / 120f / 8 NFE, image-conditioned, driven by the
+committed VidProM prompt trace (`benchmarks/caches/fixtures/prompts.json`).
+Every role arm is **fully resident** (no streaming). Each run asserts the
+golden prompt reproduces the committed goldens
+(`tests/fixtures/goldens/fl2va_goldens.pt`) **bitwise** — the role arms gate
+a dedicated parity job before the timed trace, the streamed baseline gates
+its first job — and aborts on any mismatch, since the handoff is
+data-movement-only and a split run must reproduce the single-GPU latents
+exactly. All rows below passed that gate (video **and** audio latents
+bitwise).
+
+The scaling unit is a **2-GPU replica**: encoder+decoder share one GPU and
+the denoiser is isolated on its PIX peer. The denoiser dominates the per-job
+cost, so isolating it is what sets the per-replica rate; replicas are
+independent (no cross-replica collectives) and scale out across PIX pairs.
+
+| Topology | GPUs | Replicas | Steady jobs/hour | s/job (per replica) | vs 1-GPU |
+|---|---:|---:|---:|---|---:|
+| 1 — single GPU, streamed (budget profile) | 1 | 1 | 135.2 | 26.6 warm | 1.0× |
+| 2 — `{enc+dec \| denoiser}`, PIX pair | 2 | 1 | 1247.3 | 2.89 | 9.2× |
+| 3 — `{enc \| denoiser \| dec}` | 3 | 1 | 1248.6 | 2.88 | 9.2× |
+| 4 — 2 replicas on PIX pairs (0,1)+(2,3) | 4 | 2 | 2481.3 | 2.89 / 2.92 | 18.4× |
+| 6 — 3 replicas on (0,1)+(2,3)+(4,5) | 6 | 3 | 3397.5 | 2.87 / 2.90 / 3.97 | 25.1× |
+
+"Steady jobs/hour" sums the per-replica steady-state rates — for each
+replica, 3600 / (median inter-completion spacing over its second half),
+which discards the fill ramp; "s/job" is that spacing. Role
+replicas are warmed (components loaded) and clear the parity job before the
+timer starts, so every timed job is warm. The single-GPU baseline instead
+excludes its own cold first job (one-time text-encoder compile) and reports
+the warm median of the remaining jobs.
+
+### Findings
+
+1. **Stage pipelining alone delivers the throughput win.** Two fully
+   resident GPUs already give **9.2×** the single-GPU streamed baseline
+   (1247 vs 135 jobs/hour): the budget streamed profile pays ~27 s/job, the
+   resident role pair ~2.9 s/job. This matches the plan's risk note — stage
+   pipelining does not need CFG/USP to pay off.
+2. **The denoiser is the bottleneck; the third GPU is wasted.** 2-GPU and
+   3-GPU are within noise (1247 vs 1249 jobs/hour). Isolating the denoiser on
+   its own GPU with encoder+decoder sharing the peer captures the whole win,
+   so the 2-GPU `{enc+dec | denoiser}` PIX pair is the efficient scaling
+   unit (and frees a third of the GPUs vs a 1-role-per-GPU layout).
+3. **Replica scale-out is near-linear.** Two Server-Edition replicas reach
+   **1.99×** (2481 vs 1247 jobs/hour). The 6-GPU point is 2.72×, not 3×,
+   because **GPUs 4–5 are Max-Q Workstation Edition** (reduced TDP): that
+   replica runs 3.97 s/job vs 2.88 s/job on the Server-Edition socket-0
+   pairs. The 6-GPU total equals the sum of the three independent
+   per-replica rates (1252 + 1239 + 906 ≈ 3397); an all-Server-Edition host
+   projects ~3 × 1248 ≈ 3744 jobs/hour at 6 GPUs. Replica placement is one PIX pair per
+   replica, so no replica's handoffs cross a socket.
+4. **Handoffs are negligible**, as Phase 0 predicted: per-replica steady
+   spacing equals the denoiser step time; the encoder→denoiser→decoder D2D
+   copies do not surface in the throughput budget.
+
 ## Reproduction
 
 ```bash
@@ -198,4 +257,20 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5 NCCL_MIN_NCHANNELS=8 \
   ./build/all_gather_perf -b 1M -e 512M -f 2 -g 6
 CUDA_VISIBLE_DEVICES=0,1,2,3 NCCL_P2P_LEVEL=SYS NCCL_MIN_NCHANNELS=8 \
   ./build/alltoall_perf -b 1M -e 512M -f 2 -g 4
+```
+
+Phase 1 throughput grid (role pipeline; all six GPUs visible, devices
+pinned per replica by the topology; needs the H3 checkpoint + store):
+
+```bash
+SNAP=$HF_HOME/hub/models--MiniMaxAI--MiniMax-H3/snapshots/<hash>
+env HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 OMNI_H3_CHECKPOINT=$SNAP \
+  OMNI_H3_STORE=<store> PYTHONPATH=. \
+  python benchmarks/role_pipeline_bench.py --topology 6 --jobs 18
+
+# single-GPU streamed baseline (pin one GPU; enable the streaming recipe):
+env CUDA_VISIBLE_DEVICES=0 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  OMNI_H3_CHECKPOINT=$SNAP OMNI_H3_STORE=<store> OMNI_H3_ADALN_CACHE=1 \
+  OMNI_H3_BLOCK_STREAM=1 OMNI_H3_STREAM_TEXT_ENCODER=1 PYTHONPATH=. \
+  python benchmarks/role_pipeline_bench.py --topology 1 --jobs 4
 ```
