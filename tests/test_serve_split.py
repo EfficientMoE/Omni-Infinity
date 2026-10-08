@@ -71,6 +71,30 @@ def test_stage_blocks_cover_all_top_level_steps_once():
     ]
 
 
+def test_run_stage_matches_flattened_workflow_keys():
+    pipeline = _FakePipeline()
+    pipeline._blocks.sub_blocks = OrderedDict(
+        (name, _Block(name))
+        for name in (
+            "before_encode",
+            "text_encoder",
+            "vae_encoder",
+            "denoise.prepare_latents",
+            "denoise.denoise",
+            "decode.video",
+            "decode.audio",
+        )
+    )
+    state = prepare_state(pipeline, prompt="p", trace=[])
+    state = run_stage(pipeline, Role.DENOISER, state)
+    assert state.get("trace") == [
+        "denoise.prepare_latents",
+        "denoise.denoise",
+    ]
+    state = run_stage(pipeline, Role.DECODER, state)
+    assert state.get("trace")[-2:] == ["decode.video", "decode.audio"]
+
+
 def test_prepare_state_applies_kwargs_and_defaults():
     state = prepare_state(_FakePipeline(), prompt="hi", trace=[])
     assert state.get("prompt") == "hi"

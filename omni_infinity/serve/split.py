@@ -27,6 +27,23 @@ STAGE_BLOCKS: dict[Role, tuple[str, ...]] = {
 STAGE_ORDER = (Role.ENCODER, Role.DENOISER, Role.DECODER)
 
 
+def role_for_block(name: str) -> Role:
+    """Map a top-level block key to its role.
+
+    Workflow-pruned pipelines (``from_pretrained(workflow=...)``) carry
+    flattened keys like ``denoise.prepare_latents`` or ``decode.video``
+    (``get_workflow`` resolves conditional blocks via
+    ``get_execution_blocks``); unpruned pipelines carry the plain group
+    names.  Both spellings map by prefix.
+    """
+
+    for role, prefixes in STAGE_BLOCKS.items():
+        for prefix in prefixes:
+            if name == prefix or name.startswith(prefix + "."):
+                return role
+    raise ValueError(f"block {name!r} does not belong to any stage role")
+
+
 def _blocks_of(pipeline: Any) -> Any:
     blocks = getattr(pipeline, "_blocks", None)
     if blocks is None:
@@ -74,8 +91,14 @@ def run_stage(pipeline: Any, role: Role, state: Any) -> Any:
     if role not in STAGE_BLOCKS:
         raise ValueError(f"role {role.value!r} has no stage blocks")
     blocks = _blocks_of(pipeline)
+    names = [name for name in blocks.sub_blocks if role_for_block(name) is role]
+    if not names:
+        raise ValueError(
+            f"pipeline has no blocks for role {role.value!r}; "
+            f"available: {list(blocks.sub_blocks)}"
+        )
     with torch.no_grad():
-        for name in STAGE_BLOCKS[role]:
+        for name in names:
             block = blocks.sub_blocks[name]
             pipeline, state = block(pipeline, state)
     return state
