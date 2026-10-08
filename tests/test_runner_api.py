@@ -3,6 +3,8 @@
 
 # EfficientMoE Team
 
+import inspect
+
 import pytest
 import torch
 
@@ -20,6 +22,11 @@ def test_resolutions_cover_rfc_targets():
     assert resolve_resolution("768p") == (768, 768)
     with pytest.raises(ValueError, match="unknown resolution"):
         resolve_resolution("1080p")
+
+
+def test_cuda_graph_bucket_uses_effective_video_frame_shape():
+    assert runner_mod._effective_video_frames(120) == 124
+    assert runner_mod._effective_video_frames(124) == 124
 
 
 def test_diffusers_ships_h3_modular_pipeline():
@@ -218,6 +225,128 @@ def test_compile_blocks_rejects_block_streaming():
     runner_mod._validate_compile_blocks(
         compile_blocks=False, block_stream_blocks_per_group=1
     )
+
+
+def test_cuda_graph_rejects_block_streaming_but_allows_compile_blocks():
+    with pytest.raises(
+        ValueError, match="cuda-graph is incompatible with block streaming"
+    ):
+        runner_mod._validate_cuda_graph(
+            cuda_graph=True, block_stream_blocks_per_group=1
+        )
+
+    runner_mod._validate_cuda_graph(
+        cuda_graph=True, block_stream_blocks_per_group=0
+    )
+    runner_mod._validate_compile_blocks(
+        compile_blocks=True, block_stream_blocks_per_group=0
+    )
+
+
+def test_cuda_graph_registry_profile_binds_reference_runner_api():
+    from omni_infinity.registry import resolve_profile
+
+    profile = resolve_profile("h3-dense", ["cuda-graph"])
+
+    bound = inspect.signature(profile.runner.from_pretrained).bind(
+        profile.checkpoint, device="cuda", **profile.runner_kwargs
+    )
+    assert bound.arguments["cuda_graph"] is True
+
+
+def test_c5_wrapper_installed_later_bypasses_cuda_graph_on_cache_hit():
+    from omni_infinity.caches.denoise import (
+        DenoiseCacheConfig,
+        denoise_step_cache,
+    )
+    from omni_infinity.cuda_graph import GraphKey
+
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, hidden_states):
+            return hidden_states + 1
+
+    class FakePipeline:
+        transformer = FakeTransformer()
+
+    class FakeManager:
+        current_bucket = GraphKey(256, 256, 124)
+
+        def __init__(self):
+            self.calls = 0
+
+        def try_execute(self, key, function, *args, **kwargs):
+            assert key == self.current_bucket
+            self.calls += 1
+            return None
+
+    manager = FakeManager()
+    pipeline = FakePipeline()
+    runner_mod._wrap_transformer_with_cuda_graph(pipeline, manager)
+    config = DenoiseCacheConfig(
+        coefficients=(0.0,), threshold=1.0, warmup_steps=1, final_steps=1
+    )
+    signal = torch.ones(1)
+
+    with denoise_step_cache(pipeline.transformer, config, total_steps=3):
+        first = pipeline.transformer(hidden_states=signal)
+        second = pipeline.transformer(hidden_states=signal)
+
+    assert torch.equal(first, second)
+    assert manager.calls == 1
+
+
+def test_cuda_graph_wrapper_preserves_forward_signature_for_diffusers_layout():
+    class FakeTransformer(torch.nn.Module):
+        def forward(
+            self,
+            hidden_states,
+            token_tags,
+            position_ids,
+            video_indices,
+        ):
+            return hidden_states
+
+    class FakePipeline:
+        transformer = FakeTransformer()
+
+    class FakeManager:
+        current_bucket = None
+
+        def try_execute(self, key, function, *args, **kwargs):
+            return None
+
+    before = inspect.signature(FakePipeline.transformer.forward)
+    runner_mod._wrap_transformer_with_cuda_graph(FakePipeline, FakeManager())
+    after = inspect.signature(FakePipeline.transformer.forward)
+
+    assert after == before
+
+
+def test_cuda_graph_pins_adaln_only_with_sufficient_host_headroom():
+    from omni_infinity.adaln import AdaLNEntry, HostResidentAdaLN
+
+    entry = AdaLNEntry(
+        torch.zeros(12, 4, dtype=torch.bfloat16),
+        torch.zeros(12, dtype=torch.bfloat16),
+    )
+    transformer = torch.nn.Sequential(HostResidentAdaLN(entry, hidden_size=2))
+    required = entry.host_nbytes
+    seen = []
+
+    pinned = runner_mod._pin_adaln_for_cuda_graph(
+        transformer,
+        available_bytes=(required * 6) // 5,
+        pin=lambda tensor: seen.append(tensor) or tensor,
+    )
+
+    assert pinned == required
+    assert seen == [entry.weight, entry.bias]
+    with pytest.raises(MemoryError, match="20% headroom"):
+        runner_mod._pin_adaln_for_cuda_graph(
+            transformer,
+            available_bytes=(required * 6) // 5 - 1,
+            pin=lambda tensor: tensor,
+        )
 
 
 def test_compile_blocks_uses_diffusers_regional_compile_api():
