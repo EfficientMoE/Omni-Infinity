@@ -9,6 +9,8 @@ stay bf16 (weight-only); the MMA runs on bf16 tensor cores.
 
 from __future__ import annotations
 
+import inspect
+
 import torch
 import triton
 import triton.language as tl
@@ -47,7 +49,18 @@ _CONFIGS = [
 ]
 
 
-@triton.autotune(configs=_CONFIGS, key=["M", "N", "K"], cache_results=True)
+# cache_results (persistent best-config cache) only exists on newer
+# Triton; passing it blindly would TypeError at import on older
+# releases allowed by torch>=2.0, and _select_impl would silently fall
+# back to the slow pure-torch reference.
+_AUTOTUNE_KWARGS = (
+    {"cache_results": True}
+    if "cache_results" in inspect.signature(triton.autotune).parameters
+    else {}
+)
+
+
+@triton.autotune(configs=_CONFIGS, key=["M", "N", "K"], **_AUTOTUNE_KWARGS)
 @triton.jit
 def _fgemm_kernel(
     a_ptr,
