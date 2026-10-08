@@ -108,6 +108,23 @@ def test_key_is_deterministic_and_changes_with_prefix_or_image():
     assert len(first) == 64
 
 
+def test_key_separates_vision_slots_holding_identical_tensors():
+    model = _Encoder()
+    cache = EncoderPrefixCache()
+    enable_encoder_cache(SimpleNamespace(model=model), cache)
+    prefix = torch.tensor([[1, 2, 3]])
+    tensor = torch.arange(4, dtype=torch.float32).reshape(1, 4)
+
+    model(input_ids=prefix, pixel_values=tensor)
+    model(input_ids=prefix, image_grid_thw=tensor)
+
+    stats = cache.stats()
+    assert stats["hits"] == 0
+    assert stats["misses"] == 2
+    assert stats["entries"] == 2
+    assert model.calls == 2
+
+
 def test_key_covers_every_non_vision_encoder_input():
     model = _Encoder()
     cache = EncoderPrefixCache()

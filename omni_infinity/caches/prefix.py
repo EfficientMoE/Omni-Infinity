@@ -129,13 +129,13 @@ def _call_key(args, kwargs, namespace: str) -> str:
         input_ids = args[0]
     if input_ids is None:
         raise TypeError("encoder call has no input_ids")
-    image_refs = tuple(
-        kwargs[name]
-        for name in _VISION_INPUT_NAMES
-        if kwargs.get(name) is not None
+    vision_names = tuple(
+        name for name in _VISION_INPUT_NAMES if kwargs.get(name) is not None
     )
+    image_refs = tuple(kwargs[name] for name in vision_names)
     extra_inputs = (
         tuple(args[1:]),
+        vision_names,
         {
             name: kwargs[name]
             for name in sorted(kwargs)
