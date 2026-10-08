@@ -68,6 +68,19 @@ def test_cutlass_sm120_backend_matches_reference(M, N, K):
 
 @gpu
 @cutlass_sm120
+def test_cutlass_sm120_backend_handles_m1_scale_layout():
+    # M=1 regression: contiguous() no-ops on singleton dims, so a naive
+    # .t().contiguous().t() hands the extension a non-M-major SFA stride
+    # and its layout guard rejects the call.
+    x, q, scale = _make_inputs(1, 256, 512, "cuda")
+    reference = fused_fp8_gemm_reference(x, q, scale)
+    actual = fused_fp8_gemm(x, q, scale, backend="cutlass_sm120")
+    rel = (actual.float() - reference.float()).norm() / reference.float().norm()
+    assert rel < BLOCKWISE_W8A8_REL_TOL, rel.item()
+
+
+@gpu
+@cutlass_sm120
 def test_cutlass_sm120_backend_supports_bias_3d_and_out():
     x, q, scale = _make_inputs(128, 256, 512, "cuda")
     x = x.reshape(4, 32, 512)

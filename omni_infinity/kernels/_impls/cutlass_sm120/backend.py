@@ -27,7 +27,13 @@ def _quantize_activation_1x128(
         .reshape(M, K)
     )
     # CUTLASS's SFA layout is M-major: address = k_group * M + row.
-    scale_m_major = scale.t().contiguous().t()
+    # empty_strided (not .t().contiguous().t()) because contiguous()
+    # no-ops on singleton dims, which would hand M=1 inputs the wrong
+    # stride and trip the extension's layout guard.
+    scale_m_major = torch.empty_strided(
+        scale.shape, (1, M), dtype=scale.dtype, device=scale.device
+    )
+    scale_m_major.copy_(scale)
     return quantized, scale_m_major
 
 

@@ -5,9 +5,14 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import subprocess
 from functools import lru_cache
 from pathlib import Path
+
+_MIN_CUTLASS = (4, 4)
+_MIN_CUDA = (13, 0)
 
 
 def _cutlass_include_dir() -> Path:
@@ -18,12 +23,41 @@ def _cutlass_include_dir() -> Path:
             "a CUTLASS v4.4.2 checkout"
         )
     include_dir = Path(cutlass_dir).expanduser().resolve() / "include"
+    version_header = include_dir / "cutlass" / "version.h"
     if not (include_dir / "cutlass" / "cutlass.h").is_file():
         raise RuntimeError(
             "cutlass_sm120 backend could not find CUTLASS headers under "
             f"OMO_CUTLASS_DIR={cutlass_dir!r}"
         )
+    version = dict(
+        re.findall(
+            r"#define CUTLASS_(MAJOR|MINOR)\s+(\d+)",
+            version_header.read_text(),
+        )
+    )
+    found = (int(version.get("MAJOR", 0)), int(version.get("MINOR", 0)))
+    if found < _MIN_CUTLASS:
+        raise RuntimeError(
+            f"cutlass_sm120 backend needs CUTLASS >= "
+            f"{'.'.join(map(str, _MIN_CUTLASS))} for sm120 blockwise "
+            f"support; OMO_CUTLASS_DIR={cutlass_dir!r} has "
+            f"{found[0]}.{found[1]} — clone v4.4.2"
+        )
     return include_dir
+
+
+def _check_nvcc_version(nvcc: str) -> None:
+    output = subprocess.run(
+        [nvcc, "--version"], capture_output=True, text=True, check=True
+    ).stdout
+    match = re.search(r"release (\d+)\.(\d+)", output)
+    found = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+    if found < _MIN_CUDA:
+        raise RuntimeError(
+            f"cutlass_sm120 backend compiles for compute_120f, which "
+            f"needs CUDA >= {'.'.join(map(str, _MIN_CUDA))}; found nvcc "
+            f"release {found[0]}.{found[1]} at {nvcc!r}"
+        )
 
 
 @lru_cache(maxsize=1)
@@ -32,6 +66,7 @@ def load_extension():
     nvcc = shutil.which("nvcc")
     if nvcc is None:
         raise RuntimeError("cutlass_sm120 backend requires nvcc on PATH")
+    _check_nvcc_version(nvcc)
     cuda_home = Path(nvcc).resolve().parent.parent
     cuda_include = cuda_home / "include"
     cuda_lib = cuda_home / "lib64"

@@ -6,3 +6,11 @@ corrected out=/3D-shape return contract. Original: Copyright (c) EfficientMoE.
 omni_infinity/kernels/_impls/cutlass_sm120 contains an adapted copy of vLLM's
 CUTLASS SM120 blockwise FP8 scaled-matmul kernel and support headers,
 Apache-2.0. Original: Copyright contributors to the vLLM project.
+Vendored from vllm-project/vllm @ 53181384e036cc660ff6754c8a94a8e6d0b60562
+(2026-05-11), csrc/libtorch_stable/quantization/w8a8/cutlass/:
+  c3x/scaled_mm_blockwise_sm120_fp8.cu          -> scaled_mm_blockwise_sm120_fp8.cu
+  c3x/scaled_mm_blockwise_sm120_fp8_dispatch.cuh -> scaled_mm_blockwise_sm120_fp8_dispatch.cuh
+  scaled_mm_kernels.hpp (subset)                 -> scaled_mm_kernels.hpp
+  c3x/cutlass_gemm_caller.cuh (subset)           -> cutlass_gemm_caller.cuh
+  vendor_common.cuh: new glue replacing vLLM's torch::stable ABI with at::Tensor.
+Requires CUTLASS >= 4.4 headers (OMO_CUTLASS_DIR) and CUDA >= 13.0 at JIT time.
