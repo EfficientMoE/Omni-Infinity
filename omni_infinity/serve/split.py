@@ -12,11 +12,14 @@ same-device split run is data-movement-only relative to the one-shot
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import torch
 
 from omni_infinity.serve.roles import Role
+
+_CYCLE_SENTINEL = object()
 
 STAGE_BLOCKS: dict[Role, tuple[str, ...]] = {
     Role.ENCODER: ("before_encode", "text_encoder", "vae_encoder"),
@@ -102,6 +105,110 @@ def run_stage(pipeline: Any, role: Role, state: Any) -> Any:
             block = blocks.sub_blocks[name]
             pipeline, state = block(pipeline, state)
     return state
+
+
+def _contains_sentinel(value: Any, visited: set[int]) -> bool:
+    if value is _CYCLE_SENTINEL:
+        return True
+    if id(value) in visited:
+        return False
+    visited.add(id(value))
+    if isinstance(value, (list, tuple)):
+        return any(_contains_sentinel(item, visited) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_sentinel(item, visited) for item in value.values())
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return any(
+            _contains_sentinel(getattr(value, field.name), visited)
+            for field in dataclasses.fields(value)
+        )
+    if hasattr(value, "__dict__") and not isinstance(
+        value, (torch.nn.Module, torch.Generator, type)
+    ):
+        return any(
+            _contains_sentinel(item, visited) for item in vars(value).values()
+        )
+    return False
+
+
+def _move(value: Any, device: str, counter: list[int], seen: dict) -> Any:
+    if torch.is_tensor(value):
+        key = id(value)
+        if key in seen:
+            return seen[key]
+        if value.is_cuda and str(value.device) != device:
+            counter[0] += value.numel() * value.element_size()
+            moved = value.to(device)
+        else:
+            moved = value
+        seen[key] = moved
+        return moved
+    key = id(value)
+    if key in seen:
+        return seen[key]
+    if isinstance(value, list):
+        seen[key] = value
+        value[:] = [_move(item, device, counter, seen) for item in value]
+        return value
+    if isinstance(value, tuple):
+        seen[key] = _CYCLE_SENTINEL
+        items = tuple(_move(item, device, counter, seen) for item in value)
+        if _contains_sentinel(items, set()):
+            raise RuntimeError(
+                "cycle through an immutable tuple in pipeline state; "
+                "aliasing cannot be preserved"
+            )
+        if hasattr(value, "_fields"):
+            moved = type(value)(*items)
+        else:
+            moved = type(value)(items)
+        seen[key] = moved
+        return moved
+    if isinstance(value, dict):
+        seen[key] = value
+        for item_key in list(value):
+            value[item_key] = _move(value[item_key], device, counter, seen)
+        return value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        seen[key] = value
+        frozen = value.__dataclass_params__.frozen
+        for field in dataclasses.fields(value):
+            moved = _move(getattr(value, field.name), device, counter, seen)
+            if frozen:
+                object.__setattr__(value, field.name, moved)
+            else:
+                setattr(value, field.name, moved)
+        return value
+    if (
+        hasattr(value, "__dict__")
+        and not isinstance(value, (torch.nn.Module, torch.Generator, type))
+        and value.__class__.__module__ != "builtins"
+    ):
+        seen[key] = value
+        for name in list(vars(value)):
+            setattr(
+                value, name, _move(vars(value)[name], device, counter, seen)
+            )
+        return value
+    return value
+
+
+def move_state_tensors(state: Any, device: str) -> int:
+    """Move every tensor reachable from ``state.values`` to ``device``.
+
+    Recursive over lists/tuples/dicts/dataclasses/plain objects with
+    identity memoization (aliases preserved, shared tensors moved and
+    counted once; cycles through immutable tuples raise).  Returns the
+    number of bytes actually copied across devices.  This is the
+    stage-boundary mover role processes apply to a received
+    ``PipelineState`` before running their block subset.
+    """
+
+    counter = [0]
+    seen: dict = {}
+    for key, value in list(state.values.items()):
+        state.values[key] = _move(value, device, counter, seen)
+    return counter[0]
 
 
 def run_all_stages(pipeline: Any, **kwargs: Any) -> Any:

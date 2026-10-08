@@ -59,6 +59,8 @@ def spawn_role_worker(
     stage_fn: StageFn,
     *,
     queue_size: int = 2,
+    inbox: Any = None,
+    outbox: Any = None,
 ) -> tuple[mp.Process, Any, Any]:
     """Spawn one role process; returns ``(process, inbox, outbox)``.
 
@@ -70,8 +72,10 @@ def spawn_role_worker(
     """
 
     context = mp.get_context("spawn")
-    inbox = context.Queue(maxsize=queue_size)
-    outbox = context.Queue(maxsize=queue_size)
+    if inbox is None:
+        inbox = context.Queue(maxsize=queue_size)
+    if outbox is None:
+        outbox = context.Queue(maxsize=queue_size)
     process = context.Process(
         target=role_worker_loop,
         args=(role, device, stage_fn, inbox, outbox),
