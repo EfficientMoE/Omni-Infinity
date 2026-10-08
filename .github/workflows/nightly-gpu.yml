@@ -56,7 +56,7 @@ jobs:
           fi
           "$OMNI_CI_VENV/bin/pip" install -q torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cu130
           "$OMNI_CI_VENV/bin/pip" install -q --no-deps 'moe-store @ git+https://github.com/EfficientMoE/moe-store.git@v0.2.1'
-          "$OMNI_CI_VENV/bin/pip" install -q diffusers==0.40.0 transformers==5.12.0
+          "$OMNI_CI_VENV/bin/pip" install -q diffusers==0.40.0 transformers==5.12.0 accelerate==1.14.0 nvtx
           "$OMNI_CI_VENV/bin/pip" install -q -e '.[dev]'
 
       - name: Stack sanity (goldens skip on drift — fail loud instead)
