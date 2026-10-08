@@ -91,6 +91,24 @@ def _enable_block_streaming(
     )
 
 
+def _validate_compile_blocks(
+    *, compile_blocks: bool, block_stream_blocks_per_group: int
+) -> None:
+    if compile_blocks and block_stream_blocks_per_group > 0:
+        raise ValueError(
+            "compile-blocks is incompatible with block streaming: "
+            "group-offload hooks can leave compiled regions with stale "
+            "weight pointers"
+        )
+
+
+def _compile_repeated_transformer_blocks(
+    pipeline, component_name="transformer"
+) -> None:
+    transformer = _transformer_component(pipeline, component_name)
+    transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
+
+
 def _APPLY_GROUP_OFFLOADING(module, **kwargs):
     from diffusers.hooks import apply_group_offloading
 
@@ -245,12 +263,17 @@ class ReferenceRunner:
         offload_memory_margin: str | None = None,
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
+        compile_blocks: bool = False,
         stream_text_encoder: bool = False,
         step_overlap: bool = False,
         condition_cache: bool = False,
         condition_cache_dir: str | None = None,
         vision_cache: bool = False,
     ) -> "ReferenceRunner":
+        _validate_compile_blocks(
+            compile_blocks=compile_blocks,
+            block_stream_blocks_per_group=block_stream_blocks_per_group,
+        )
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
         try:
@@ -346,6 +369,14 @@ class ReferenceRunner:
                 block_stream_blocks_per_group,
                 block_stream_to_disk,
                 transformer_component,
+            )
+        if compile_blocks:
+            # The AdaLN host-cache modules are installed before regional
+            # compilation. C5 wraps the whole transformer forward later, so
+            # compiled repeated blocks sit inside its scope and a cache hit
+            # bypasses them entirely.
+            _compile_repeated_transformer_blocks(
+                pipeline, transformer_component
             )
         if step_overlap:
             from omni_infinity.step_overlap import enable_step_overlap

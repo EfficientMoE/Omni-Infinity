@@ -6,6 +6,7 @@
 import pytest
 import torch
 
+from omni_infinity import runner as runner_mod
 from omni_infinity.runner import (
     GenerationResult,
     ReferenceRunner,
@@ -201,6 +202,37 @@ def test_block_streaming_invokes_group_offload_and_requires_offload():
     assert calls["group_offload"]["num_blocks_per_group"] == 1
     assert calls["group_offload"]["use_stream"] is True
     assert calls["group_offload"]["offload_device"] == torch.device("cpu")
+
+
+def test_compile_blocks_rejects_block_streaming():
+    with pytest.raises(
+        ValueError, match="compile-blocks is incompatible with block streaming"
+    ):
+        runner_mod._validate_compile_blocks(
+            compile_blocks=True, block_stream_blocks_per_group=1
+        )
+
+    runner_mod._validate_compile_blocks(
+        compile_blocks=True, block_stream_blocks_per_group=0
+    )
+    runner_mod._validate_compile_blocks(
+        compile_blocks=False, block_stream_blocks_per_group=1
+    )
+
+
+def test_compile_blocks_uses_diffusers_regional_compile_api():
+    calls = []
+
+    class FakeTransformer:
+        def compile_repeated_blocks(self, **kwargs):
+            calls.append(kwargs)
+
+    class FakePipeline:
+        transformer = FakeTransformer()
+
+    runner_mod._compile_repeated_transformer_blocks(FakePipeline())
+
+    assert calls == [{"fullgraph": True, "dynamic": True}]
 
 
 def test_stream_text_encoder_invokes_group_offloading():
