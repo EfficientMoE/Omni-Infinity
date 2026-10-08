@@ -380,8 +380,8 @@
         display: grid;
         grid-template-columns: 1fr 220px 168px auto;
         grid-template-areas:
-          "prompt prompt prompt"
-          "stack stack stack"
+          "prompt prompt prompt prompt"
+          "stack stack stack stack"
           "source length window run";
         gap: 12px;
       }
@@ -493,6 +493,7 @@
       .run {
         grid-area: run;
         display: inline-flex;
+        align-self: end;
         align-items: center;
         justify-content: center;
         gap: 10px;
@@ -750,6 +751,22 @@
       }
 
       /* ---------------- Responsive ---------------- */
+      @media (max-width: 1240px) {
+        .deck {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          grid-template-areas:
+            "prompt prompt"
+            "stack stack"
+            "source run";
+        }
+        form.deck[data-mode="demo"] {
+          grid-template-areas:
+            "stack stack"
+            "source run"
+            "length window";
+        }
+      }
+
       @media (max-width: 820px) {
         main {
           grid-template-columns: 1fr;
@@ -776,7 +793,8 @@
         .rail {
           padding: 22px 18px 26px;
         }
-        .deck {
+        .deck,
+        form.deck[data-mode="demo"] {
           grid-template-columns: 1fr;
           grid-template-areas:
             "prompt"

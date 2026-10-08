@@ -710,6 +710,12 @@ def test_webui_is_served_only_when_streaming_is_enabled(tmp_path):
     assert 'id="duration"' in page.text
     assert 'id="schedule-start"' in page.text
     assert 'id="schedule-end"' in page.text
+    assert '"prompt prompt prompt prompt"' in page.text
+    assert '"stack stack stack stack"' in page.text
+    assert "@media (max-width: 1240px)" in page.text
+    assert '"source run"' in page.text
+    assert '"length window"' in page.text
+    assert "align-self: end" in page.text
     for value in ("15s", "1min", "2min", "5min", "demo"):
         assert f'value="{value}"' in page.text
 
