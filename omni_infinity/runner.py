@@ -241,6 +241,7 @@ class ReferenceRunner:
         adaln_host_cache: bool = False,
         transformer_fp8: bool = False,
         fp8_skip_last_blocks: int = 0,
+        fp8_protect_blocks: str | None = None,
         fp8_scale: str = "block",
         offload_memory_margin: str | None = None,
         block_stream_blocks_per_group: int = 0,
@@ -301,6 +302,7 @@ class ReferenceRunner:
         pipeline.load_components(names=loadable, torch_dtype=torch_dtype)
         built = dict(preloaded)
         if store_dir:
+            from omni_infinity.fp8 import parse_protect_blocks
             from omni_infinity.store import (
                 StoreComponentSource,
                 load_diffusers_component,
@@ -320,6 +322,11 @@ class ReferenceRunner:
                         component=name,
                         fp8=transformer_fp8,
                         fp8_skip_last_blocks=fp8_skip_last_blocks,
+                        fp8_protect_blocks=(
+                            parse_protect_blocks(fp8_protect_blocks)
+                            if fp8_protect_blocks
+                            else None
+                        ),
                         fp8_mode=fp8_scale,
                     )
                 else:
