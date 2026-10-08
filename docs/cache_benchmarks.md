@@ -112,12 +112,17 @@ python -m benchmarks.caches.denoise_fit \
   --probe results/cache-bench/denoise_probe.json \
   --signal teacache --degree 4
 python -m benchmarks.caches.ablation \
-  --c5-coefficients <printed-coefficients> --c5-threshold <suggested-threshold>
+  --c5-coefficients <printed-coefficients> --c5-threshold <suggested-threshold> \
+  --c5-fit-signal teacache
 ```
 
 Probe → fit → coefficients plus threshold → ablation is the only path to a
 measured C5 row that is not `c5-uncalibrated`. Coefficients are model-specific;
-the repository ships the fitting workflow, not fitted values.
+the repository ships the fitting workflow, not fitted values. One calibration
+covers one indicator: `--c5-fit-signal` names the signal the coefficients were
+fitted on (`raw` runs `c5`; `teacache` runs `c5-teacache` and `c5-taylor1`;
+`fbcache` runs `c5-fbcache`), and every other C5 cell records a
+`c5-signal-mismatch` SKIP instead of reporting numbers from a foreign fit.
 
 ### Pending weights-gated measurements
 

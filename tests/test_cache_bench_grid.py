@@ -91,6 +91,16 @@ def test_all_c5_variant_cells_without_calibration_are_marked_skip():
         assert row["verdict"] == "SKIP"
 
 
+def test_c5_cell_with_mismatched_fit_signal_is_marked_skip():
+    cell = next(
+        candidate for candidate in GRID if candidate.config.name == "c5-fbcache"
+    )
+    payload = {"cell": cell.name, "skip": "c5-signal-mismatch"}
+    row = rows_from_cell_output(cell, json.dumps(payload))[0]
+    assert row["verdict"] == "SKIP"
+    assert row["notes"] == "c5-signal-mismatch"
+
+
 def test_c5_cell_rows_carry_step_counters_and_score():
     cell = next(
         candidate for candidate in GRID if candidate.config.name == "c5"

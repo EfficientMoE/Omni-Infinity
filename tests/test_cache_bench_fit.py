@@ -55,6 +55,38 @@ def test_fit_coefficients_rejects_unknown_signal():
         fit.fit_coefficients(_records((1.0, 0.0)), "unknown", degree=1)
 
 
+def test_rescaled_values_preserve_negative_fitted_deltas():
+    fit = _fit_module()
+    records = [
+        {"input_rel_l1": 0.1, "output_rel_l1": -0.1},
+        {"input_rel_l1": 0.2, "output_rel_l1": -0.2},
+        {"input_rel_l1": 0.3, "output_rel_l1": -0.3},
+    ]
+    coefficients = fit.fit_coefficients(records, "raw", degree=1)
+
+    values = fit.rescaled_values(records, "raw", coefficients)
+
+    assert all(value < 0 for value in values)
+
+
+def test_accumulated_skip_fraction_resets_on_forced_boundary_calls():
+    fit = _fit_module()
+    values = (0.05, 0.05, 0.05, 0.05)
+
+    unbounded = fit.accumulated_skip_fraction(
+        values, 1.0, warmup_calls=0, final_calls=0
+    )
+    assert unbounded == 1.0
+
+    with_final = fit.accumulated_skip_fraction(values, 1.0)
+    assert with_final == 0.75
+
+    with_warmup = fit.accumulated_skip_fraction(
+        values, 1.0, warmup_calls=2, final_calls=1
+    )
+    assert with_warmup == 0.25
+
+
 def test_threshold_suggestions_are_ordered_and_reach_skip_targets():
     fit = _fit_module()
     records = _records((1.0, 0.0))

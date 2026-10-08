@@ -61,24 +61,38 @@ def fit_coefficients(
 def rescaled_values(
     records: list[dict], signal: str, coefficients: tuple[float, ...]
 ) -> tuple[float, ...]:
-    """Return finite, non-negative fitted deltas in probe-call order."""
+    """Return finite fitted deltas in probe-call order, sign preserved."""
     values = []
     for x, _ in _pairs(records, signal):
         value = float(np.polyval(coefficients, x))
         if math.isfinite(value):
-            values.append(max(0.0, value))
+            values.append(value)
     return tuple(values)
 
 
 def accumulated_skip_fraction(
-    values: tuple[float, ...], threshold: float
+    values: tuple[float, ...],
+    threshold: float,
+    *,
+    warmup_calls: int = 0,
+    final_calls: int = 1,
 ) -> float:
-    """Simulate C5's accumulate-until-threshold rule for fitted deltas."""
+    """Simulate ``_cache_decision``'s accumulate rule over probe deltas.
+
+    The probe's first call has no previous signal and never reaches
+    ``values``, so the runtime warmup compute is already excluded; extra
+    forced computes map to ``warmup_calls``/``final_calls``, which reset
+    the accumulator exactly like runtime boundary steps.
+    """
     if not values:
         return 0.0
     accumulated = 0.0
     skipped = 0
-    for value in values:
+    last_forced = len(values) - final_calls
+    for index, value in enumerate(values):
+        if index < warmup_calls or index >= last_forced:
+            accumulated = 0.0
+            continue
         accumulated += value
         if accumulated < threshold:
             skipped += 1

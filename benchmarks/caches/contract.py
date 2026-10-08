@@ -94,7 +94,12 @@ CACHE_CONFIGS: tuple[CacheConfig, ...] = (
     CacheConfig("all-exact", condition_cache=True, vision_cache=True),
 )
 
-_SKIP_NOTES = ("weights-absent", "c5-uncalibrated", "server-down")
+_SKIP_NOTES = (
+    "weights-absent",
+    "c5-uncalibrated",
+    "c5-signal-mismatch",
+    "server-down",
+)
 
 
 def _present(row: dict, key: str):

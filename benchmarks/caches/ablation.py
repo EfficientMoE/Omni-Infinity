@@ -205,6 +205,8 @@ def _run_cell(cell: Cell, args) -> dict:
     if config.denoise_cache:
         if not args.c5_coefficients:
             return {"cell": cell.name, "skip": "c5-uncalibrated"}
+        if config.denoise_indicator != args.c5_fit_signal:
+            return {"cell": cell.name, "skip": "c5-signal-mismatch"}
         denoise_config = _denoise_config(config, args)
 
     from omni_infinity.runner import ReferenceRunner, _transformer_component
@@ -308,6 +310,8 @@ def _orchestrate(args) -> int:
         str(args.c5_calls_per_step),
         "--c5-signal-name",
         args.c5_signal_name,
+        "--c5-fit-signal",
+        args.c5_fit_signal,
     )
     if args.c5_coefficients:
         extra += (
@@ -379,6 +383,11 @@ def main() -> int:
     parser.add_argument("--c5-rms-rel-max", type=float, default=0.1)
     parser.add_argument("--c5-calls-per-step", type=int, default=1)
     parser.add_argument("--c5-signal-name", default="hidden_states")
+    parser.add_argument(
+        "--c5-fit-signal",
+        choices=("raw", "teacache", "fbcache"),
+        default="raw",
+    )
     args = parser.parse_args()
     if args.cell:
         cell = next(
