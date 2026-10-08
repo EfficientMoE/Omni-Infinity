@@ -129,3 +129,17 @@
   memory reuse assumes replay in capture order, which conflicts with arbitrary
   shape-bucket access and LRU eviction. Capture-side warmups must also run on
   the same side stream used for graph capture.
+
+## [2026-10-08] Phase 2 Task 4 serve telemetry
+
+- `GraphTelemetry` mirrors the plain-dict `CudaGraphManager.stats_snapshot()`
+  schema and is optional on both `JobRecord` and `JobResponse`, preserving
+  compatibility with legacy `job.json` records.
+- `JobService` brackets generation with snapshots so reused-runner counters and
+  fallback reasons are stored as per-job deltas. Pool bytes, live graphs, and
+  manager generation remain final gauges. Runners without a
+  `cuda_graph_manager` persist `null` without special casing their type.
+- Snapshot or validation failures are logged and do not convert an otherwise
+  successful generation into a failed job. CPU-only tests cover persistence,
+  API conversion, fallback-reason counts, manager absence, failure isolation,
+  and legacy records.
