@@ -61,9 +61,14 @@ def resolve_backend(
     if requested in (None, "auto"):
         if not torch.cuda.is_available():
             return "flex", "cpu: flex (training kernel)"
-        cc = torch.cuda.get_device_capability(
-            torch.device("cuda", 0) if device is None else device
+        probe = (
+            torch.device(device)
+            if device is not None
+            else torch.device("cuda", 0)
         )
+        if probe.type != "cuda":
+            probe = torch.device("cuda", 0)
+        cc = torch.cuda.get_device_capability(probe)
         if cc[0] == 12:
             return (
                 "decomposed",
@@ -280,7 +285,7 @@ def _sage_dense(q, k, v, scale):
     from sageattention import sageattn
 
     # sageattn wants a batch dim; NHD = [b, s, h, d].
-    return sageattn(
+    out = sageattn(
         q.unsqueeze(0),
         k.unsqueeze(0),
         v.unsqueeze(0),
@@ -288,6 +293,7 @@ def _sage_dense(q, k, v, scale):
         is_causal=False,
         sm_scale=scale,
     )[0]
+    return out.to(q.dtype)
 
 
 def _fa4_window(plan, query, key, value, scale):
@@ -332,13 +338,12 @@ def _fmha_v2_window(plan, query, key, value, scale):
             query[plan.dense_q], key, value, causal=False, sm_scale=scale
         )
     if plan.has_windows:
-        if "buf" not in _WORKSPACE:
-            _WORKSPACE["buf"] = torch.empty(
+        buf = _WORKSPACE.get(query.device)
+        if buf is None:
+            buf = _WORKSPACE[query.device] = torch.empty(
                 128 * 1024 * 1024, dtype=torch.uint8, device=query.device
             )
-        wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
-            _WORKSPACE["buf"], "NHD"
-        )
+        wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(buf, "NHD")
         wrapper.plan(
             plan.cu_q,
             plan.cu_k,
@@ -404,22 +409,16 @@ def install_backend(
     mirror upstream ``set_softmax_backend`` (the string is the dispatch);
     extended names wrap ``_window_softmax`` and leave ``softmax_impl`` at
     ``decomposed`` so the upstream forward never prebuilds a flex mask."""
-    resolved, reason = resolve_backend(backend, device)
-    cc = (
-        torch.cuda.get_device_capability(0)
-        if torch.cuda.is_available()
-        else None
-    )
-    logger.info(
-        "window-softmax backend: requested=%r resolved=%r cc=%s reason=%s",
-        backend,
-        resolved,
-        cc,
-        reason,
-    )
+    resolved, _ = resolve_backend(backend, device)
     if resolved in EXTENDED_BACKENDS:
         fn = make_window_softmax(resolved)
         for attn in _iter_hybrids(transformer):
+            if not hasattr(attn, "anchor_frames"):
+                raise RuntimeError(
+                    f"{type(attn).__name__} has softmax_impl but no "
+                    "anchor_frames; the remote-code layer shape changed -- "
+                    "refusing to install an extended backend mid-render"
+                )
 
             def wrapped(
                 query,

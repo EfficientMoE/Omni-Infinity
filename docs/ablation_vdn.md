@@ -141,7 +141,7 @@ end-to-end movement.
 
 | backend | wall s | s/eval incl. overhead | peak GiB | rms_rel vs goldens |
 |---|---:|---:|---:|---:|
-| main @83d1950 (implicit auto) | 133.6 | 16.70 | 83.4 | 0.288* |
+| main @83d1950 (implicit = spec flex) | 133.6 | 16.70 | 83.4 | 0.288* |
 | decomposed (pinned) | 127.8 | 15.97 | 81.8 | 0.306* |
 | cudnn | 168.5 | 21.06 | 81.8 | 0.409* |
 | fmha-v2 | 120.5 | 15.06 | 82.0 | 0.422* |
@@ -149,7 +149,11 @@ end-to-end movement.
 \* the unmodified main baseline fails these goldens by the same class
 (0.288), so the committed `vdn_goldens.pt` does not match this
 offload + text-encoder-stream environment — the column compares
-backends relatively, not against a valid bitwise reference. Decision:
+backends relatively, not against a valid bitwise reference. The main
+row also ran a different kernel: the hub spec pins
+`softmax_backend: flex`, so the pre-P3 implicit default was flex (its
+slower wall and distinct rms_rel are consistent with the microbench
+flex rows). Decision:
 **`auto` on CC 12.x stays pinned to `decomposed`.** `cudnn`'s 2-6 %
 microbench win inverts at model scale (the per-chunk dense loop pays
 ~50 layers x ~num-chunk launches per eval where `decomposed` makes two

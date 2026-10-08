@@ -175,6 +175,9 @@ class _FakeAttn:
         self.softmax_impl = "flex"
         self.anchor_frames = "both"
 
+    def __delattr__(self, name):
+        object.__delattr__(self, name)
+
     def _window_softmax(self, *a):
         return "original"
 
@@ -234,3 +237,26 @@ def test_runner_pins_backend_when_none(monkeypatch):
     monkeypatch.setattr(vdn_mod, "attach_caches", lambda runner, **kw: None)
     vdn_mod.VdnRunner.from_pretrained(device="cpu")
     assert fake.load_kwargs["softmax_backend"] == {"transformer": "decomposed"}
+
+
+def test_install_extended_requires_anchor_frames(monkeypatch):
+    _fake_cuda(monkeypatch, (12, 0))
+    monkeypatch.setattr(
+        va, "make_window_softmax", lambda b: lambda *a, **k: None
+    )
+    model = _FakeTransformer()
+    for block in model.transformer_blocks:
+        del block.attn.anchor_frames
+
+    class _NoAnchor:
+        softmax_impl = "flex"
+
+    model.transformer_blocks[0].attn = _NoAnchor()
+    with pytest.raises(RuntimeError, match="anchor_frames"):
+        va.install_backend(model, "fmha-v2")
+
+
+def test_resolve_probes_cuda_zero_for_cpu_device(monkeypatch):
+    _fake_cuda(monkeypatch, (12, 0))
+    resolved, reason = va.resolve_backend(None, "cpu")
+    assert resolved == "decomposed" and "sm120" in reason

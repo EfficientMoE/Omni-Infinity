@@ -11,6 +11,10 @@ matrix. Backend selection is env-gatable (OMNI_ATTN_BACKENDS, the
 BatchGen v4_flashmla_adapter dispatch pattern) and --dump-probe writes
 the resolution/availability record per run.
 
+Caveat: the fmha-v2 cell rebuilds the FlashInfer wrapper and re-plans
+inside the timed region (the adapter's per-call path), so its ms carry
+that overhead where a production integration would amortise the plan.
+
 Run (flashinfer JIT needs the toolkit root):
   CUDA_HOME=/usr/local/cuda-13.0 PATH=/usr/local/cuda-13.0/bin:$PATH \\
     python benchmarks/attn_bakeoff.py --seqlens 8k 20k 37k

@@ -114,7 +114,9 @@ class VdnRunner:
             # wide on both sides (363 Linears), applied after the LoRA
             # merge. Needs CC >= 9.0.
             load_kwargs["fp8"] = {"transformer": True}
-        resolved_backend, backend_reason = resolve_backend(softmax_backend)
+        resolved_backend, backend_reason = resolve_backend(
+            softmax_backend, device
+        )
         logger.info(
             "window-softmax backend: requested=%r resolved=%r cc=%s reason=%s",
             softmax_backend,
@@ -137,7 +139,7 @@ class VdnRunner:
                 "warning above for the cause"
             )
         if resolved_backend in EXTENDED_BACKENDS:
-            install_backend(pipeline.transformer, resolved_backend)
+            install_backend(pipeline.transformer, resolved_backend, device)
 
         if offload:
             _offload_vdn(
