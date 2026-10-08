@@ -26,6 +26,8 @@ Record one-line verdict per commit below.
 - 9776c7c docs(p2): mark phase-1 task complete — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - b6533da docs(p2): record graph review verdicts — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 251ac20 docs(p2): mark phase-2 task complete — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 5cfd167 docs(p2): record serve telemetry review verdicts — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- b126d95 docs(p2): mark task 4 complete — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 
 ## [2026-10-08] REVIEW MODEL UPDATE (user directive)
 openai/gpt-5.2 FAILS on this installation — do not use. Review model is now elm/gpt-5.6-sol.
