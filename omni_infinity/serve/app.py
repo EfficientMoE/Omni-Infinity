@@ -19,6 +19,7 @@ from omni_infinity.serve.models import (
     JobResponse,
     JobStatus,
 )
+from omni_infinity.serve.roles import parse_device_map, parse_role
 from omni_infinity.serve.service import (
     InvalidMedia,
     JobService,
@@ -67,6 +68,8 @@ class ServerSettings:
     host: str = "127.0.0.1"
     port: int = 8000
     workers: int = 1
+    role: str = "all"
+    device_map: tuple[tuple[str, str], ...] = ()
     stream_enabled: bool = False
     stream_max_sessions: int = 1
     stream_session_ttl: float = 30.0
@@ -106,6 +109,16 @@ class ServerSettings:
             host=os.environ.get("OMNI_HOST", "127.0.0.1"),
             port=int(os.environ.get("OMNI_PORT", "8000")),
             workers=int(os.environ.get("OMNI_WORKERS", "1")),
+            role=parse_role(os.environ.get("OMNI_ROLE", "all")).value,
+            device_map=tuple(
+                sorted(
+                    (role.value, device)
+                    for role, device in parse_device_map(
+                        os.environ.get("OMNI_DEVICE_MAP"),
+                        default_device=os.environ.get("OMNI_DEVICE", "cuda"),
+                    ).items()
+                )
+            ),
             stream_enabled=parse_bool(
                 os.environ.get("OMNI_STREAM_ENABLED", "false")
             ),
