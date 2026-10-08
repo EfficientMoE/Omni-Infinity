@@ -14,14 +14,28 @@ import os
 
 import torch
 
-from ._quant import WEIGHT_BLOCK, quantize_block_fp8
-from ._reference import dequant_block_fp8, fused_fp8_gemm_reference
+from ._quant import (
+    MXFP4_BLOCK,
+    WEIGHT_BLOCK,
+    quantize_block_fp8,
+    quantize_mxfp4,
+)
+from ._reference import (
+    dequant_block_fp8,
+    dequant_mxfp4,
+    fused_fp8_gemm_reference,
+    fused_mxfp4_gemm_reference,
+)
 
 __all__ = [
     "fused_fp8_gemm",
+    "fused_mxfp4_gemm",
     "quantize_block_fp8",
+    "quantize_mxfp4",
     "dequant_block_fp8",
+    "dequant_mxfp4",
     "WEIGHT_BLOCK",
+    "MXFP4_BLOCK",
 ]
 
 _FORCE_REFERENCE = os.environ.get("OMO_KERNELS_REFERENCE") == "1"
@@ -53,3 +67,30 @@ def fused_fp8_gemm(
     scale: [ceil(N/128), ceil(K/128)] fp32 (block-wise). Returns [..., N] bf16.
     """
     return _select_impl(a.device)(a, b_fp8, scale, bias, out=out)
+
+
+def _select_mxfp4_impl(device: torch.device):
+    if _FORCE_REFERENCE or device.type != "cuda":
+        return fused_mxfp4_gemm_reference
+    try:
+        from ._fused_mxfp4_gemm import fused_mxfp4_gemm_triton
+    except Exception:
+        return fused_mxfp4_gemm_reference
+    return fused_mxfp4_gemm_triton
+
+
+def fused_mxfp4_gemm(
+    a: torch.Tensor,
+    b_packed: torch.Tensor,
+    scale: torch.Tensor,
+    bias: torch.Tensor | None = None,
+    *,
+    out: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """C = a @ dequant(b_packed).T + bias.
+
+    a: [..., K] (cast to bf16); b_packed: [N, K//2] uint8 (E2M1 pairs,
+    low nibble = even K); scale: [N, K//32] uint8 (E8M0, exponent =
+    byte - 127). Returns [..., N] bf16.
+    """
+    return _select_mxfp4_impl(a.device)(a, b_packed, scale, bias, out=out)
