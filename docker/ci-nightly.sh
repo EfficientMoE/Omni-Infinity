@@ -3,6 +3,11 @@
 # non-root user with the repo mounted at /workspace, the model snapshot
 # and moe-store mounted read-only under /models, and /output mounted from
 # the host for reports and debugging artifacts.
+#
+# Each test file runs in its own pytest process: the gpu/weights tests
+# hold hundreds of GB of host RAM (AdaLN host cache, pinned streaming
+# buffers), and one long-lived interpreter accumulated enough across
+# files to draw the host OOM killer.
 set -euo pipefail
 
 python - <<'EOF'
@@ -22,9 +27,23 @@ EOF
 
 pip install -q --user --no-build-isolation --no-deps -e .
 
-python -m pytest tests/ \
-    -m "gpu or weights" \
-    -q -rs \
-    --timeout 3900 \
-    --basetemp /output/pytest-tmp \
-    --junitxml /output/nightly-gpu-report.xml
+mapfile -t files < <(
+    python -m pytest tests/ -m "gpu or weights" --collect-only -q 2>/dev/null \
+        | sed -n 's/::.*//p' | sort -u
+)
+echo "selected files: ${files[*]}"
+
+status=0
+for file in "${files[@]}"; do
+    name=$(basename "$file" .py)
+    echo "::group::$name"
+    python -m pytest "$file" \
+        -m "gpu or weights" \
+        -q -rs \
+        --timeout 3900 \
+        --basetemp "/output/pytest-tmp/$name" \
+        --junitxml "/output/junit-$name.xml" \
+        || status=1
+    echo "::endgroup::"
+done
+exit "$status"
