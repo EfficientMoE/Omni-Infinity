@@ -370,12 +370,39 @@ def test_job_service_persists_cuda_graph_manager_telemetry(
     tmp_path, artifact_result
 ):
     class FakeGraphManager:
+        def __init__(self):
+            self.captures = 0
+            self.replays = 0
+            self.capture_time_ms = 0.0
+            self.warmup_calls = 0
+            self.capture_warmup_calls = 0
+            self.fallback_reasons = {
+                "warmup_not_done": 0,
+                "shape_bucket_miss": 0,
+            }
+
+        def record_job(self):
+            self.captures += GRAPH_TELEMETRY_PAYLOAD["captures"]
+            self.replays += GRAPH_TELEMETRY_PAYLOAD["replays"]
+            self.capture_time_ms += GRAPH_TELEMETRY_PAYLOAD["capture_time_ms"]
+            self.warmup_calls += GRAPH_TELEMETRY_PAYLOAD["warmup_calls"]
+            self.capture_warmup_calls += GRAPH_TELEMETRY_PAYLOAD[
+                "capture_warmup_calls"
+            ]
+            for reason, count in GRAPH_TELEMETRY_PAYLOAD[
+                "fallback_reasons"
+            ].items():
+                self.fallback_reasons[reason] += count
+
         def stats_snapshot(self):
             return {
                 **GRAPH_TELEMETRY_PAYLOAD,
-                "fallback_reasons": dict(
-                    GRAPH_TELEMETRY_PAYLOAD["fallback_reasons"]
-                ),
+                "captures": self.captures,
+                "replays": self.replays,
+                "capture_time_ms": self.capture_time_ms,
+                "warmup_calls": self.warmup_calls,
+                "capture_warmup_calls": self.capture_warmup_calls,
+                "fallback_reasons": dict(self.fallback_reasons),
             }
 
     class FakeRunner:
@@ -385,6 +412,7 @@ def test_job_service_persists_cuda_graph_manager_telemetry(
         def generate(
             self, prompt, *, step_callback, num_inference_steps, **kwargs
         ):
+            self.cuda_graph_manager.record_job()
             for completed in range(1, num_inference_steps + 1):
                 step_callback(completed, num_inference_steps)
             return artifact_result
@@ -400,6 +428,15 @@ def test_job_service_persists_cuda_graph_manager_telemetry(
 
         assert succeeded.status == JobStatus.SUCCEEDED
         assert succeeded.graph_telemetry.model_dump() == GRAPH_TELEMETRY_PAYLOAD
+
+        second_record = service.submit(
+            GenerationRequest(type="fl2va", prompt="second")
+        )
+        second_succeeded = _wait_for_terminal(store, second_record.id)
+
+        assert second_succeeded.graph_telemetry.model_dump() == (
+            GRAPH_TELEMETRY_PAYLOAD
+        )
     finally:
         service.shutdown()
 

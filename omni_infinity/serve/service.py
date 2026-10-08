@@ -28,6 +28,30 @@ logger = logging.getLogger(__name__)
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
+def _graph_telemetry_delta(
+    before: GraphTelemetry, after: GraphTelemetry
+) -> GraphTelemetry:
+    fallback_reasons = {
+        reason: count - before.fallback_reasons.get(reason, 0)
+        for reason, count in after.fallback_reasons.items()
+        if count - before.fallback_reasons.get(reason, 0) > 0
+    }
+    return GraphTelemetry(
+        captures=after.captures - before.captures,
+        replays=after.replays - before.replays,
+        capture_failures=after.capture_failures - before.capture_failures,
+        graph_pool_bytes=after.graph_pool_bytes,
+        capture_time_ms=after.capture_time_ms - before.capture_time_ms,
+        warmup_calls=after.warmup_calls - before.warmup_calls,
+        capture_warmup_calls=(
+            after.capture_warmup_calls - before.capture_warmup_calls
+        ),
+        graphs=after.graphs,
+        generation=after.generation,
+        fallback_reasons=fallback_reasons,
+    )
+
+
 class JobServiceError(RuntimeError):
     pass
 
@@ -121,6 +145,8 @@ class JobService:
             record = self.store.transition(job_id, JobStatus.RUNNING)
             first = self.load_image(job_id, "input-first.png")
             last = self.load_image(job_id, "input-last.png")
+            manager = getattr(self.runner, "cuda_graph_manager", None)
+            telemetry_before = self._graph_telemetry_snapshot(manager, job_id)
             result = self._generate(record.request, first, last, job_id)
             artifacts = write_artifacts(
                 result,
@@ -128,14 +154,13 @@ class JobService:
                 artifact_url=f"/v1/jobs/{job_id}/artifacts",
             )
             telemetry = None
-            manager = getattr(self.runner, "cuda_graph_manager", None)
-            if manager is not None:
-                try:
-                    telemetry = GraphTelemetry(**manager.stats_snapshot())
-                except Exception:
-                    logger.exception(
-                        "could not capture CUDA graph telemetry for job %s",
-                        job_id,
+            if telemetry_before is not None:
+                telemetry_after = self._graph_telemetry_snapshot(
+                    manager, job_id
+                )
+                if telemetry_after is not None:
+                    telemetry = _graph_telemetry_delta(
+                        telemetry_before, telemetry_after
                     )
             self.store.transition(
                 job_id,
@@ -157,6 +182,18 @@ class JobService:
                     )
             except Exception:
                 logger.exception("could not persist failure for job %s", job_id)
+
+    @staticmethod
+    def _graph_telemetry_snapshot(manager, job_id: str):
+        if manager is None:
+            return None
+        try:
+            return GraphTelemetry(**manager.stats_snapshot())
+        except Exception:
+            logger.exception(
+                "could not capture CUDA graph telemetry for job %s", job_id
+            )
+            return None
 
     def _generate(self, request, first, last, job_id: str):
         common = {
