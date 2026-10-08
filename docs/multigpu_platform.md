@@ -284,6 +284,46 @@ the `MiniMaxH3AttnProcessor` seam that shards the packed sequence itself.
 `benchmarks/ulysses_spike.py` is kept as the reproduction and the gate
 for any retry.
 
+## Phase 2 — spatial-shard VAE (assessed, approach-blocked)
+
+The plan proposed a **halo-exchange spatial shard** of the decoder as the
+"exact, no seams" alternative to overlap-tiling. That premise assumes a
+convolutional decoder with a finite receptive field. The MiniMax-H3 video
+decoder is **not** convolutional: `AutoencoderKLMiniMaxH3`'s decoder is
+`MiniMaxH3VideoViTDecoder3d`, a ViT whose blocks run **full self-attention
+over all latent tokens** (its own docstring: tokens are "attended over
+with full self-attention"; `MiniMaxH3VideoAttnProcessor` calls
+`dispatch_attention_fn(..., attn_mask=None)` with no window). Only the
+*encoder* is a 3D causal-conv stack.
+
+Consequences for a spatial shard:
+
+1. **Halo exchange cannot be seam-exact here.** Every output token attends
+   to *every* input token, so no finite halo reproduces the single-GPU
+   result — the premise that halo-exchange is the "exact" option does not
+   hold for this decoder.
+2. **The built-in tiling is approximate by construction.** The decoder
+   ships `use_tiling=True` with `tile_sample_min_height/width=256` and
+   64-px overlaps that are **blended** (the code notes the released frames
+   "are the blended-tile ones"). Blending is a weighted average across the
+   overlap, not a bitwise reconstruction — it is a memory tool, not a
+   seam-exact shard. (At ≤256-px output the decode is a single tile, so
+   the committed 256p goldens exercise no seam at all.)
+3. **An exact spatial parallelization is context parallelism, not halo
+   exchange.** Making a global-attention decoder exact across GPUs needs
+   all-gather/all-to-all attention over the token grid — the same diffusers
+   experimental CP path that failed the denoiser parity gate above. The
+   decoder would need its own `_cp_plan`; pursuing it inherits the USP
+   blocker.
+
+Verdict: the halo-exchange VAE shard is **not pursued** — it cannot meet
+the seam-exactness bar for this ViT decoder, and the exact alternative
+(decoder CP) is blocked by the same experimental-CP issue as USP. The
+decoder's native overlap-tiling remains the available (approximate)
+memory lever. This keeps Phase 2 latency work parked behind a diffusers
+CP fix, consistent with the plan's risk note that Phase 1 stage
+pipelining already delivers the multi-GPU win.
+
 ## Reproduction
 
 ```bash

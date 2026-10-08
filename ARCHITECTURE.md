@@ -80,24 +80,42 @@ that same worker.
 | `__main__.py` | `python -m omni_infinity.serve` entry point. |
 | `roles.py` | Multi-GPU role abstraction (P7): `Role`, `OMNI_DEVICE_MAP` parsing, `StagePayload`, and the intra-process `HandoffQueue` (source-side copy stream + CUDA events). |
 | `split.py` | Split-stage execution (P7): `STAGE_BLOCKS` maps roles onto the modular pipeline's five top-level block groups; `prepare_state`/`run_stage`/`run_all_stages` carry an explicit `PipelineState` across stages. |
+| `transport.py` | Cross-process role transport (P7): `torch.multiprocessing` spawn + CUDA-IPC queues, one device per role process; sentinel-drained shutdown protocol. |
+| `role_pipeline.py` | Cross-process role pipeline (P7): `RolePipeline` chains the three role processes; `RoleServeRunner` is the `JobService` drop-in that backs `OMNI_ROLE=pipeline`. |
 
-### Multi-GPU roles (P7, in progress)
+### Multi-GPU roles (P7)
 
-The profile gains `OMNI_ROLE={all,encoder,denoiser,decoder}` plus
-`OMNI_DEVICE_MAP` (e.g. `encoder=cuda:0,denoiser=cuda:1,decoder=cuda:2`).
-`role=all` is the unchanged single-process default; split roles fail
-fast at startup until the cross-process transport
-(`torch.multiprocessing` CUDA-IPC queues, one device per role process)
-lands. Stage handoffs are copy-engine D2D copies, never NCCL
-collectives, and collective groups must stay within one CPU socket —
-both rules come from measured platform behavior, see
-[docs/multigpu_platform.md](docs/multigpu_platform.md). H3 is
-guidance-distilled — upstream diffusers states "there is no negative
-prompt and no unconditional branch … every step runs exactly one
-forward pass" (`diffusers/modular_pipelines/minimax_h3/
-modular_pipeline.py`, 0.40.0) — so there is no cond/uncond parallelism;
-the split-vs-one-shot bitwise parity gate is
+The profile gains `OMNI_ROLE={all,pipeline,encoder,denoiser,decoder}`
+plus `OMNI_DEVICE_MAP` (e.g. `encoder=cuda:0,denoiser=cuda:1,
+decoder=cuda:2`). `role=all` is the unchanged single-process default;
+`role=pipeline` is the single-host coordinator that spawns the three
+stage roles as separate processes (`transport.py`, one device each) and
+serves the job API through `RolePipeline` / `RoleServeRunner`
+(`role_pipeline.py`), HTTP 409 contract unchanged. Stage handoffs are
+copy-engine D2D copies, never NCCL collectives, and any collective group
+must stay within one CPU socket — both rules come from measured platform
+behavior, see [docs/multigpu_platform.md](docs/multigpu_platform.md).
+Handoffs are data-movement-only, so every role topology reproduces the
+goldens bitwise; the split-vs-one-shot gate is
 `tests/test_split_parity.py` (gpu+weights).
+
+**Phase 1 (throughput) — delivered.** Fully resident role processes are
+measured at **9.2× → 25×** the single-GPU streamed baseline (2 → 6 GPUs)
+over the VidProM trace (`benchmarks/role_pipeline_bench.py`). The
+denoiser is the bottleneck, so the scaling unit is a 2-GPU
+`{enc+dec | denoiser}` PIX replica and throughput scales near-linearly
+in replicas. CFG parallel is dropped: H3 is guidance-distilled —
+upstream diffusers runs "exactly one forward pass" per step, no
+cond/uncond branch (`diffusers/modular_pipelines/minimax_h3/
+modular_pipeline.py`, 0.40.0).
+
+**Phase 2 (single-request latency) — parked.** A degree-2 Ulysses spike
+on the denoiser (`benchmarks/ulysses_spike.py`) runs at 1.30× but fails
+the parity gate under diffusers' experimental context parallelism, and a
+seam-exact spatial-shard VAE is blocked because the video decoder is a
+global-attention ViT (halo exchange cannot be exact). Both are
+documented in [docs/multigpu_platform.md](docs/multigpu_platform.md) and
+parked behind a diffusers CP fix.
 
 ## Request lifecycle — job
 
