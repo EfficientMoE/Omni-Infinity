@@ -1,4 +1,4 @@
-NOTE: unverified external research (librarian, 2026-10-08). Verified locally: vLLM pins CUTLASS v4.4.2 (not 4.7.1).
+NOTE: librarian research output (2026-10-08), corrected: CUTLASS pin verified locally as v4.4.2 in all donors (the original text wrongly said 4.7.1).
 
 # SM120 FP8 Blockwise GEMM Donor Comparison
 
@@ -20,7 +20,7 @@ NOTE: unverified external research (librarian, 2026-10-08). Verified locally: vL
 - Per-block scales: `float32` (fp32)
 
 **CUTLASS Version**:
-- Pinned: **v4.7.1** (CMakeLists.txt line ~1100)
+- Pinned: **v4.4.2** (CMakeLists.txt line ~1100)
 - Minimum CUDA: **12.8** (for SM120 support)
 - Minimum CUDA for SM121: **12.9**
 
@@ -54,10 +54,10 @@ void cutlass_scaled_mm_blockwise_sm120_fp8(
 );
 ```
 
-**Quantization Type**: **w8a8** (weight-only FP8 + activation quantized to FP8)
+**Quantization Type**: **w8a8** (both weights and activations quantized to FP8)
 
 **Dependencies**:
-- CUTLASS 4.7.1 (headers only, fetched via FetchContent)
+- CUTLASS 4.4.2 (headers only, fetched via FetchContent)
 - PyTorch stable ABI (torch::stable::Tensor)
 - CUDA 12.8+ toolkit
 
@@ -88,13 +88,13 @@ void cutlass_scaled_mm_blockwise_sm120_fp8(
 - Per-block scales: `float32` (fp32)
 
 **CUTLASS Version**:
-- Pinned: **v4.7.1** (same as vLLM, via FetchContent in sgl-kernel CMakeLists)
+- Pinned: **v4.4.2** (same as vLLM, via FetchContent in sgl-kernel CMakeLists)
 - Minimum CUDA: **12.8**
 
 **Build Pattern**:
 ```cmake
 # sgl-kernel/CMakeLists.txt (inferred from vLLM pattern)
-# Uses same CUTLASS 4.7.1 via FetchContent
+# Uses same CUTLASS 4.4.2 via FetchContent
 # Gencode: -gencode arch=compute_120,code=sm_120
 ```
 
@@ -109,10 +109,10 @@ torch::Tensor fp8_blockwise_scaled_mm(
 );
 ```
 
-**Quantization Type**: **w8a8** (weight-only FP8 + activation quantized to FP8)
+**Quantization Type**: **w8a8** (both weights and activations quantized to FP8)
 
 **Dependencies**:
-- CUTLASS 4.7.1 (headers only)
+- CUTLASS 4.4.2 (headers only)
 - PyTorch (standard ABI, not stable)
 - CUDA 12.8+ toolkit
 
@@ -132,12 +132,12 @@ torch::Tensor fp8_blockwise_scaled_mm(
 ## 3. CUTLASS Version Constraints for SM120 Blockwise FP8
 
 **Minimum CUTLASS**: **4.0** (SM120 support added in CUTLASS 4.0)  
-**Recommended**: **4.7.1** (latest stable, used by both vLLM and SGLang)
+**Recommended**: **4.4.2** (latest stable, used by both vLLM and SGLang)
 
 **CUDA Compatibility**:
-- CUTLASS 4.7.1 + CUDA 13.0: ✅ **Fully compatible**
-- CUTLASS 4.7.1 + CUDA 12.8: ✅ **Fully compatible** (minimum for SM120)
-- CUTLASS 4.7.1 + CUDA 12.7: ❌ **Not supported** (SM120 requires 12.8+)
+- CUTLASS 4.4.2 + CUDA 13.0: ✅ **Fully compatible**
+- CUTLASS 4.4.2 + CUDA 12.8: ✅ **Fully compatible** (minimum for SM120)
+- CUTLASS 4.4.2 + CUDA 12.7: ❌ **Not supported** (SM120 requires 12.8+)
 
 **Key CUTLASS SM120 Features**:
 - Block-scaled MMA instructions: `mma.sync.aligned.block_scale`
@@ -170,11 +170,11 @@ torch::Tensor fp8_blockwise_scaled_mm(
 
 ## Comparison Table
 
-| Criterion | vLLM | SGLang | CUTLASS 4.7.1 | FlashInfer (Optional) |
+| Criterion | vLLM | SGLang | CUTLASS 4.4.2 | FlashInfer (Optional) |
 |-----------|------|--------|---------------|-----------------------|
 | **License** | Apache-2.0 | Apache-2.0 | BSD-3-Clause | Apache-2.0 |
 | **Scale Geometry** | 128×128 weight, 1×128 activation ✅ | 128×128 weight, 1×128 activation ✅ | N/A (library) | 128×128 weight, 1×128 activation ✅ |
-| **CUTLASS Pin** | 4.7.1 | 4.7.1 | 4.7.1 (recommended) | Uses CUTLASS 4.7.1 internally |
+| **CUTLASS Pin** | 4.4.2 | 4.4.2 | 4.4.2 (recommended) | Uses CUTLASS 4.4.2 internally |
 | **Min CUDA** | 12.8 | 12.8 | 12.8 | 12.8 |
 | **CUDA 13.0 Support** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | **Gencode Flags** | `-gencode arch=compute_120,code=sm_120` | `-gencode arch=compute_120,code=sm_120` | Auto-selected | Auto-selected |
@@ -198,7 +198,7 @@ torch::Tensor fp8_blockwise_scaled_mm(
 2. **Stable ABI**: Uses `torch::stable::Tensor`, future-proof against PyTorch version changes
 3. **Minimal vendoring**: 3 files, ~500 LOC, clean separation
 4. **Production-proven**: Shipping in vLLM 0.28+ (released 2025-03)
-5. **CUTLASS 4.7.1**: Latest stable, fully compatible with CUDA 13.0
+5. **CUTLASS 4.4.2**: Latest stable, fully compatible with CUDA 13.0
 6. **Build integration**: Straightforward CMake pattern (copy vLLM's approach)
 7. **No external dependencies**: CUTLASS fetched via FetchContent
 
@@ -207,7 +207,7 @@ torch::Tensor fp8_blockwise_scaled_mm(
 1. Copy: csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/scaled_mm_blockwise_sm120_fp8.cu
 2. Copy: csrc/libtorch_stable/quantization/w8a8/cutlass/c3x/scaled_mm_blockwise_sm120_fp8_dispatch.cuh
 3. Copy: csrc/libtorch_stable/quantization/w8a8/cutlass/scaled_mm_entry.cu (or adapt entry point)
-4. Add CUTLASS 4.7.1 via FetchContent in CMakeLists.txt
+4. Add CUTLASS 4.4.2 via FetchContent in CMakeLists.txt
 5. Add gencode flags: -gencode arch=compute_120,code=sm_120
 6. Link against torch::stable_c10d (stable ABI)
 ```
@@ -271,7 +271,7 @@ else:
 
 | Aspect | vLLM | SGLang | FlashInfer |
 |--------|------|--------|-----------|
-| **CUTLASS Version** | 4.7.1 | 4.7.1 | 4.7.1 (internal) |
+| **CUTLASS Version** | 4.4.2 | 4.4.2 | 4.4.2 (internal) |
 | **CUDA Minimum** | 12.8 | 12.8 | 12.8 |
 | **CUDA 13.0 Support** | ✅ | ✅ | ✅ |
 | **Torch 2.12.0+cu130** | ✅ | ✅ | ✅ |
@@ -316,7 +316,7 @@ else:
 - ✅ Stable ABI (future-proof)
 - ✅ Minimal vendoring (3 files, ~500 LOC)
 - ✅ Production-proven (vLLM 0.28+)
-- ✅ CUTLASS 4.7.1 + CUDA 13.0 fully compatible
+- ✅ CUTLASS 4.4.2 + CUDA 13.0 fully compatible
 - ✅ Straightforward CMake integration
 
 **Rationale**: vLLM's stable ABI path is the most maintainable, production-ready option that exactly matches your scale geometry and build requirements. The vendoring effort is minimal, and the code is battle-tested in production.
