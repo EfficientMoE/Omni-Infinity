@@ -45,11 +45,11 @@ num_warps ∈ {4,8}), constrained to 99 KB SMEM; cache best configs per (M,N,K).
 
 - [x] Rung A impl + registry entry + unit parity vs `_reference.py`
 - [x] Microbench A vs current Triton path (N=28672 shapes from inc 8)
-- [ ] Vendor Rung B kernel + build plumbing (optional extra, wheel stays pure-python)
-- [ ] Rung B parity + microbench; pick winner per shape
-- [ ] Rung C boundary protection flag + QA gate rerun (256p/120f goldens)
-- [ ] P4 autotune sweep; record configs in docs/ablation table
-- [ ] Update `docs/sm120_gap_analysis.md` status + issue #42 checkboxes
+- [x] Vendor Rung B kernel + build plumbing (optional extra, wheel stays pure-python)
+- [x] Rung B parity + microbench; pick winner per shape
+- [x] Rung C boundary protection flag + QA gate rerun (256p/120f goldens)
+- [x] P4 autotune sweep; record configs in docs/ablation table
+- [x] Update `docs/sm120_gap_analysis.md` status + issue #42 checkboxes
 
 ## Verification
 
