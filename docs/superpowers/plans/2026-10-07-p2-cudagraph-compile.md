@@ -51,7 +51,7 @@ comparable DiTs; FastUSP found kernel-launch overhead dominant on Blackwell.
 
 ## Tasks
 
-- [ ] Phase 0 profile + decision note appended to this plan
+- [x] Phase 0 profile + decision note appended to this plan
 - [ ] `compile-blocks` registry opt + parity-tier doc + bench row
 - [ ] Graph manager (vendored pattern) + resident-profile capture
 - [ ] Fallback-reason telemetry in job logs
