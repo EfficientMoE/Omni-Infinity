@@ -24,10 +24,16 @@ pipeline to 17n+5).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import torch
 
+from omni_infinity.arch.vdn_attention import (
+    EXTENDED_BACKENDS,
+    install_backend,
+    resolve_backend,
+)
 from omni_infinity.caches.attach import attach_caches, bind_generation
 from omni_infinity.runner import (
     _OUTPUT_KEYS,
@@ -36,6 +42,8 @@ from omni_infinity.runner import (
     _denoising_progress,
     _state_value,
 )
+
+logger = logging.getLogger(__name__)
 
 _VARIANTS = {
     "8-step": {"subfolder": None, "evaluations": 8},
@@ -106,8 +114,21 @@ class VdnRunner:
             # wide on both sides (363 Linears), applied after the LoRA
             # merge. Needs CC >= 9.0.
             load_kwargs["fp8"] = {"transformer": True}
-        if softmax_backend:
-            load_kwargs["softmax_backend"] = {"transformer": softmax_backend}
+        resolved_backend, backend_reason = resolve_backend(softmax_backend)
+        logger.info(
+            "window-softmax backend: requested=%r resolved=%r cc=%s reason=%s",
+            softmax_backend,
+            resolved_backend,
+            torch.cuda.get_device_capability(0)
+            if torch.cuda.is_available()
+            else None,
+            backend_reason,
+        )
+        load_kwargs["softmax_backend"] = {
+            "transformer": "decomposed"
+            if resolved_backend in EXTENDED_BACKENDS
+            else resolved_backend
+        }
         pipeline.load_components(**load_kwargs)
         if pipeline.transformer is None:
             # load_components downgrades component errors to warnings.
@@ -115,6 +136,8 @@ class VdnRunner:
                 "the VDN transformer failed to load; see the diffusers "
                 "warning above for the cause"
             )
+        if resolved_backend in EXTENDED_BACKENDS:
+            install_backend(pipeline.transformer, resolved_backend)
 
         if offload:
             _offload_vdn(
