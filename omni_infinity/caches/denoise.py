@@ -8,7 +8,7 @@ import importlib
 import math
 from contextlib import contextmanager
 from dataclasses import dataclass
-from types import MethodType
+from functools import wraps
 
 import torch
 
@@ -17,11 +17,19 @@ from omni_infinity.caches._tensor_tree import tree_map, tree_tensors
 
 @dataclass(frozen=True)
 class DenoiseCacheConfig:
-    """Configuration requiring model-specific calibrated coefficients."""
+    """Configuration requiring model-specific calibrated coefficients.
+
+    ``indicator="raw"`` preserves the original hidden-state comparison.
+    ``indicator="teacache"`` compares the first H3 block's timestep-modulated
+    video input. ``accumulate`` adds polynomial-rescaled distances until the
+    threshold is reached and resets the total whenever the model computes.
+    """
 
     coefficients: tuple[float, ...]
     threshold: float
     mode: str = "output"
+    indicator: str = "raw"
+    accumulate: bool = False
     signal_name: str = "hidden_states"
     io_names: tuple[str, ...] = ("hidden_states",)
     calls_per_step: int = 1
@@ -41,6 +49,8 @@ class DenoiseCacheConfig:
             raise ValueError("threshold must be positive")
         if self.mode not in {"output", "residual"}:
             raise ValueError("mode must be output or residual")
+        if self.indicator not in {"raw", "teacache"}:
+            raise ValueError("indicator must be raw or teacache")
         if self.warmup_steps < 1 or self.final_steps < 1:
             raise ValueError("the first and last steps must always compute")
         if self.calls_per_step < 1:
@@ -61,6 +71,7 @@ class _Slot:
     output: object | None = None
     inputs: object | None = None
     residual: object | None = None
+    accumulated: float = 0.0
 
 
 def _snapshot(value):
@@ -96,6 +107,34 @@ def _polynomial(coefficients: tuple[float, ...], value: float) -> float:
     return result
 
 
+def _disable_compile(function):
+    compiler = getattr(torch, "compiler", None)
+    disable = getattr(compiler, "disable", None)
+    return function if disable is None else disable(function)
+
+
+@_disable_compile
+def _cache_decision(
+    *,
+    boundary: bool,
+    has_output: bool,
+    distance: float,
+    coefficients: tuple[float, ...],
+    threshold: float,
+    accumulate: bool,
+    accumulated: float,
+) -> tuple[bool, float]:
+    """Make the skip decision in plain Python, outside compiled model graphs."""
+    if boundary or not has_output or not math.isfinite(distance):
+        return True, 0.0
+    rescaled = _polynomial(coefficients, distance)
+    if not accumulate:
+        return rescaled > threshold, 0.0
+    accumulated += rescaled
+    compute = not accumulated < threshold
+    return compute, 0.0 if compute else accumulated
+
+
 def _resolve_input(name: str, args: tuple, kwargs: dict, io_names: tuple):
     if name in kwargs:
         return kwargs[name]
@@ -108,6 +147,52 @@ def _resolve_input(name: str, args: tuple, kwargs: dict, io_names: tuple):
     if args:
         return args[0]
     raise ValueError(f"could not resolve input {name!r}")
+
+
+def _module_dtype(module, fallback: torch.dtype) -> torch.dtype:
+    parameter = next(module.parameters(), None)
+    return fallback if parameter is None else parameter.dtype
+
+
+def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
+    """Return the first H3 block's AdaLN-modulated noisy video input."""
+    hidden_states = _resolve_input(
+        config.signal_name, args, kwargs, config.io_names
+    )
+    timestep = _resolve_input("timestep", args, kwargs, config.io_names)
+    timestep_indices = _resolve_input(
+        "timestep_indices", args, kwargs, config.io_names
+    )
+    token_tags = _resolve_input("token_tags", args, kwargs, config.io_names)
+    video_indices = _resolve_input(
+        "video_indices", args, kwargs, config.io_names
+    )
+
+    projected = transformer.proj_in(
+        hidden_states.to(
+            _module_dtype(transformer.proj_in, hidden_states.dtype)
+        )
+    )
+    block = transformer.transformer_blocks[0]
+    projected = projected.to(_module_dtype(block.norm1, projected.dtype))
+    temb = transformer.time_proj(timestep)
+    temb = transformer.time_embedder(
+        temb.to(_module_dtype(transformer.time_embedder, temb.dtype))
+    )
+    shift_msa, scale_msa, *_ = block.adaln_proj(temb)
+    adaln_indices = (timestep_indices * 3 + token_tags).index_select(
+        0, video_indices
+    )
+    norm_hidden_states = block.norm1(projected)
+    return norm_hidden_states * (
+        1.0 + scale_msa.index_select(0, adaln_indices)
+    ) + shift_msa.index_select(0, adaln_indices)
+
+
+def _indicator_signal(transformer, args: tuple, kwargs: dict, config):
+    if config.indicator == "teacache":
+        return _teacache_signal(transformer, args, kwargs, config)
+    return _resolve_input(config.signal_name, args, kwargs, config.io_names)
 
 
 def _residual_inputs(args: tuple, kwargs: dict, io_names: tuple):
@@ -157,7 +242,11 @@ def _add(left, right):
 
 @contextmanager
 def denoise_step_cache(transformer, config, total_steps: int):
-    """Cache denoise outputs for the duration of one generation."""
+    """Cache denoise outputs for one generation.
+
+    The Python skip decision is compiler-disabled, and cached calls bypass the
+    transformer's forward entirely rather than entering a compiled graph.
+    """
     if total_steps < 1:
         raise ValueError("total_steps must be positive")
     if getattr(transformer, "_omni_denoise_cache_active", False):
@@ -166,19 +255,19 @@ def denoise_step_cache(transformer, config, total_steps: int):
     had_instance_forward = "forward" in transformer.__dict__
     instance_forward = transformer.__dict__.get("forward")
     original_forward = transformer.forward
+    forward_delegate = [original_forward]
     stats = DenoiseCacheStats()
     slots = [_Slot() for _ in range(config.calls_per_step)]
     calls = 0
 
-    def cached_forward(_module, *args, **kwargs):
+    @wraps(original_forward)
+    def cached_forward(*args, **kwargs):
         nonlocal calls
         step = calls // config.calls_per_step
         slot_index = calls % config.calls_per_step
         calls += 1
         slot = slots[slot_index]
-        signal = _resolve_input(
-            config.signal_name, args, kwargs, config.io_names
-        )
+        signal = _indicator_signal(transformer, args, kwargs, config)
         boundary = step < config.warmup_steps or (
             total_steps - config.final_steps <= step < total_steps
         )
@@ -187,16 +276,23 @@ def denoise_step_cache(transformer, config, total_steps: int):
             if slot.signal is None
             else _relative_l1(signal, slot.signal)
         )
-        compute = (
-            boundary
-            or slot.output is None
-            or not math.isfinite(distance)
-            or (_polynomial(config.coefficients, distance) > config.threshold)
+        compute, slot.accumulated = _cache_decision(
+            boundary=boundary,
+            has_output=slot.output is not None,
+            distance=distance,
+            coefficients=config.coefficients,
+            threshold=config.threshold,
+            accumulate=config.accumulate,
+            accumulated=slot.accumulated,
         )
         slot.signal = _snapshot(signal)
 
         if compute:
-            output = original_forward(*args, **kwargs)
+            slot.accumulated = 0.0
+            try:
+                output = forward_delegate[0](*args, **kwargs)
+            finally:
+                preserve_wrapper(transformer, ())
             stats.computed += 1
             slot.output = output
             if config.mode == "residual":
@@ -215,11 +311,18 @@ def denoise_step_cache(transformer, config, total_steps: int):
             slot.residual = _subtract(slot.output, slot.inputs)
         return _add(current_inputs, slot.residual)
 
+    def preserve_wrapper(current_module, _args):
+        if current_module.forward is not cached_forward:
+            forward_delegate[0] = current_module.forward
+            current_module.forward = cached_forward
+
     transformer._omni_denoise_cache_active = True
-    transformer.forward = MethodType(cached_forward, transformer)
+    transformer.forward = cached_forward
+    guardian_handle = transformer.register_forward_pre_hook(preserve_wrapper)
     try:
         yield stats
     finally:
+        guardian_handle.remove()
         if had_instance_forward:
             transformer.forward = instance_forward
         else:
