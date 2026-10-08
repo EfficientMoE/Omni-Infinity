@@ -1,0 +1,96 @@
+name: nightly-gpu
+
+# Runs the `gpu` / `weights` suites (bitwise parity gates, store-backed
+# execution, fused-kernel tests, and the real job/stream API gates) in a
+# non-root container on a self-hosted sm120 runner. The H3 snapshot and
+# moe-store are mounted read-only; reports and pytest tmp dirs land in a
+# host-mounted output directory owned by the runner user, so they can be
+# inspected and cleaned up afterwards. Scheduled + manual only: pull
+# requests never reach the self-hosted runner.
+#
+# Machine-specific locations are repo Actions variables (Settings ->
+# Secrets and variables -> Actions -> Variables):
+#   OMNI_CI_HF_HOME     host HF_HOME containing the MiniMax-H3 snapshot
+#   OMNI_CI_H3_SNAPSHOT host path of the MiniMax-H3 snapshot directory
+#   OMNI_CI_H3_STORE    host path of the moe-store v2 directory for H3
+#   OMNI_CI_GPU         GPU index for --gpus device=N (default "1")
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-gpu
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-weights:
+    if: github.repository == 'EfficientMoE/Omni-Infinity'
+    runs-on: [self-hosted, gpu, sm120]
+    timeout-minutes: 180
+    env:
+      HOST_HF_HOME: ${{ vars.OMNI_CI_HF_HOME }}
+      HOST_H3_SNAPSHOT: ${{ vars.OMNI_CI_H3_SNAPSHOT }}
+      HOST_H3_STORE: ${{ vars.OMNI_CI_H3_STORE }}
+      CI_GPU: ${{ vars.OMNI_CI_GPU || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build the pinned CI image
+        run: docker build -f docker/Dockerfile.ci -t omni-infinity-ci:latest docker
+
+      - name: GPU must be idle
+        run: |
+          busy=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader -i "$CI_GPU")
+          if [ -n "$busy" ]; then
+            echo "GPU $CI_GPU has running compute processes: $busy" >&2
+            exit 1
+          fi
+
+      - name: GPU + weights suite (non-root container)
+        run: |
+          set -eu
+          rm -rf ci-output
+          mkdir -p ci-output
+          snapshot="/models/hf${HOST_H3_SNAPSHOT#"$HOST_HF_HOME"}"
+          docker run --rm \
+            --gpus "device=$CI_GPU" \
+            --user "$(id -u):$(id -g)" \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            -v "$HOST_HF_HOME:/models/hf:ro" \
+            -v "$HOST_H3_STORE:/models/h3-store:ro" \
+            -v "$PWD/ci-output:/output" \
+            -e HOME=/tmp \
+            -e USER=ci \
+            -e LOGNAME=ci \
+            -e HF_HOME=/models/hf \
+            -e HF_HUB_OFFLINE=1 \
+            -e TRANSFORMERS_OFFLINE=1 \
+            -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+            -e OMNI_CI_EXPECT_GPU="NVIDIA RTX PRO 6000 Blackwell Server Edition" \
+            -e OMNI_H3_CHECKPOINT="$snapshot" \
+            -e OMNI_H3_SNAPSHOT="$snapshot" \
+            -e OMNI_H3_STORE=/models/h3-store \
+            -e OMNI_CHECKPOINT="$snapshot" \
+            -e OMNI_STORE_DIR=/models/h3-store \
+            -e OMNI_STORE_COMPONENTS=transformer,vae,audio_vae \
+            -e OMNI_MODEL_ARCH=h3-dense \
+            -e OMNI_OPTIMIZATIONS=adaln-host-cache,block-stream,text-encoder-stream \
+            -e OMNI_MAX_VRAM=22GiB \
+            -e OMNI_JOB_API_GPU=1 \
+            -e OMNI_STREAM_API_GPU=1 \
+            omni-infinity-ci:latest \
+            bash docker/ci-nightly.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-gpu-report
+          path: ci-output/nightly-gpu-report.xml

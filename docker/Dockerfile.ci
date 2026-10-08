@@ -1,0 +1,28 @@
+# CI image for the nightly GPU gate (.github/workflows/nightly-gpu.yml).
+# Pins the exact stack the committed goldens were recorded on; the parity
+# tests skip on any version drift. Bump together with a goldens re-record
+# (tests/test_reference_parity.py) and the pins in ci.yml.
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+        torch==2.12.0 torchvision==0.27.0 \
+        --index-url https://download.pytorch.org/whl/cu130
+
+RUN pip install --no-cache-dir --no-deps \
+        'moe-store @ git+https://github.com/EfficientMoE/moe-store.git@v0.2.1'
+
+RUN pip install --no-cache-dir \
+        diffusers==0.40.0 transformers==5.12.0 accelerate==1.14.0 nvtx
+
+# Mirrors [project.optional-dependencies].dev minus ruff and coverage
+# (lint and coverage run on the GitHub-hosted CPU job), plus the build
+# backend for the runtime editable install with --no-build-isolation.
+RUN pip install --no-cache-dir \
+        pytest pytest-timeout \
+        'fastapi>=0.115,<1' 'uvicorn>=0.30,<1' 'websockets>=12,<16' \
+        'httpx>=0.27,<1' 'av>=13,<19' 'soundfile>=0.12,<1' 'pillow>=10,<13' \
+        'setuptools>=75.3.2' 'setuptools-scm>=8' wheel
