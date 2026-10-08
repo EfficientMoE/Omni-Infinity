@@ -20,3 +20,9 @@ refcount machinery.
 
 Partial-prefix splicing is not implemented. C2 v1 does not hash token blocks,
 reuse a leading subset, or merge cached and newly encoded hidden states.
+
+C2's contribution is measured as encoder time saved on exact repeats in the
+seeded VidProM serving trace and on repeated encoder presentations in the
+multi-prompt demo. The one-factor `c2` ablation row records cold/warm latency,
+bitwise `rms_rel`, and encoder-cache hit/miss counters; measured numbers remain
+weights-gated in [cache_benchmarks.md](cache_benchmarks.md).

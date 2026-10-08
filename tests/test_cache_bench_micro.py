@@ -21,6 +21,8 @@ def test_micro_runs_on_cpu_and_reports_all_benches(tmp_path):
         "c1_mem_get",
         "c1_mem_put",
         "c1_disk_get_cold",
+        "c2_encoder_key",
+        "c2_mem_put_get",
         "c3_call_key",
         "c5_decision_overhead",
     }

@@ -254,3 +254,32 @@ is `docs/superpowers/plans/2026-10-07-p6-cache-upgrades.md`.
   Output mode extrapolates the cached output; residual mode extrapolates the
   cached residual and adds it to the current input. A first skip and any
   computed-value tree shape change fall back to reuse.
+
+## [2026-10-08] Track B review verdicts (elm/gpt-5.6-sol)
+
+- 3641c80 (taylor1 + fbcache): REQUEST-CHANGES — P0 rope buffer device mismatch
+  (fbcache), P1 temb pre-cast changed SiLU precision vs diffusers convention.
+- 9cfbef7 (fix: silu precision + rope buffer bridging): production code
+  approved; REQUEST-CHANGES on test fidelity (rope fake ignored inv_freq;
+  AdaLN fake lacked SiLU).
+- 3c53d30 (test hardening): APPROVE.
+- Numerics lesson: NEVER pre-cast activations to a module's weight dtype
+  before AdaLN-style modules — diffusers runs SiLU at incoming (fp32)
+  precision and casts AFTER activation. Device-move only; let the module
+  cast internally. Same rule applied to teacache + fbcache signal paths.
+- Buffer-only modules (rope: inv_freq) are invisible to .parameters();
+  _module_device() checks buffers too and tolerates non-module attributes.
+
+## [2026-10-08] Benchmark + probe integration findings
+
+- C5 variant cells extend `CacheConfig` with indicator, accumulation, and
+  approximator values. `ablation._denoise_config()` maps those values directly
+  into `DenoiseCacheConfig`; the original `c5` cell remains raw, non-accumulating
+  reuse.
+- `attach_caches()` stores C2's controller as
+  `runner.encoder_cache_controller`; benchmark rows read counters from
+  `runner.encoder_cache_controller.cache.stats()`, mirroring C3's controller.
+- `benchmarks.caches.serve_trace` accepts an arbitrary `cache_config` in
+  `replay()` and does not enumerate ablation config names, so no code change was
+  needed there. C2's VidProM and multi-prompt measurements are documented as
+  pending weights-gated runs.

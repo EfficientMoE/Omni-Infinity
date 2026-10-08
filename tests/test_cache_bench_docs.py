@@ -20,7 +20,13 @@ def test_doc_exists_and_covers_every_suite():
         "benchmarks.caches.ablation",
         "benchmarks.caches.serve_trace",
         "benchmarks.caches.denoise_probe",
+        "benchmarks.caches.denoise_fit",
         "OMNI_CONDITION_CACHE_DIR",
+        "encoder-cache",
+        "c5-teacache",
+        "c5-taylor1",
+        "c5-fbcache",
+        "multi-prompt demo",
         "c5-uncalibrated",
     ):
         assert token in text, f"docs/cache_benchmarks.md missing {token}"
