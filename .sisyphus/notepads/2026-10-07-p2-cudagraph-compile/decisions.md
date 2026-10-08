@@ -19,6 +19,7 @@ Record one-line verdict per commit below.
 - a67f2aa fix(p2): require graph execution in benchmark gates — REQUEST-CHANGES (partial replay failure still passed; resolved by live-graph and fallback gate)
 - fb77301 fix(p2): reject degraded graph benchmark runs — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 4a1877e bench(p2): record resident CUDA graph evidence — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 5666ab7 docs(p2): document resident graph outcome — REQUEST-CHANGES (clarify combined graph+pinned-AdaLN speedup; plan checkbox remains orchestrator-owned by explicit user directive)
 - 385e9b2 bench(p2): phase-0 profile + decision note — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 936274c fix(p2): clarify phase-0 methodology — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 
