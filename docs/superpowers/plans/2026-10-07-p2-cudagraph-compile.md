@@ -170,3 +170,64 @@ returns nonzero for this failed gate. Isolated precision probes showed that
 records `compile-blocks` as an opt-in measured negative result on torch
 2.12.0+cu130/diffusers 0.40.0; it must not be represented as passing the golden
 gate or as a speedup. Phase 2 should not assume regional compile is beneficial.
+
+## Phase 2 graph manager results (2026-10-08)
+
+`cuda-graph` captures the whole dense H3 transformer forward only for the
+fully resident profile. Graphs are keyed by effective `(height, width, frames)`
+video shape, use one CUDA graph pool per live bucket, and are capped at two
+live LRU buckets. Separate pools allow buckets to replay in arbitrary order;
+sharing one allocator pool would require preserving capture order. The manager
+warms eagerly, then warms again on its capture side stream, copies every tensor
+input into static buffers, requires exact non-tensor kwargs, clones the static
+output tree for the scheduler, quarantines failed buckets, and exposes
+plain-dict statistics. Its fallback reasons cover new/tensor-shape bucket
+misses, warmup, capture failure and quarantine, C5 cache skips, kwarg mismatch,
+generation invalidation, replay failure, and disabled graphs. C5 remains
+outside the graph wrapper, so a cache hit bypasses replay and increments the
+cache-skip fallback hook.
+
+The AdaLN host cache is the important part of this result. Enabling the graph
+pins its timestep-invariant weight, bias, and optional scale tensors only after
+checking that `MemAvailable` covers the full footprint plus 20% headroom. The
+canonical run pinned 24.23 GiB. This makes the captured H2D copies legal and,
+independently of launch capture, avoids pageable-memory staging. CUDA graph use
+without an AdaLN host cache is still supported, but then only the previously
+measured 1.31% launch-gap ceiling is available. Block streaming remains a hard
+error because its weight pointers are not stable. `compile-blocks` may be
+combined with graphs; a capture failure is quarantined and reported rather
+than silently claimed as a graph replay.
+
+Timing used physical GPU 4 (RTX PRO 6000 Blackwell Max-Q), driver 590.48.01,
+PyTorch 2.12.0+cu130, and diffusers 0.40.0 with the same store-backed
+AdaLN-host-cache workload as Phase 0: 256p, 120 requested/124 effective frames,
+seed 0, and 8 requested steps (7 forwards). The OFF row reuses
+`results/p2_phase0/resident.json`; graph-ON replay medians use the three
+steady-state replay forwards in `results/p2_phase2/graph-resident.json`.
+
+| resident profile | median step wall (ms) | compute (ms) | copy (ms) | launch gap (ms) | kernels/step | throughput |
+|---|---:|---:|---:|---:|---:|---:|
+| graph OFF | 1483.38 | 507.70 | 955.75 | 18.66 | 2487 | 1.000x |
+| graph ON replay | 966.42 | 510.95 | 453.71 | 1.95 | 2487 | 1.535x |
+
+The graph manager recorded 1 capture, 3 steady replays, 0 capture failures,
+three eager warmup calls, two capture-side warmup calls, and a 32.94 MiB
+graph-pool delta. Two warmup fallbacks and one tensor-shape bucket transition
+occurred before capture. Manager-side side-stream warmup, capture, and the
+mandatory first replay took 2561.91 ms to enqueue; the full capture-step CUDA
+window was 2968.89 ms. That one-time cost is separate from the replay median.
+
+Parity was tested independently on physical GPU 0, the RTX PRO 6000 Blackwell
+Server Edition matching the golden provenance. Both the eager control and
+graph-ON candidate were bitwise (`rms_rel=0`) and passed the exact golden gate;
+records are in `results/p2_phase2/parity/{resident,graph-resident}.json`.
+
+**Verdict.** Phase 2 is a measured resident-profile win: steady replay is
+34.9% faster in step wall time (1.535x throughput) with bitwise parity. This is
+not evidence that the original 1.31% launch gap was underestimated: compute is
+flat and the graph-only gap reduction contributes about 16.7 ms, while most of
+the 517.0 ms improvement comes from explicitly pinning the 24.23 GiB AdaLN H2D
+sources (copy time falls 52.5%). T5 should expect graph-only to be the useful
+row. Compile+graph may recover some H2D time but still inherits Phase 1's
+failed compile parity and should not be expected to beat or validate against
+graph-only without new evidence.

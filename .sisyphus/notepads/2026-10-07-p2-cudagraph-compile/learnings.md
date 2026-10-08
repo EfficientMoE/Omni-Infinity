@@ -98,3 +98,34 @@
 - AdaLN materialization is inside each repeated H3 block's forward in diffusers
   0.40.0; only cache installation and C5's skip decision are outside regional
   compilation. C5 still safely bypasses compiled blocks on a cache hit.
+
+## [2026-10-08] Phase 2 resident CUDA graph
+
+- Pinning the 50 host AdaLN entries covered 24.23 GiB (weight, bias, optional
+  scale) after a `MemAvailable >= 1.2 * bytes` guard. This is required for H2D
+  capture and was the dominant speedup: replay copy time was 453.71 ms versus
+  the pageable Phase-0 baseline's 955.75 ms.
+- GPU-4 steady replay was 966.42 ms versus 1483.38 ms OFF (1.535x throughput,
+  34.9% less wall time). Compute stayed flat at 510.95 versus 507.70 ms; launch
+  gap fell 18.66 -> 1.95 ms, consistent with the 1.31% pure-launch ceiling.
+- The canonical 8-step workload produced two ordinary warmups, one tensor-shape
+  bucket transition, two capture-side warmups, one capture, and three replays.
+  Graph-pool growth was 32.94 MiB. Capture-side warmup, capture, and the required
+  first replay enqueued in 2561.91 ms; the capture step's full CUDA window was
+  2968.89 ms.
+- CUDA stream capture does not yield a scheduler-ready output by itself. The
+  graph must replay once immediately after capture; returning the captured
+  output buffer before that replay caused a reproducible `rms_rel=1` at the
+  capture forward and 0.3728 final latent error. After the first-replay fix,
+  capture and every replay matched eager outputs and final parity was bitwise.
+- Replacing an instance `forward` with `*args, **kwargs` breaks diffusers H3:
+  its denoiser filters packed-layout fields through `inspect.signature`. Wrap
+  with `functools.wraps(type(transformer).forward)` so the bound instance keeps
+  the original signature.
+- Provenance-valid GPU-0 eager and graph runs both reproduced the golden
+  bitwise (`rms_rel=0`). Timing and parity artifacts are under
+  `results/p2_phase2/`.
+- Keep a distinct allocator pool per live graph bucket. PyTorch shared-pool
+  memory reuse assumes replay in capture order, which conflicts with arbitrary
+  shape-bucket access and LRU eviction. Capture-side warmups must also run on
+  the same side stream used for graph capture.

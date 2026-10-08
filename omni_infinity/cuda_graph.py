@@ -4,11 +4,12 @@
 """Resident-profile CUDA graph capture and replay.
 
 The decision, quarantine, generation, and statistics pattern is adapted from
-``MoE-Infinity/moe_infinity/serving/cuda_graph.py``. Shared graph pools,
+``MoE-Infinity/moe_infinity/serving/cuda_graph.py``. Graph-pool handling,
 static input/output buffers, warmup-before-capture, and bucket eviction are
 adapted from ``BatchGen/batchgen/cuda_graph/graph_manager.py``. Both donors
 are sibling EfficientMoE projects. This adaptation keys graphs by H3 video
-shape and keeps CUDA primitives behind an injectable backend so lifecycle
+shape, gives each live bucket its own pool so buckets may replay in arbitrary
+order, and keeps CUDA primitives behind an injectable backend so lifecycle
 logic remains CPU-testable.
 """
 
