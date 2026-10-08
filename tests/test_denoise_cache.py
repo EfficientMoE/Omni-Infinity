@@ -534,7 +534,8 @@ class _ParamAdaLN(_SyntheticAdaLN):
 
     def forward(self, temb):
         self.received_dtype = temb.dtype
-        return super().forward(self.proj(temb.to(self.proj.weight.dtype)))
+        activated = torch.nn.functional.silu(temb)
+        return super().forward(self.proj(activated.to(self.proj.weight.dtype)))
 
 
 class _ProjectedH3(_SyntheticH3):
@@ -609,7 +610,8 @@ class _BufferRope(torch.nn.Module):
         )
 
     def forward(self, position_ids):
-        return (position_ids, -position_ids)
+        scaled = position_ids * self.inv_freq[0]
+        return (scaled, -scaled)
 
 
 @pytest.mark.gpu
@@ -617,6 +619,7 @@ def test_fbcache_signal_bridges_gpu_rope_buffer_and_cpu_block():
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
     module = _SyntheticFBCacheH3()
+    module.transformer_blocks[0].norm1 = torch.nn.LayerNorm(2)
     module.rope = _BufferRope("cuda")
     kwargs = {
         name: value.to("cuda") for name, value in _fbcache_kwargs(3.0).items()
