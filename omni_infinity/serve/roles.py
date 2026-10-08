@@ -117,13 +117,20 @@ class StagePayload:
 
 
 class HandoffQueue:
-    """Bounded stage-handoff queue with device-to-device placement.
+    """Bounded intra-process stage-handoff queue with D2D placement.
 
-    ``put`` moves the payload to ``dest_device`` using a dedicated copy
-    stream (CUDA) so the producer's compute stream is not serialized
-    behind the copy; a CUDA event is recorded and the consumer's
-    current stream waits on it in ``get``.  On CPU-only hosts (unit
-    tests) the queue degrades to plain ``Tensor.to`` moves.
+    This is the single-process handoff primitive; the cross-process
+    transport (``torch.multiprocessing`` CUDA-IPC queues between role
+    processes) composes on top of it in a later P7 increment.
+
+    ``put`` moves the payload to ``dest_device`` on a copy stream that
+    lives on the *source* device (where PyTorch issues peer copies),
+    ordered after the producer's current stream, so producer compute
+    is not serialized behind the copy.  Source tensors are protected
+    with ``record_stream`` and a CUDA event is recorded for the
+    consumer, whose current stream waits on it in ``get``.  On
+    CPU-only hosts (unit tests) the queue degrades to plain
+    ``Tensor.to`` moves.
     """
 
     def __init__(self, dest_device: str, maxsize: int = 2) -> None:
@@ -134,11 +141,14 @@ class HandoffQueue:
         self._use_cuda = (
             self.dest_device.type == "cuda" and torch.cuda.is_available()
         )
-        self._copy_stream = (
-            torch.cuda.Stream(device=self.dest_device)
-            if self._use_cuda
-            else None
-        )
+        self._copy_streams: dict[int, torch.cuda.Stream] = {}
+
+    def _copy_stream_for(self, device: torch.device) -> torch.cuda.Stream:
+        stream = self._copy_streams.get(device.index)
+        if stream is None:
+            stream = torch.cuda.Stream(device=device)
+            self._copy_streams[device.index] = stream
+        return stream
 
     def put(
         self,
@@ -148,11 +158,24 @@ class HandoffQueue:
     ) -> None:
         """Copy ``payload`` to the destination device and enqueue it."""
 
-        if self._use_cuda:
-            with torch.cuda.stream(self._copy_stream):
+        source = next(
+            (
+                tensor.device
+                for tensor in payload.tensors.values()
+                if tensor.is_cuda
+            ),
+            None,
+        )
+        if self._use_cuda and source is not None:
+            copy_stream = self._copy_stream_for(source)
+            copy_stream.wait_stream(torch.cuda.current_stream(source))
+            with torch.cuda.stream(copy_stream):
+                for tensor in payload.tensors.values():
+                    if tensor.is_cuda:
+                        tensor.record_stream(copy_stream)
                 moved = payload.to_device(self.dest_device, non_blocking=True)
                 event = torch.cuda.Event()
-                event.record(self._copy_stream)
+                event.record(copy_stream)
         else:
             moved = payload.to_device(self.dest_device)
             event = None
