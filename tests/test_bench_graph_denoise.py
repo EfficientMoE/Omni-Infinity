@@ -105,3 +105,16 @@ def test_parse_driver_version_handles_open_kernel_module_banner():
     )
 
     assert bench_graph_denoise.parse_driver_version(banner) == "590.48.01"
+
+
+def test_graph_execution_gate_rejects_eager_fallback_and_capture_failure():
+    assert bench_graph_denoise.graph_execution_gate_passes("resident", None)
+    assert not bench_graph_denoise.graph_execution_gate_passes(
+        "graph-resident", _stats()
+    )
+    assert not bench_graph_denoise.graph_execution_gate_passes(
+        "graph-resident", _stats(captures=1, replays=3, failures=1)
+    )
+    assert bench_graph_denoise.graph_execution_gate_passes(
+        "graph-resident", _stats(captures=1, replays=3)
+    )

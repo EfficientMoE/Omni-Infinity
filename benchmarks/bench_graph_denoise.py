@@ -142,6 +142,17 @@ def parse_driver_version(banner: str) -> str:
     return matches[-1] if matches else "unknown"
 
 
+def graph_execution_gate_passes(profile_name: str, stats: dict | None) -> bool:
+    if profile_name != "graph-resident":
+        return True
+    return bool(
+        stats is not None
+        and stats["captures"] >= 1
+        and stats["replays"] >= 1
+        and stats["capture_failures"] == 0
+    )
+
+
 def _driver_version() -> str:
     path = Path("/proc/driver/nvidia/version")
     if not path.is_file():
@@ -327,6 +338,9 @@ def main() -> int:
         args, result
     )
     graph_stats = manager.stats_snapshot() if manager is not None else None
+    graph_execution_gate_passed = graph_execution_gate_passes(
+        args.profile, graph_stats
+    )
     payload = {
         "schema_version": 1,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -350,6 +364,7 @@ def main() -> int:
         "pinned_adaln_bytes": runner.pinned_adaln_bytes,
         "pinned_adaln_gib": runner.pinned_adaln_bytes / 1024**3,
         "graph_stats": graph_stats,
+        "graph_execution_gate_passed": graph_execution_gate_passed,
         "graph_eager_output_comparisons": replay_comparisons,
         "parity": parity,
         "golden_provenance": provenance,
@@ -370,7 +385,8 @@ def main() -> int:
             )
         payload["steps"] = rows
         payload["post_first_step_summary"] = summarize(rows)
-        payload["replay_summary"] = replay_summary(rows)
+        replay_metrics = replay_summary(rows)
+        payload["replay_summary"] = replay_metrics
         if PHASE0_BASELINE.is_file():
             baseline = json.loads(PHASE0_BASELINE.read_text(encoding="utf-8"))
             payload["phase0_off_baseline_summary"] = baseline["summary"]
@@ -379,6 +395,7 @@ def main() -> int:
         gate_passed = provenance["comparable"] and parity_gate_passes(
             parity, require_bitwise=True
         )
+        gate_passed = gate_passed and graph_execution_gate_passed
         payload["golden_gate_passed"] = gate_passed
         output = args.results_dir / "parity" / f"{args.profile}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -389,6 +406,16 @@ def main() -> int:
         f"provenance comparable={provenance['comparable']}",
         flush=True,
     )
+    if not graph_execution_gate_passed:
+        print("graph execution gate failed", flush=True)
+        return 1
+    if (
+        args.mode == "timing"
+        and args.profile == "graph-resident"
+        and replay_metrics["steps"] == 0
+    ):
+        print("timing replay gate failed", flush=True)
+        return 1
     if args.mode == "parity" and not payload["golden_gate_passed"]:
         print("golden gate failed", flush=True)
         return 1
