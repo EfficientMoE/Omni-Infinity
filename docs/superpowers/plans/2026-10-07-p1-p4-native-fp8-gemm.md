@@ -44,7 +44,7 @@ num_warps ∈ {4,8}), constrained to 99 KB SMEM; cache best configs per (M,N,K).
 ## Tasks
 
 - [x] Rung A impl + registry entry + unit parity vs `_reference.py`
-- [ ] Microbench A vs current Triton path (N=28672 shapes from inc 8)
+- [x] Microbench A vs current Triton path (N=28672 shapes from inc 8)
 - [ ] Vendor Rung B kernel + build plumbing (optional extra, wheel stays pure-python)
 - [ ] Rung B parity + microbench; pick winner per shape
 - [ ] Rung C boundary protection flag + QA gate rerun (256p/120f goldens)
