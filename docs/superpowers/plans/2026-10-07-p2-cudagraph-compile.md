@@ -81,7 +81,7 @@ transformer and AdaLN host cache at 256p, 120 requested frames, seed 0, and
 the first forward was discarded and the table reports medians over the
 remaining 6. Raw records are in `results/p2_phase0/{resident,block-stream}.json`.
 
-| profile | step wall (ms) | compute busy (ms) | copy busy (ms) | launch gap (ms) | launch gap | kernels/step |
+| profile | median wall (ms) | median compute (ms) | median copy (ms) | median gap (ms) | median per-step gap | median kernels/step |
 |---|---:|---:|---:|---:|---:|---:|
 | resident | 1483.38 | 507.70 | 955.75 | 18.66 | 1.31% | 2487 |
 | block-stream | 2951.59 | 508.56 | 2360.30 | 72.91 | 2.41% | 2487 |
@@ -92,10 +92,13 @@ windows bound each step. Compute busy is the union of kernel intervals; copy
 busy is the separately reported union of memcpy intervals (block-stream uses
 copy stream 13 in addition to compute/default stream 7). `launch gap` is the
 step envelope minus the union of compute and copy intervals, so serialized or
-overlapped weight H2D is not mislabeled as CPU launch overhead. Per-step CUDA
-events were also recorded as a wall-time fallback and agree with the profiler
-median within 0.22 ms. Peak allocated memory was 71.89 GiB resident and
-13.37 GiB block-stream (including the discarded warmup forward).
+overlapped weight H2D is not mislabeled as CPU launch overhead. It is a
+conservative upper bound because any remaining dependency, synchronization,
+allocator, or profiler idle time is included. The percentage is the median of
+per-step percentages, not a ratio of independently computed medians. Per-step
+CUDA events were also recorded as a wall-time fallback and agree with the
+profiler median within 0.22 ms. Peak allocated memory was 71.89 GiB resident
+and 13.37 GiB block-stream (including the discarded warmup forward).
 
 **Verdict.** Block-stream launch overhead is **2.41%**, below the 5% decision
 threshold. Demote P2 for block-stream: Phase 1 regional compile and Phase 2
@@ -104,7 +107,9 @@ capture under block streaming is dropped. The resident copy-adjusted launch
 gap is also only 1.31%, which bounds the likely pure launch-overhead win; keep
 resident as the sole target because its transformer pointers are stable, but
 require the later ablation to justify continuation rather than assuming a
-graph speedup.
+graph speedup. P2 therefore becomes a large-GPU-only optimization: the
+resident profile peaks at 71.89 GiB and does not satisfy the separate 22 GiB
+memory-constrained serving envelope.
 
 Measurement gotchas: FL2VA requires `tests/fixtures/ref.png`; an image-less
 call fails before denoising. The merged local H3 snapshot keeps the transformer

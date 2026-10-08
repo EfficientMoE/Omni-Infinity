@@ -49,6 +49,7 @@ PROFILE_OPTIMIZATIONS = {
     ),
 }
 STEP_PREFIX = "denoise_step_"
+_MISSING = object()
 
 
 def union_duration_us(intervals: list[tuple[float, float]]) -> float:
@@ -87,6 +88,14 @@ def transformer_config_root(checkpoint: Path) -> Path:
     raise FileNotFoundError(f"no FL2VA transformer config under {checkpoint}")
 
 
+def effective_video_frames(requested_frames: int) -> int:
+    """Mirror the H3 video VAE's 17*n+5 frame alignment."""
+    effective = requested_frames
+    while effective % 17 != 5:
+        effective += 1
+    return effective
+
+
 @contextmanager
 def patched_transformer_config_lookup(checkpoint: Path):
     """Adapt the store loader to the release snapshot's nested FL2VA config."""
@@ -97,6 +106,9 @@ def patched_transformer_config_lookup(checkpoint: Path):
         yield
         return
     original = MiniMaxH3Transformer3DModel.load_config
+    local_descriptor = MiniMaxH3Transformer3DModel.__dict__.get(
+        "load_config", _MISSING
+    )
 
     def load_config(cls, pretrained_model_name_or_path, *args, **kwargs):
         requested = Path(pretrained_model_name_or_path)
@@ -113,7 +125,10 @@ def patched_transformer_config_lookup(checkpoint: Path):
         )
         yield
     finally:
-        del MiniMaxH3Transformer3DModel.load_config
+        if local_descriptor is _MISSING:
+            del MiniMaxH3Transformer3DModel.load_config
+        else:
+            MiniMaxH3Transformer3DModel.load_config = local_descriptor
 
 
 @dataclass
@@ -445,8 +460,10 @@ def main() -> int:
             "compute_busy": "union of CUDA kernel intervals",
             "copy_busy": "union of CUDA memcpy intervals",
             "launch_gap": (
-                "step wall minus union(kernel, memcpy); copy stalls excluded"
+                "copy-adjusted idle upper bound: step wall minus union(kernel, "
+                "memcpy); copy stalls excluded"
             ),
+            "launch_gap_pct_aggregation": "median of per-step percentages",
             "fallback_wall": "per-step CUDA-event elapsed time",
         },
         "parameters": {
@@ -459,6 +476,7 @@ def main() -> int:
             "actual_transformer_forwards": actual_steps,
             "resolution": args.resolution,
             "frames": args.frames,
+            "effective_frames": effective_video_frames(args.frames),
             "seed": args.seed,
             "warmup_steps_discarded": 1,
         },

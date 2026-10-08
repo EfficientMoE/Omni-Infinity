@@ -62,3 +62,16 @@
   `FL2VA/transformer` for the store model config without mutating the snapshot.
   FL2VA requires the keyframe fixture. Requested 120 frames round to 124.
   `num_inference_steps=8` yields 7 transformer forwards in this scheduler.
+
+### Phase 0 review clarifications
+
+- Launch-gap percentages are medians of per-step percentages, not ratios of
+  the independently computed median gap and median wall columns.
+- `wall - union(kernel, memcpy)` is a copy-adjusted device-idle upper bound on
+  launch overhead; dependencies, synchronization, allocator effects, and
+  profiler idle time can only make it more conservative. Since this upper
+  bound is below 5% for block-stream, the demotion decision still follows.
+- Effective video length is 124 frames after the H3 VAE aligns the requested
+  120 frames to `17*n+5`; raw JSON records both values.
+- Resident-only P2 is a large-GPU scope: its 71.89 GiB peak does not satisfy
+  the separate 22 GiB memory-constrained serving envelope.

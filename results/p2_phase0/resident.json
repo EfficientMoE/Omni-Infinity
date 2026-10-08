@@ -12,7 +12,8 @@
     "step_wall": "CUDA annotation envelope across per-step streams",
     "compute_busy": "union of CUDA kernel intervals",
     "copy_busy": "union of CUDA memcpy intervals",
-    "launch_gap": "step wall minus union(kernel, memcpy); copy stalls excluded",
+    "launch_gap": "copy-adjusted idle upper bound: step wall minus union(kernel, memcpy); copy stalls excluded",
+    "launch_gap_pct_aggregation": "median of per-step percentages",
     "fallback_wall": "per-step CUDA-event elapsed time"
   },
   "parameters": {
@@ -23,6 +24,7 @@
     "actual_transformer_forwards": 7,
     "resolution": "256p",
     "frames": 120,
+    "effective_frames": 124,
     "seed": 0,
     "warmup_steps_discarded": 1
   },
