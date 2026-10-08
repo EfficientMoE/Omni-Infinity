@@ -532,8 +532,15 @@ pytest tests/ -m "not gpu and not weights" -q --timeout 180 \
 ```
 
 Tests marked `gpu` or `weights` need a CUDA device and a local checkpoint.
-CI excludes both marks. The CPU job installs a CPU torch wheel before the
-editable install.
+The per-PR CI excludes both marks; the CPU job installs a CPU torch wheel
+before the editable install, and pins `diffusers`/`transformers` to the
+golden-recording stack.
+
+A nightly workflow (`.github/workflows/nightly-gpu.yml`) runs the `gpu` and
+`weights` suites — the bitwise parity gates, the store-backed path, and the
+real job/stream API gates — on a self-hosted sm120 runner with the local
+H3 snapshot and moe-store. It is schedule/manual only, so pull requests
+never execute on the self-hosted runner.
 
 ## Contributing and Security
 

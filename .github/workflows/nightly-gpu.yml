@@ -1,0 +1,104 @@
+name: nightly-gpu
+
+# Runs the `gpu` / `weights` suites (bitwise parity gates, store-backed
+# execution, fused-kernel tests, and the real job/stream API gates) on a
+# self-hosted sm120 runner that has the H3 checkpoint and a moe-store on
+# local disk. Scheduled + manual only: pull requests never reach the
+# self-hosted runner.
+#
+# Machine-specific locations are repo Actions variables (Settings ->
+# Secrets and variables -> Actions -> Variables):
+#   OMNI_CI_VENV        persistent venv path on the runner
+#   OMNI_CI_HF_HOME     HF_HOME containing the MiniMax-H3 snapshot
+#   OMNI_CI_H3_SNAPSHOT local MiniMax-H3 snapshot directory
+#   OMNI_CI_H3_STORE    moe-store v2 directory for H3
+#   OMNI_CI_GPU         CUDA_VISIBLE_DEVICES value (default "1")
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-gpu
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-weights:
+    if: github.repository == 'EfficientMoE/Omni-Infinity'
+    runs-on: [self-hosted, gpu, sm120]
+    timeout-minutes: 180
+    env:
+      OMNI_CI_VENV: ${{ vars.OMNI_CI_VENV }}
+      OMNI_CI_HF_HOME: ${{ vars.OMNI_CI_HF_HOME }}
+      OMNI_CI_H3_SNAPSHOT: ${{ vars.OMNI_CI_H3_SNAPSHOT }}
+      OMNI_CI_H3_STORE: ${{ vars.OMNI_CI_H3_STORE }}
+      OMNI_CI_GPU: ${{ vars.OMNI_CI_GPU || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure pinned venv (the golden recording stack)
+        # The committed goldens were recorded on exactly this stack
+        # (torch 2.12.0+cu130 / diffusers 0.40.0); the parity tests skip on
+        # any version drift, so the venv pins hard. Bump together with a
+        # goldens re-record and the pins in ci.yml.
+        run: |
+          set -eu
+          test -n "$OMNI_CI_VENV"
+          if [ ! -x "$OMNI_CI_VENV/bin/python" ]; then
+            python3.12 -m venv "$OMNI_CI_VENV"
+            "$OMNI_CI_VENV/bin/pip" install -q -U pip
+          fi
+          "$OMNI_CI_VENV/bin/pip" install -q torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cu130
+          "$OMNI_CI_VENV/bin/pip" install -q --no-deps 'moe-store @ git+https://github.com/EfficientMoE/moe-store.git@v0.2.1'
+          "$OMNI_CI_VENV/bin/pip" install -q diffusers==0.40.0 transformers==5.12.0
+          "$OMNI_CI_VENV/bin/pip" install -q -e '.[dev]'
+
+      - name: Stack sanity (goldens skip on drift — fail loud instead)
+        run: |
+          CUDA_VISIBLE_DEVICES="$OMNI_CI_GPU" "$OMNI_CI_VENV/bin/python" - <<'EOF'
+          import diffusers
+          import torch
+
+          assert torch.__version__ == "2.12.0+cu130", torch.__version__
+          assert diffusers.__version__ == "0.40.0", diffusers.__version__
+          assert torch.cuda.is_available(), "no CUDA device visible"
+          name = torch.cuda.get_device_name(0)
+          assert name == "NVIDIA RTX PRO 6000 Blackwell Server Edition", name
+          EOF
+
+      - name: GPU + weights suite
+        env:
+          CUDA_VISIBLE_DEVICES: ${{ env.OMNI_CI_GPU }}
+          HF_HOME: ${{ env.OMNI_CI_HF_HOME }}
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+          OMNI_H3_CHECKPOINT: ${{ env.OMNI_CI_H3_SNAPSHOT }}
+          OMNI_H3_SNAPSHOT: ${{ env.OMNI_CI_H3_SNAPSHOT }}
+          OMNI_H3_STORE: ${{ env.OMNI_CI_H3_STORE }}
+          OMNI_CHECKPOINT: ${{ env.OMNI_CI_H3_SNAPSHOT }}
+          OMNI_STORE_DIR: ${{ env.OMNI_CI_H3_STORE }}
+          OMNI_STORE_COMPONENTS: transformer,vae,audio_vae
+          OMNI_MODEL_ARCH: h3-dense
+          OMNI_OPTIMIZATIONS: adaln-host-cache,block-stream,text-encoder-stream
+          OMNI_MAX_VRAM: 22GiB
+          OMNI_JOB_API_GPU: "1"
+          OMNI_STREAM_API_GPU: "1"
+        run: >
+          "$OMNI_CI_VENV/bin/pytest" tests/
+          -m "gpu or weights"
+          -q -rs
+          --timeout 3900
+          --junitxml nightly-gpu-report.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-gpu-report
+          path: nightly-gpu-report.xml
