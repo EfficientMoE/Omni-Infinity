@@ -1,5 +1,7 @@
 # P2 — CUDA-graph the denoise loop + regional torch.compile
 
+> **Tracking PR** — implementation for this plan lands on this branch. Roadmap: #42.
+
 Tracking: [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42) (P2).
 Refs: [sm120 gap analysis](../../sm120_gap_analysis.md) §gaps,
 [t2v survey](../../t2v_optimization_survey.md) §3 compile/graphs.
