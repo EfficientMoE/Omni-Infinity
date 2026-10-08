@@ -1,5 +1,7 @@
 # P1+P4 — Native FP8 tensor-core GEMM + SM120 Triton autotune
 
+> **Tracking PR** — implementation for this plan lands on this branch. Roadmap: #42.
+
 Tracking: [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42) (P1, P4).
 Refs: [sm120 gap analysis](../../sm120_gap_analysis.md), reuse scan in issue #42 comment.
 
