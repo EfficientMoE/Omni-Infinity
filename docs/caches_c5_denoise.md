@@ -48,6 +48,7 @@ the resident profile peaks at ~71.9 GiB and does not fit the 22 GiB
 memory-constrained serving envelope. See the P2 plan
 (`docs/superpowers/plans/2026-10-07-p2-cudagraph-compile.md`) for measured
 results: graph-only is the only configuration that is both faster (1.535×
-throughput, i.e. 34.9% less step wall time) and bitwise-correct, while
-`compile-blocks` and `compile+graph` trade golden parity for speed and must not
-be presented as passing the bitwise gate.
+throughput, i.e. 34.9% less step wall time) and bitwise-correct. `compile-blocks`
+is slower (0.939×) and still fails the `2e-2` parity gate; `compile+graph`,
+though faster (1.604×), also fails that gate. Neither compile variant may be
+presented as passing the bitwise golden gate.
