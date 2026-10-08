@@ -402,6 +402,32 @@ def latent_parity(
     }
 
 
+def parity_gate_passes(parity: dict[str, Any]) -> bool:
+    return bool(parity["allclose"]["rtol=atol=2e-2"])
+
+
+def golden_provenance(
+    golden: dict[str, Any],
+    *,
+    torch_version: str,
+    diffusers_version: str,
+    gpu_name: str,
+    first_frame_sha256: str,
+) -> dict[str, Any]:
+    runtime = {
+        "torch_version": torch_version,
+        "diffusers_version": diffusers_version,
+        "gpu_name": gpu_name,
+        "first_frame_sha256": first_frame_sha256,
+    }
+    mismatches = [
+        f"{name}: recorded={golden.get(name)!r}, runtime={value!r}"
+        for name, value in runtime.items()
+        if golden.get(name) != value
+    ]
+    return {"comparable": not mismatches, "mismatches": mismatches}
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -503,6 +529,19 @@ def main() -> int:
     summary = summarize(rows)
     golden = torch.load(args.goldens, map_location="cpu", weights_only=False)
     parity = latent_parity(result.latents, golden["latents"])
+    import diffusers
+
+    first_frame_sha256 = hashlib.sha256(
+        args.first_frame.read_bytes()
+    ).hexdigest()
+    provenance = golden_provenance(
+        golden,
+        torch_version=torch.__version__,
+        diffusers_version=diffusers.__version__,
+        gpu_name=torch.cuda.get_device_name(0),
+        first_frame_sha256=first_frame_sha256,
+    )
+    golden_gate_passed = provenance["comparable"] and parity_gate_passes(parity)
     median_wall = summary["median_step_wall_ms"]
     if not 500.0 <= median_wall <= 10_000.0:
         raise RuntimeError(
@@ -522,6 +561,11 @@ def main() -> int:
     print(
         f"parity: tier={parity['tier']} rms_rel={parity['rms_rel']:.6g} "
         f"bitwise={parity['bitwise']} allclose={parity['allclose']}",
+        flush=True,
+    )
+    print(
+        f"golden provenance: comparable={provenance['comparable']} "
+        f"mismatches={provenance['mismatches']}",
         flush=True,
     )
 
@@ -549,9 +593,7 @@ def main() -> int:
         "parameters": {
             "prompt": args.prompt,
             "first_frame": str(args.first_frame),
-            "first_frame_sha256": hashlib.sha256(
-                args.first_frame.read_bytes()
-            ).hexdigest(),
+            "first_frame_sha256": first_frame_sha256,
             "steps": args.steps,
             "actual_transformer_forwards": actual_steps,
             "resolution": args.resolution,
@@ -574,12 +616,17 @@ def main() -> int:
         "steps": rows,
         "summary": summary,
         "parity": parity,
+        "golden_provenance": provenance,
+        "golden_gate_passed": golden_gate_passed,
     }
     args.results_dir.mkdir(parents=True, exist_ok=True)
     output = args.results_dir / f"{args.profile}.json"
     output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {output}", flush=True)
     print(json.dumps(summary, sort_keys=True), flush=True)
+    if not golden_gate_passed:
+        print("golden gate failed", flush=True)
+        return 1
     return 0
 
 
