@@ -179,7 +179,7 @@ def test_p2_cell_gate_requires_provenance_and_every_graph_replay():
         parity=failed_parity,
         graph_replayed=None,
     )
-    assert ablation._p2_cell_gate_passes(
+    assert not ablation._p2_cell_gate_passes(
         config="compile",
         mode="parity",
         optimizations=ablation.P2_CONFIG_OPTIMIZATIONS["compile"],
@@ -195,3 +195,18 @@ def test_p2_cell_gate_requires_provenance_and_every_graph_replay():
         parity=None,
         graph_replayed=False,
     )
+
+
+def test_expected_compiled_parity_failure_is_collectable(tmp_path):
+    artifact = tmp_path / "compile-nfe8-parity.json"
+    artifact.write_text(
+        json.dumps(
+            {
+                "config": "compile",
+                "golden_gate_passed": False,
+                "golden_provenance": {"comparable": True},
+                "parity": {"allclose": {"rtol=atol=2e-2": False}},
+            }
+        )
+    )
+    assert ablation._is_expected_negative_parity(artifact)

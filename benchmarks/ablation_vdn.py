@@ -524,7 +524,24 @@ def _p2_cell_gate_passes(
         return False
     if config in {"baseline", "graph"}:
         return bool(parity is not None and parity["bitwise"])
-    return True
+    return bool(
+        parity is not None
+        and parity.get("allclose", {}).get("rtol=atol=2e-2", False)
+    )
+
+
+def _is_expected_negative_parity(path: pathlib.Path) -> bool:
+    if not path.is_file():
+        return False
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    parity = payload.get("parity") or {}
+    provenance = payload.get("golden_provenance") or {}
+    return bool(
+        payload.get("config") in {"compile", "compile+graph"}
+        and payload.get("golden_gate_passed") is False
+        and provenance.get("comparable") is True
+        and not parity.get("allclose", {}).get("rtol=atol=2e-2", False)
+    )
 
 
 def _parse_nvidia_driver_version(banner: str) -> str:
@@ -707,6 +724,14 @@ def _run_p2_cell(args) -> int:
     elapsed = __import__("time").perf_counter() - wall_started
     graph_stats = manager.stats_snapshot() if manager is not None else None
     graph_replayed, graph_note = _p2_graph_execution(optimizations, graph_stats)
+    execution_gate_passed = _p2_cell_gate_passes(
+        config=args.p2_config,
+        mode=args.p2_cell,
+        optimizations=optimizations,
+        provenance=provenance,
+        parity=parity,
+        graph_replayed=graph_replayed,
+    )
     payload = {
         "schema_version": 1,
         "timestamp_utc": started.isoformat(),
@@ -741,6 +766,10 @@ def _run_p2_cell(args) -> int:
         "graph_stats": graph_stats,
         "graph_replayed": graph_replayed,
         "graph_note": graph_note,
+        "execution_gate_passed": execution_gate_passed,
+        "golden_gate_passed": (
+            execution_gate_passed if args.p2_cell == "parity" else None
+        ),
     }
     output = _p2_artifact_path(
         _path(args.results_dir), args.p2_config, args.steps, args.p2_cell
@@ -760,14 +789,7 @@ def _run_p2_cell(args) -> int:
             f"cosine={cosine:.9f}; {graph_note}",
             flush=True,
         )
-    if not _p2_cell_gate_passes(
-        config=args.p2_config,
-        mode=args.p2_cell,
-        optimizations=optimizations,
-        provenance=provenance,
-        parity=parity,
-        graph_replayed=graph_replayed,
-    ):
+    if not execution_gate_passed:
         print("P2 execution/provenance gate failed", flush=True)
         return 1
     if compile_cache is not None:
@@ -821,13 +843,27 @@ def execute_p2(
             first_frame=first_frame,
             goldens=goldens,
         )
-        _run_subprocess(
-            parity_command,
-            repo,
-            parity_env,
-            parity_gpu,
-            sample_vram=False,
-        )
+        try:
+            _run_subprocess(
+                parity_command,
+                repo,
+                parity_env,
+                parity_gpu,
+                sample_vram=False,
+            )
+        except subprocess.CalledProcessError:
+            parity_path = _p2_artifact_path(
+                results,
+                str(run.params["config"]),
+                nfe,
+                "parity",
+            )
+            if not _is_expected_negative_parity(parity_path):
+                raise
+            print(
+                f"collected expected failed parity gate from {parity_path}",
+                flush=True,
+            )
     return collect_p2_row(run, results)
 
 
