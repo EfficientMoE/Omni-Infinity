@@ -234,6 +234,9 @@ graph-only without new evidence.
 
 ## Phase 2 Task 4 — serve telemetry (2026-10-08)
 
+The task-list checkbox remains intentionally unchanged for orchestrator
+verification.
+
 Successful serve records now expose optional `JobRecord.graph_telemetry` data
 in both persisted `job.json` and `GET /v1/jobs/{id}` responses. `JobService`
 brackets generation with CUDA-graph manager snapshots: the terminal
