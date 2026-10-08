@@ -61,6 +61,8 @@ jobs:
           snapshot="/models/hf${HOST_H3_SNAPSHOT#"$HOST_HF_HOME"}"
           docker run --rm \
             --gpus "device=$CI_GPU" \
+            --memory 900g \
+            --memory-swap 900g \
             --user "$(id -u):$(id -g)" \
             -v "$PWD:/workspace" \
             -w /workspace \
@@ -93,4 +95,4 @@ jobs:
         if: always()
         with:
           name: nightly-gpu-report
-          path: ci-output/nightly-gpu-report.xml
+          path: ci-output/junit-*.xml
