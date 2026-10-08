@@ -21,13 +21,20 @@ class DenoiseCacheConfig:
 
     ``indicator="raw"`` preserves the original hidden-state comparison.
     ``indicator="teacache"`` compares the first H3 block's timestep-modulated
-    video input. ``accumulate`` adds polynomial-rescaled distances until the
-    threshold is reached and resets the total whenever the model computes.
+    video input. ``indicator="fbcache"`` faithfully runs the first block over
+    the packed projected inputs and compares its output-minus-input residual.
+    ``accumulate`` adds polynomial-rescaled distances until the threshold is
+    reached and resets the total whenever the model computes. FBCache normally
+    uses no accumulator; with ``accumulate=False`` and identity coefficients
+    ``(1, 0)``, this is its plain per-step threshold rule. ``approximator``
+    selects reuse or first-order finite-difference extrapolation without
+    changing the compute/skip decision.
     """
 
     coefficients: tuple[float, ...]
     threshold: float
     mode: str = "output"
+    approximator: str = "reuse"
     indicator: str = "raw"
     accumulate: bool = False
     signal_name: str = "hidden_states"
@@ -49,8 +56,10 @@ class DenoiseCacheConfig:
             raise ValueError("threshold must be positive")
         if self.mode not in {"output", "residual"}:
             raise ValueError("mode must be output or residual")
-        if self.indicator not in {"raw", "teacache"}:
-            raise ValueError("indicator must be raw or teacache")
+        if self.approximator not in {"reuse", "taylor1"}:
+            raise ValueError("approximator must be reuse or taylor1")
+        if self.indicator not in {"raw", "teacache", "fbcache"}:
+            raise ValueError("indicator must be raw, teacache, or fbcache")
         if self.warmup_steps < 1 or self.final_steps < 1:
             raise ValueError("the first and last steps must always compute")
         if self.calls_per_step < 1:
@@ -72,6 +81,10 @@ class _Slot:
     inputs: object | None = None
     residual: object | None = None
     accumulated: float = 0.0
+    calls: int = 0
+    computed_call: int | None = None
+    value: object | None = None
+    derivative: object | None = None
 
 
 def _snapshot(value):
@@ -216,9 +229,79 @@ def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
     return norm_hidden_states * (1.0 + scale_msa) + shift_msa
 
 
+def _project_to_module(module, value):
+    device, dtype = _module_target(module, value.device, value.dtype)
+    return module(value.to(device=device, dtype=dtype))
+
+
+def _fbcache_signal(transformer, args: tuple, kwargs: dict, config):
+    """Return the real first H3 block output-minus-input residual."""
+    hidden_states = _resolve_input(
+        config.signal_name, args, kwargs, config.io_names
+    )
+    audio_hidden_states = _resolve_input(
+        "audio_hidden_states", args, kwargs, config.io_names
+    )
+    encoder_hidden_states = _resolve_input(
+        "encoder_hidden_states", args, kwargs, config.io_names
+    )
+    timestep = _resolve_input("timestep", args, kwargs, config.io_names)
+    timestep_indices = _resolve_input(
+        "timestep_indices", args, kwargs, config.io_names
+    )
+    token_tags = _resolve_input("token_tags", args, kwargs, config.io_names)
+    position_ids = _resolve_input("position_ids", args, kwargs, config.io_names)
+    video_indices = _resolve_input(
+        "video_indices", args, kwargs, config.io_names
+    )
+    audio_indices = _resolve_input(
+        "audio_indices", args, kwargs, config.io_names
+    )
+    text_indices = _resolve_input("text_indices", args, kwargs, config.io_names)
+
+    video_embeds = _project_to_module(transformer.proj_in, hidden_states)
+    audio_embeds = _project_to_module(
+        transformer.audio_proj_in, audio_hidden_states
+    )
+    text_embeds = _project_to_module(
+        transformer.context_embedder, encoder_hidden_states
+    )
+    text_embeds = _project_to_module(transformer.token_refiner, text_embeds)
+    packed = text_embeds.new_zeros(
+        (text_embeds.shape[0], position_ids.shape[0], text_embeds.shape[-1])
+    )
+    packed = packed.index_copy(1, text_indices.to(packed.device), text_embeds)
+    packed = packed.index_copy(
+        1,
+        video_indices.to(packed.device),
+        video_embeds.to(device=packed.device, dtype=packed.dtype),
+    )
+    packed = packed.index_copy(
+        1,
+        audio_indices.to(packed.device),
+        audio_embeds.to(device=packed.device, dtype=packed.dtype),
+    )
+
+    temb = _project_to_module(transformer.time_proj, timestep)
+    temb = _project_to_module(transformer.time_embedder, temb)
+    block = transformer.transformer_blocks[0]
+    device, dtype = _module_target(block.norm1, packed.device, packed.dtype)
+    packed = packed.to(device=device, dtype=dtype)
+    device, dtype = _module_target(block.adaln_proj, temb.device, temb.dtype)
+    temb = temb.to(device=device, dtype=dtype)
+    adaln_indices = (timestep_indices * 3 + token_tags).to(packed.device)
+    rotary_emb = transformer.rope(position_ids.to(packed.device))
+    rotary_emb = tree_map(lambda tensor: tensor.to(packed.device), rotary_emb)
+    block_output = block(packed, temb, adaln_indices, rotary_emb)
+    packed = packed.to(device=block_output.device, dtype=block_output.dtype)
+    return _subtract(block_output, packed)
+
+
 def _indicator_signal(transformer, args: tuple, kwargs: dict, config):
     if config.indicator == "teacache":
         return _teacache_signal(transformer, args, kwargs, config)
+    if config.indicator == "fbcache":
+        return _fbcache_signal(transformer, args, kwargs, config)
     return _resolve_input(config.signal_name, args, kwargs, config.io_names)
 
 
@@ -267,6 +350,30 @@ def _add(left, right):
     return _tree_binary(left, right, lambda a, b: a + b)
 
 
+def _scale(value, factor):
+    return tree_map(lambda tensor: tensor * factor, value)
+
+
+def _update_taylor(slot, value, current_call: int) -> None:
+    derivative = None
+    if slot.value is not None and slot.computed_call is not None:
+        window = current_call - slot.computed_call
+        try:
+            derivative = _scale(_subtract(value, slot.value), 1.0 / window)
+        except ValueError:
+            pass
+    slot.value = _snapshot(value)
+    slot.derivative = None if derivative is None else _snapshot(derivative)
+    slot.computed_call = current_call
+
+
+def _taylor_value(slot, current_call: int):
+    if slot.derivative is None:
+        return slot.value
+    elapsed = current_call - slot.computed_call
+    return _add(slot.value, _scale(slot.derivative, elapsed))
+
+
 @contextmanager
 def denoise_step_cache(transformer, config, total_steps: int):
     """Cache denoise outputs for one generation.
@@ -294,6 +401,8 @@ def denoise_step_cache(transformer, config, total_steps: int):
         slot_index = calls % config.calls_per_step
         calls += 1
         slot = slots[slot_index]
+        current_slot_call = slot.calls
+        slot.calls += 1
         signal = _indicator_signal(transformer, args, kwargs, config)
         boundary = step < config.warmup_steps or (
             total_steps - config.final_steps <= step < total_steps
@@ -328,15 +437,28 @@ def denoise_step_cache(transformer, config, total_steps: int):
                     slot.residual = _subtract(output, slot.inputs)
                 except ValueError:
                     slot.residual = None
+            if config.approximator == "taylor1":
+                value = output if config.mode == "output" else slot.residual
+                if value is None:
+                    slot.value = None
+                    slot.derivative = None
+                    slot.computed_call = current_slot_call
+                else:
+                    _update_taylor(slot, value, current_slot_call)
             return output
 
         stats.skipped += 1
         if config.mode == "output":
+            if config.approximator == "taylor1":
+                return _taylor_value(slot, current_slot_call)
             return slot.output
         current_inputs = _residual_inputs(args, kwargs, config.io_names)
         if slot.residual is None:
             slot.residual = _subtract(slot.output, slot.inputs)
-        return _add(current_inputs, slot.residual)
+        residual = slot.residual
+        if config.approximator == "taylor1":
+            residual = _taylor_value(slot, current_slot_call)
+        return _add(current_inputs, residual)
 
     def preserve_wrapper(current_module, _args):
         if current_module.forward is not cached_forward:

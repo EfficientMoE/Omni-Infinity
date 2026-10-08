@@ -204,3 +204,53 @@ is `docs/superpowers/plans/2026-10-07-p6-cache-upgrades.md`.
   An output larger than the entire byte budget has no viable victim set and is
   transient (returned but not stored), matching MoE-Infinity's
   TRANSIENT_ON_PRESSURE policy shape without leases/refcounts.
+
+## [2026-10-08] Per-commit review verdicts (elm/gpt-5.6-sol)
+
+- 094ff9f (C5 indicator v2): REQUEST-CHANGES — P0 device mismatch under block
+  streaming (teacache signal called offloaded submodules directly); P1 v2 not
+  reachable from CLI/attach; P1 probe still raw-signal (deferred to Track C by
+  design); P1 "main checkout dirty" = cross-session state, out of scope.
+- b0589e6 (fix: device alignment + CLI wiring): REQUEST-CHANGES — adaln_proj
+  (stock param-bearing module) still unaligned; wiring approved.
+- d4a799c (fix: adaln_proj bridge + dtype folding): APPROVE.
+- 02738c9 (C2 cache): review #1 timed out pre-verdict; material finding: key
+  hashed only input_ids + vision values.
+- 9a030b1 (fix: hash all non-vision inputs): folded into combined review.
+- combined C2 review: REQUEST-CHANGES — vision slot-name collision
+  (pixel_values=t vs image_grid_thw=t); "mixed C5 changes" = diff-range
+  artifact, those were separately reviewed in b0589e6.
+- abee426 (fix: hash vision slot names): APPROVE.
+
+## Model-failure fallback log
+
+- deep/ultrabrain categories (elm/gpt-5.6-sol via bot server): ProviderModelNotFoundError
+  (stale catalog in long-running server) → switched to `opencode run -m elm/gpt-5.6-sol`
+  fresh CLI processes for implementation workers; works.
+- unspecified-high (anthropic/claude-opus-4-8): quota exhausted mid-run → same fallback.
+- openai/gpt-5.2 via kimaki send: Incorrect API key → killed workers, relaunched on elm.
+- opencode run --agent build workers delegating to subagents hit broken providers →
+  relaunched with explicit "no delegation, work directly" instruction; works.
+
+## [2026-10-08] C5 Taylor1 + FBCache implementation findings
+
+- Installed diffusers 0.40.0 exposes
+  `MiniMaxH3TransformerBlock.forward(hidden_states, temb, adaln_indices,
+  rotary_emb, attention_mask=None)`. Every required value can be constructed
+  from the whole-transformer call boundary: the three modality inputs and
+  indices build the projected packed sequence, `timestep` builds `temb`,
+  `timestep_indices` plus `token_tags` build the AdaLN rows, and
+  `position_ids` builds RoPE. Therefore the implementation uses the faithful
+  FBCache signal `block0(packed, ...) - packed`, not a wrapper-level proxy.
+- The FBCache signal repeats the transformer's projection/token-refiner prelude
+  and first block solely to make the gate decision. Each parameter-bearing
+  stage uses the same `_module_target` device/dtype bridge as TeaCache so it is
+  compatible with host-resident/block-streamed weights. The config docstring
+  records that FBCache's usual non-accumulating threshold behavior is
+  `accumulate=False` with identity polynomial coefficients `(1, 0)`; other
+  combinations remain intentionally allowed.
+- Taylor1 tracks the substituted value, finite-difference derivative, compute
+  call index, and elapsed calls independently in every `calls_per_step` slot.
+  Output mode extrapolates the cached output; residual mode extrapolates the
+  cached residual and adds it to the current input. A first skip and any
+  computed-value tree shape change fall back to reuse.

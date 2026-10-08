@@ -65,10 +65,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--denoise-cache-threshold", type=float)
     parser.add_argument(
         "--denoise-cache-indicator",
-        choices=["raw", "teacache"],
+        choices=["raw", "teacache", "fbcache"],
         default="raw",
     )
     parser.add_argument("--denoise-cache-accumulate", action="store_true")
+    parser.add_argument(
+        "--denoise-cache-mode",
+        choices=["reuse", "taylor1"],
+        default="reuse",
+    )
     parser.add_argument("--transformer-fp8", action="store_true")
     parser.add_argument(
         "--fp8-scale",

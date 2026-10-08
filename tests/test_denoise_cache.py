@@ -56,6 +56,15 @@ def test_config_rejects_unsupported_indicator():
         )
 
 
+def test_config_rejects_unsupported_approximator():
+    with pytest.raises(ValueError, match="approximator"):
+        DenoiseCacheConfig(
+            coefficients=(1.0, 0.0),
+            threshold=0.2,
+            approximator="quadratic",
+        )
+
+
 @pytest.mark.parametrize("field", ["warmup_steps", "final_steps"])
 def test_config_requires_boundary_steps(field):
     kwargs = {field: 0}
@@ -105,6 +114,102 @@ def test_output_mode_skips_middle_steps():
     assert stats.computed == 2
     assert stats.skipped == 2
     assert torch.equal(outputs[1], outputs[0])
+
+
+class _ScriptedOutput(torch.nn.Module):
+    def __init__(self, outputs):
+        super().__init__()
+        self.outputs = iter(outputs)
+        self.calls = 0
+
+    def forward(self, hidden_states):
+        self.calls += 1
+        return next(self.outputs).clone()
+
+
+def test_taylor1_output_extrapolates_from_two_computed_values():
+    module = _ScriptedOutput(
+        [torch.tensor([10.0]), torch.tensor([14.0]), torch.tensor([99.0])]
+    )
+    config = _config(approximator="taylor1", warmup_steps=2)
+
+    with denoise_step_cache(module, config, total_steps=5):
+        outputs = [module(torch.ones(1)) for _ in range(4)]
+
+    assert module.calls == 2
+    torch.testing.assert_close(outputs[2], torch.tensor([18.0]))
+    torch.testing.assert_close(outputs[3], torch.tensor([22.0]))
+
+
+def test_taylor1_first_skip_falls_back_to_reuse():
+    module = _ScriptedOutput([torch.tensor([10.0]), torch.tensor([99.0])])
+    config = _config(approximator="taylor1")
+
+    with denoise_step_cache(module, config, total_steps=3):
+        first = module(torch.ones(1))
+        skipped = module(torch.ones(1))
+
+    torch.testing.assert_close(skipped, first)
+
+
+class _ScriptedResidual(torch.nn.Module):
+    def __init__(self, residuals):
+        super().__init__()
+        self.residuals = iter(residuals)
+
+    def forward(self, hidden_states):
+        return hidden_states + next(self.residuals)
+
+
+def test_taylor1_residual_extrapolates_against_current_input():
+    module = _ScriptedResidual(
+        [torch.tensor([2.0]), torch.tensor([4.0]), torch.tensor([99.0])]
+    )
+    config = _config(
+        mode="residual",
+        approximator="taylor1",
+        warmup_steps=2,
+        threshold=1.0,
+    )
+
+    with denoise_step_cache(module, config, total_steps=4):
+        module(torch.tensor([1.0]))
+        module(torch.tensor([2.0]))
+        skipped = module(torch.tensor([3.0]))
+
+    torch.testing.assert_close(skipped, torch.tensor([9.0]))
+
+
+def test_taylor1_shape_change_resets_derivative_and_reuses_latest_value():
+    module = _ScriptedOutput(
+        [torch.tensor([1.0]), torch.tensor([2.0, 3.0]), torch.tensor([99.0])]
+    )
+    config = _config(approximator="taylor1", warmup_steps=2)
+
+    with denoise_step_cache(module, config, total_steps=4):
+        module(torch.ones(1))
+        latest = module(torch.ones(1))
+        skipped = module(torch.ones(1))
+
+    torch.testing.assert_close(skipped, latest)
+
+
+def test_taylor1_calls_per_step_keeps_derivatives_slot_local():
+    module = _ScriptedOutput(
+        [
+            torch.tensor([10.0]),
+            torch.tensor([100.0]),
+            torch.tensor([14.0]),
+            torch.tensor([106.0]),
+        ]
+    )
+    config = _config(approximator="taylor1", warmup_steps=2, calls_per_step=2)
+
+    with denoise_step_cache(module, config, total_steps=4):
+        outputs = [module(torch.ones(1)) for _ in range(6)]
+
+    torch.testing.assert_close(outputs[4], torch.tensor([18.0]))
+    torch.testing.assert_close(outputs[5], torch.tensor([112.0]))
 
 
 def test_polynomial_can_force_middle_steps_to_compute():
@@ -311,6 +416,83 @@ class _SyntheticH3(torch.nn.Module):
         self.time_proj = torch.nn.Identity()
         self.time_embedder = torch.nn.Identity()
         self.transformer_blocks = torch.nn.ModuleList([_SyntheticBlock()])
+
+
+class _SyntheticFBCacheBlock(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.norm1 = torch.nn.Identity()
+        self.adaln_proj = torch.nn.Identity()
+
+    def forward(
+        self,
+        hidden_states,
+        temb,
+        adaln_indices,
+        rotary_emb,
+        attention_mask=None,
+    ):
+        del temb, adaln_indices, rotary_emb, attention_mask
+        return hidden_states + hidden_states * 0.1
+
+
+class _SyntheticFBCacheH3(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj_in = torch.nn.Identity()
+        self.audio_proj_in = torch.nn.Identity()
+        self.context_embedder = torch.nn.Identity()
+        self.token_refiner = torch.nn.Identity()
+        self.time_proj = torch.nn.Identity()
+        self.time_embedder = torch.nn.Identity()
+        self.rope = lambda position_ids: (position_ids, -position_ids)
+        self.transformer_blocks = torch.nn.ModuleList(
+            [_SyntheticFBCacheBlock()]
+        )
+        self.calls = 0
+
+    def forward(self, hidden_states, **_kwargs):
+        self.calls += 1
+        return hidden_states + 1
+
+
+def _fbcache_kwargs(video_value):
+    return {
+        "hidden_states": torch.full((1, 2, 2), video_value),
+        "audio_hidden_states": torch.empty((1, 0, 2)),
+        "encoder_hidden_states": torch.empty((1, 0, 2)),
+        "timestep": torch.tensor([[0.25, 0.5]]),
+        "timestep_indices": torch.tensor([0, 0]),
+        "token_tags": torch.tensor([0, 0]),
+        "position_ids": torch.zeros((2, 3)),
+        "video_indices": torch.tensor([0, 1]),
+        "audio_indices": torch.empty(0, dtype=torch.long),
+        "text_indices": torch.empty(0, dtype=torch.long),
+    }
+
+
+def test_fbcache_signal_matches_first_block_residual():
+    module = _SyntheticFBCacheH3()
+    kwargs = _fbcache_kwargs(3.0)
+
+    actual = denoise_module._fbcache_signal(
+        module, (), kwargs, _config(indicator="fbcache")
+    )
+
+    torch.testing.assert_close(actual, kwargs["hidden_states"] * 0.1)
+
+
+def test_fbcache_indicator_decision_responds_to_first_block_residual_delta():
+    module = _SyntheticFBCacheH3()
+    config = _config(indicator="fbcache", threshold=0.2)
+
+    with denoise_step_cache(module, config, total_steps=4) as stats:
+        for value in (1.0, 1.01, 2.0):
+            module(**_fbcache_kwargs(value))
+
+    assert module.calls == 2
+    assert stats.computed == 2
+    assert stats.skipped == 1
 
 
 def test_teacache_signal_matches_h3_first_block_adaln_formula():

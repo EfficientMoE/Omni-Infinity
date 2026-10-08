@@ -163,6 +163,7 @@ def denoise_config_from_args(args):
     return DenoiseCacheConfig(
         coefficients=tuple(float(value) for value in coefficients.split(",")),
         threshold=threshold,
+        approximator=getattr(args, "denoise_cache_mode", None) or "reuse",
         indicator=getattr(args, "denoise_cache_indicator", None) or "raw",
         accumulate=bool(getattr(args, "denoise_cache_accumulate", False)),
     )
