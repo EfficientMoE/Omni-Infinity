@@ -1,5 +1,7 @@
 # P6 — C5 denoise-cache upgrade + C2 encoder-prefix revisit
 
+> **Tracking PR** — implementation for this plan lands on this branch. Roadmap: #42.
+
 Tracking: [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42) (P6).
 Refs: [caches_c5](../../caches_c5_denoise.md), [caches_c2](../../caches_c2_prefix.md),
 [cache_benchmarks](../../cache_benchmarks.md), [caches contract](2026-09-30-caches-contract.md),
