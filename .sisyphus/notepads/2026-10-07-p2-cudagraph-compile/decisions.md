@@ -134,3 +134,16 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
 - Issue #42 updated via comment (evidence for plan checkbox 6):
   https://github.com/EfficientMoE/Omni-Infinity/issues/42#issuecomment-6061938884
   Issue left OPEN (roadmap tracker).
+
+## [2026-10-08] Phase 2 Task 6 review verdicts
+
+- 7f75ce7 docs(p2): document C5/graph interaction + mark task 6 complete —
+  REQUEST-CHANGES (ambiguous "1.535x step wall time" wording; issue-update
+  evidence missing; resolved by bf845ec)
+- bf845ec docs(p2): fix graph speedup phrasing + record issue #42 evidence —
+  REQUEST-CHANGES (lumped compile-blocks as a parity-for-speed trade, but it is
+  0.939x slower; resolved by 8f903ec)
+- 8f903ec docs(p2): correct compile-blocks speed direction in C5 doc — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- docs(p2): record task 6 review verdicts — APPROVE (delegate self-review,
+  2026-10-08)
