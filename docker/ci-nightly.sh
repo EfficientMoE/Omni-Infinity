@@ -33,6 +33,8 @@ mapfile -t files < <(
 )
 echo "selected files: ${files[*]}"
 
+mkdir -p /output/pytest-tmp
+
 status=0
 for file in "${files[@]}"; do
     name=$(basename "$file" .py)

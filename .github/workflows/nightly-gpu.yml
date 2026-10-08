@@ -80,6 +80,9 @@ jobs:
             -e OMNI_H3_CHECKPOINT="$snapshot" \
             -e OMNI_H3_SNAPSHOT="$snapshot" \
             -e OMNI_H3_STORE=/models/h3-store \
+            -e OMNI_H3_ADALN_CACHE=1 \
+            -e OMNI_H3_BLOCK_STREAM=1 \
+            -e OMNI_H3_STREAM_TEXT_ENCODER=1 \
             -e OMNI_CHECKPOINT="$snapshot" \
             -e OMNI_STORE_DIR=/models/h3-store \
             -e OMNI_STORE_COMPONENTS=transformer,vae,audio_vae \
