@@ -277,6 +277,12 @@ def test_main_rejects_more_than_one_worker(clean_env, monkeypatch):
         main()
 
 
+def test_main_rejects_unwired_split_roles(clean_env, monkeypatch):
+    monkeypatch.setenv("OMNI_ROLE", "denoiser")
+    with pytest.raises(NotImplementedError, match="OMNI_ROLE"):
+        main()
+
+
 def test_main_binds_the_configured_host_and_port(clean_env, monkeypatch):
     captured = {}
 
