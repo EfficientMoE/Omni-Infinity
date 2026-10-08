@@ -127,7 +127,8 @@ def test_c5_fit_signal_gate_matches_each_indicator_to_its_cells():
                 assert skip == "c5-signal-mismatch"
 
     uncalibrated = SimpleNamespace(c5_coefficients=(), c5_fit_signal="raw")
-    assert c5_cell_skip(configs["c5"], uncalibrated) == "c5-uncalibrated"
+    for name in c5_names:
+        assert c5_cell_skip(configs[name], uncalibrated) == "c5-uncalibrated"
     assert c5_cell_skip(configs["baseline"], uncalibrated) is None
 
 
