@@ -121,6 +121,17 @@ OPTIMIZATIONS = {
             }
         ),
     ),
+    "compile-blocks": OptimizationSpec(
+        name="compile-blocks",
+        description=(
+            "Regional torch.compile for repeated transformer blocks; "
+            "resident-profile-only."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(compile_blocks=True)}
+        ),
+    ),
     "text-encoder-stream": OptimizationSpec(
         name="text-encoder-stream",
         description=("Leaf-level streaming of the Qwen3-VL text encoder."),
