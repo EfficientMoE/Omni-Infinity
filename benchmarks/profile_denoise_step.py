@@ -402,7 +402,11 @@ def latent_parity(
     }
 
 
-def parity_gate_passes(parity: dict[str, Any]) -> bool:
+def parity_gate_passes(
+    parity: dict[str, Any], *, require_bitwise: bool
+) -> bool:
+    if require_bitwise:
+        return bool(parity["bitwise"])
     return bool(parity["allclose"]["rtol=atol=2e-2"])
 
 
@@ -413,12 +417,22 @@ def golden_provenance(
     diffusers_version: str,
     gpu_name: str,
     first_frame_sha256: str,
+    prompt: str,
+    seed: int,
+    steps: int,
+    resolution: str,
+    frames: int,
 ) -> dict[str, Any]:
     runtime = {
         "torch_version": torch_version,
         "diffusers_version": diffusers_version,
         "gpu_name": gpu_name,
         "first_frame_sha256": first_frame_sha256,
+        "prompt": prompt,
+        "seed": seed,
+        "steps": steps,
+        "resolution": resolution,
+        "frames": frames,
     }
     mismatches = [
         f"{name}: recorded={golden.get(name)!r}, runtime={value!r}"
@@ -540,8 +554,16 @@ def main() -> int:
         diffusers_version=diffusers.__version__,
         gpu_name=torch.cuda.get_device_name(0),
         first_frame_sha256=first_frame_sha256,
+        prompt=args.prompt,
+        seed=args.seed,
+        steps=args.steps,
+        resolution=args.resolution,
+        frames=args.frames,
     )
-    golden_gate_passed = provenance["comparable"] and parity_gate_passes(parity)
+    golden_gate_passed = provenance["comparable"] and parity_gate_passes(
+        parity,
+        require_bitwise="compile-blocks" not in optimization_names,
+    )
     median_wall = summary["median_step_wall_ms"]
     if not 500.0 <= median_wall <= 10_000.0:
         raise RuntimeError(
