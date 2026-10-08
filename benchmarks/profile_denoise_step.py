@@ -40,8 +40,10 @@ DEFAULT_CHECKPOINT = Path(
 DEFAULT_STORE = Path("/mnt/raid0nvme0/leyang/h3-store-v2")
 DEFAULT_RESULTS = REPO / "results" / "p2_phase0"
 DEFAULT_FIRST_FRAME = REPO / "tests" / "fixtures" / "ref.png"
+DEFAULT_GOLDENS = REPO / "tests" / "fixtures" / "goldens" / "fl2va_goldens.pt"
 PROFILE_OPTIMIZATIONS = {
     "resident": ("adaln-host-cache",),
+    "compile-resident": ("adaln-host-cache", "compile-blocks"),
     "block-stream": (
         "adaln-host-cache",
         "block-stream",
@@ -141,6 +143,14 @@ class StepMarker:
     cpu_enqueue_ms: float = 0.0
     peak_allocated_bytes: int = 0
     peak_reserved_bytes: int = 0
+    dynamo_unique_graphs_before: int = 0
+    dynamo_unique_graphs_after: int = 0
+
+
+def _dynamo_unique_graphs() -> int:
+    from torch._dynamo.utils import counters
+
+    return int(counters["stats"]["unique_graphs"])
 
 
 class DenoiseStepProbe:
@@ -180,6 +190,7 @@ class DenoiseStepProbe:
                 cuda_start=cuda_start,
                 cuda_end=cuda_end,
                 cpu_started=time.perf_counter(),
+                dynamo_unique_graphs_before=_dynamo_unique_graphs(),
             )
         )
         print(
@@ -194,6 +205,7 @@ class DenoiseStepProbe:
         marker.cpu_enqueue_ms = (time.perf_counter() - marker.cpu_started) * 1e3
         marker.peak_allocated_bytes = torch.cuda.max_memory_allocated()
         marker.peak_reserved_bytes = torch.cuda.max_memory_reserved()
+        marker.dynamo_unique_graphs_after = _dynamo_unique_graphs()
         print(
             f"step {marker.index}/{self.total_steps}: enqueued in "
             f"{marker.cpu_enqueue_ms:.1f} ms, peak allocated "
@@ -297,6 +309,10 @@ def analyze_steps(events, markers: list[StepMarker]) -> list[dict[str, Any]]:
                 ),
                 "peak_allocated_gib": marker.peak_allocated_bytes / 1024**3,
                 "peak_reserved_gib": marker.peak_reserved_bytes / 1024**3,
+                "dynamo_unique_graphs_before": (
+                    marker.dynamo_unique_graphs_before
+                ),
+                "dynamo_unique_graphs_after": marker.dynamo_unique_graphs_after,
             }
         )
     return rows
@@ -330,7 +346,60 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     summary["peak_reserved_gib"] = max(row["peak_reserved_gib"] for row in rows)
     summary["warmup_steps_discarded"] = 1
     summary["measured_steps"] = len(measured)
+    summary["cold_start_forward_wall_ms"] = rows[0]["cpu_enqueue_ms"]
+    summary["dynamo_unique_graphs_after_cold_start"] = rows[0][
+        "dynamo_unique_graphs_after"
+    ]
+    summary["dynamo_new_unique_graphs_after_cold_start"] = max(
+        rows[-1]["dynamo_unique_graphs_after"]
+        - rows[0]["dynamo_unique_graphs_after"],
+        0,
+    )
     return summary
+
+
+def latent_parity(
+    candidate: torch.Tensor, reference: torch.Tensor
+) -> dict[str, Any]:
+    candidate = candidate.detach().cpu()
+    reference = reference.detach().cpu()
+    candidate_float = candidate.float()
+    reference_float = reference.float()
+    rms_rel = (
+        (candidate_float - reference_float).square().mean().sqrt()
+        / reference_float.square().mean().sqrt()
+    ).item()
+    tolerances = (
+        (1e-5, "1e-5"),
+        (1e-4, "1e-4"),
+        (1e-3, "1e-3"),
+        (2e-2, "2e-2"),
+    )
+    allclose = {
+        f"rtol=atol={label}": bool(
+            torch.allclose(
+                candidate_float,
+                reference_float,
+                rtol=tolerance,
+                atol=tolerance,
+            )
+        )
+        for tolerance, label in tolerances
+    }
+    bitwise = bool(torch.equal(candidate, reference))
+    tier = "bitwise"
+    if not bitwise:
+        tier = "fail-2e-2"
+        for _tolerance, label in tolerances:
+            if allclose[f"rtol=atol={label}"]:
+                tier = f"allclose-{label}"
+                break
+    return {
+        "rms_rel": rms_rel,
+        "bitwise": bitwise,
+        "allclose": allclose,
+        "tier": tier,
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -342,6 +411,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--store-dir", type=Path, default=DEFAULT_STORE)
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--first-frame", type=Path, default=DEFAULT_FIRST_FRAME)
+    parser.add_argument("--goldens", type=Path, default=DEFAULT_GOLDENS)
     parser.add_argument("--prompt", default="a red ball bouncing")
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--resolution", default="256p")
@@ -402,10 +472,13 @@ def main() -> int:
     from PIL import Image
 
     first_frame = Image.open(args.first_frame).convert("RGB")
+    from torch._dynamo.utils import counters
+
+    counters.clear()
     started = time.perf_counter()
     with DenoiseStepProbe(transformer, args.steps) as probe:
         with profile(activities=activities, acc_events=True) as profiler:
-            runner.generate(
+            result = runner.generate(
                 args.prompt,
                 image=first_frame,
                 seed=args.seed,
@@ -428,6 +501,8 @@ def main() -> int:
 
     rows = analyze_steps(profiler.events(), probe.steps)
     summary = summarize(rows)
+    golden = torch.load(args.goldens, map_location="cpu", weights_only=False)
+    parity = latent_parity(result.latents, golden["latents"])
     median_wall = summary["median_step_wall_ms"]
     if not 500.0 <= median_wall <= 10_000.0:
         raise RuntimeError(
@@ -444,6 +519,11 @@ def main() -> int:
             f"({row['launch_gap_pct']:.2f}%) kernels={row['kernel_count']}",
             flush=True,
         )
+    print(
+        f"parity: tier={parity['tier']} rms_rel={parity['rms_rel']:.6g} "
+        f"bitwise={parity['bitwise']} allclose={parity['allclose']}",
+        flush=True,
+    )
 
     payload = {
         "schema_version": 1,
@@ -479,6 +559,7 @@ def main() -> int:
             "effective_frames": effective_video_frames(args.frames),
             "seed": args.seed,
             "warmup_steps_discarded": 1,
+            "goldens": str(args.goldens),
         },
         "environment": {
             "python": os.sys.version.split()[0],
@@ -492,6 +573,7 @@ def main() -> int:
         "full_generation_wall_seconds": elapsed_seconds,
         "steps": rows,
         "summary": summary,
+        "parity": parity,
     }
     args.results_dir.mkdir(parents=True, exist_ok=True)
     output = args.results_dir / f"{args.profile}.json"
