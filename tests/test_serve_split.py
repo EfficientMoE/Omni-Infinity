@@ -77,6 +77,22 @@ def test_prepare_state_applies_kwargs_and_defaults():
     assert state.get("num_inference_steps") == 8
 
 
+def test_prepare_state_expands_kwargs_type_dicts():
+    pipeline = _FakePipeline()
+    pipeline._blocks.inputs = [
+        _Input("prompt"),
+        _Input("trace"),
+        _Input(None, kwargs_type="denoiser_input_fields"),
+    ]
+    state = prepare_state(
+        pipeline,
+        prompt="p",
+        trace=[],
+        denoiser_input_fields={"sigma_shift": 1.5},
+    )
+    assert state.get("sigma_shift") == 1.5
+
+
 def test_prepare_state_rejects_unknown_inputs():
     with pytest.raises(ValueError, match="unexpected pipeline inputs"):
         prepare_state(_FakePipeline(), bogus=1)

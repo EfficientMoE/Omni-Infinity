@@ -77,7 +77,7 @@ def run_stage(pipeline: Any, role: Role, state: Any) -> Any:
     with torch.no_grad():
         for name in STAGE_BLOCKS[role]:
             block = blocks.sub_blocks[name]
-            _, state = block(pipeline, state)
+            pipeline, state = block(pipeline, state)
     return state
 
 
