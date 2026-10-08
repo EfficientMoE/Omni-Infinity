@@ -116,3 +116,50 @@ call fails before denoising. The merged local H3 snapshot keeps the transformer
 config under `FL2VA/transformer`, so the benchmark applies a process-local
 config lookup adapter while leaving the checkpoint and runtime sources
 unchanged. The video VAE rounds 120 requested frames to 124 internally.
+
+## Phase 1 compile-blocks results (2026-10-08)
+
+`compile-blocks` uses diffusers regional compilation on the repeated H3
+transformer and token-refiner blocks with `fullgraph=True, dynamic=True`. It is
+resident-profile-only: combining it with block streaming raises before model
+loading because group-offload hooks can expose stale weight pointers to a
+compiled region. The C5 decision still wraps the whole transformer forward, so
+a cache hit bypasses the compiled blocks.
+
+The canonical compile-ON run used the same physical GPU 4 and workload as the
+Phase 0 resident artifact: store-backed transformer + AdaLN host cache, 256p,
+120 requested (124 effective) frames, seed 0, and 8 requested scheduler steps
+(7 transformer forwards). Step 1 was excluded from the steady-state median.
+The OFF row is the required reuse of `results/p2_phase0/resident.json`; the ON
+record is `results/p2_phase1/compile-resident.json` and used a fresh isolated
+Inductor cache. That same-GPU timing record is not used for parity because the
+golden was recorded on the Server Edition GPU model. Provenance-valid parity
+records are in `results/p2_phase1/parity/{resident,compile-resident}.json`.
+
+| resident profile | median step wall (ms) | median compute (ms) | kernels/step | relative throughput |
+|---|---:|---:|---:|---:|
+| compile OFF | 1483.38 | 507.70 | 2487 | 1.000x |
+| compile ON | 1579.38 | 471.05 | 983 | 0.939x |
+
+Regional compilation fused kernels as intended: compute time improved 7.2%
+(`507.70 -> 471.05 ms`) and launches fell 60.5% (`2487 -> 983`). That did not
+translate to an end-to-end win for the host-AdaLN resident profile: variable
+per-block host-to-device materialization dominated the step and wall time
+regressed 6.5%. The first compiled forward took 26.75 s including cold
+compilation and execution. Dynamo created 3 unique graphs during that cold
+forward and 0 new graphs over the remaining six forwards, so changing
+timesteps did not cause a recompile storm. `TORCH_LOGS=recompiles` showed one
+cold-start token-refiner guard transition for an optional `None` attention
+mask, not a steady-state recompile.
+
+Parity did not reach the expected allclose tier. On the Server Edition GPU
+matching the golden metadata, eager remained bitwise while compiled video
+latents had `rms_rel=0.0726177`, were not bitwise, and failed elementwise allclose at
+`rtol=atol` values `1e-5`, `1e-4`, `1e-3`, and `2e-2`. An eager control on the
+golden's GPU model remained bitwise. The benchmark writes the artifact and
+returns nonzero for this failed gate. Isolated precision probes showed that
+`TORCHINDUCTOR_FORCE_SAME_PRECISION=1` reduced but did not close the error, and
+`TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` did not help. Therefore this task
+records `compile-blocks` as an opt-in measured negative result on torch
+2.12.0+cu130/diffusers 0.40.0; it must not be represented as passing the golden
+gate or as a speedup. Phase 2 should not assume regional compile is beneficial.

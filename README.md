@@ -94,6 +94,7 @@ supported configuration; the smoke CLIs and the ablation harness
 | `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
+| `compile-blocks` (regional compile; resident only, measured fail at `rtol=2e-2`) | ✓ | — |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
