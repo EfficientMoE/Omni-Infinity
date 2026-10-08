@@ -68,6 +68,7 @@ class GraphExecutionStats:
     graph_pool_bytes: int = 0
     capture_time_ms: float = 0.0
     warmup_calls: int = 0
+    capture_warmup_calls: int = 0
     fallback_reasons: Counter[str] = field(default_factory=Counter)
 
 
@@ -78,12 +79,15 @@ class CapturedExecution:
     graph: object
     outputs: object
     pool_bytes: int = 0
+    pool: object | None = None
 
 
 class GraphBackend(Protocol):
     def make_pool(self) -> object: ...
 
-    def capture(self, function, pool: object) -> CapturedExecution: ...
+    def capture(
+        self, function, pool: object, *, warmup_iterations: int
+    ) -> CapturedExecution: ...
 
     def replay(self, captured: CapturedExecution) -> None: ...
 
@@ -100,11 +104,15 @@ class TorchCudaGraphBackend:
     def make_pool(self) -> object:
         return torch.cuda.graph_pool_handle()
 
-    def capture(self, function, pool: object) -> CapturedExecution:
+    def capture(
+        self, function, pool: object, *, warmup_iterations: int
+    ) -> CapturedExecution:
         caller_stream = torch.cuda.current_stream(self.device)
         self.stream.wait_stream(caller_stream)
         before = torch.cuda.memory_allocated(self.device)
         with torch.cuda.stream(self.stream):
+            for _ in range(warmup_iterations):
+                function()
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, pool=pool, stream=self.stream):
                 outputs = function()
@@ -112,7 +120,9 @@ class TorchCudaGraphBackend:
         pool_bytes = max(
             0, int(torch.cuda.memory_allocated(self.device) - before)
         )
-        return CapturedExecution(graph, outputs, pool_bytes=pool_bytes)
+        return CapturedExecution(
+            graph, outputs, pool_bytes=pool_bytes, pool=pool
+        )
 
     def replay(self, captured: CapturedExecution) -> None:
         captured.graph.replay()
@@ -251,8 +261,12 @@ class CudaGraphManager:
         self.enabled = bool(enabled)
         self.warmup_iterations = warmup_iterations
         self.max_buckets = max_buckets
-        self.backend = backend or TorchCudaGraphBackend(device)
-        self._pool = self.backend.make_pool()
+        if backend is not None:
+            self.backend: GraphBackend | None = backend
+        elif self.enabled:
+            self.backend = TorchCudaGraphBackend(device)
+        else:
+            self.backend = None
         self._graphs: OrderedDict[GraphKey, _GraphState] = OrderedDict()
         self._warmups: dict[GraphKey, _WarmupState] = {}
         self._quarantined: dict[GraphKey, str] = {}
@@ -328,6 +342,7 @@ class CudaGraphManager:
                 _copy_tree(state.call.args, args)
                 _copy_tree(state.call.kwargs, kwargs)
                 try:
+                    assert self.backend is not None
                     self.backend.replay(state.execution)
                 except Exception as exc:
                     logger.warning(
@@ -387,7 +402,15 @@ class CudaGraphManager:
 
             started = time.perf_counter()
             try:
-                execution = self.backend.capture(captured_forward, self._pool)
+                if self.backend is None:
+                    raise RuntimeError("CUDA graph backend is unavailable")
+                pool = self.backend.make_pool()
+                execution = self.backend.capture(
+                    captured_forward,
+                    pool,
+                    warmup_iterations=self.warmup_iterations,
+                )
+                self._stats.capture_warmup_calls += self.warmup_iterations
                 # CUDA stream capture records the work but does not provide a
                 # scheduler-consumable result for this denoise step. Replay
                 # once with the just-copied inputs before returning outputs.
@@ -430,6 +453,7 @@ class CudaGraphManager:
         if state is None:
             return False
         self._stats.graph_pool_bytes -= state.execution.pool_bytes
+        assert self.backend is not None
         self.backend.drop(state.execution)
         return True
 
@@ -443,6 +467,7 @@ class CudaGraphManager:
                 set(self._graphs) | set(self._warmups) | set(self._quarantined)
             )
             for state in self._graphs.values():
+                assert self.backend is not None
                 self.backend.drop(state.execution)
             self._graphs.clear()
             self._warmups.clear()
@@ -460,6 +485,7 @@ class CudaGraphManager:
                 "graph_pool_bytes": self._stats.graph_pool_bytes,
                 "capture_time_ms": self._stats.capture_time_ms,
                 "warmup_calls": self._stats.warmup_calls,
+                "capture_warmup_calls": self._stats.capture_warmup_calls,
                 "graphs": len(self._graphs),
                 "generation": self.generation,
                 "fallback_reasons": dict(self._stats.fallback_reasons),

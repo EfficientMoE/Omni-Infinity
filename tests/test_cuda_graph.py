@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import torch
 
+import omni_infinity.cuda_graph as cuda_graph_mod
 from omni_infinity.cuda_graph import (
     CapturedExecution,
     CudaGraphManager,
@@ -38,15 +39,22 @@ class FakeBackend:
         self.capture_calls = 0
         self.replay_calls = 0
         self.dropped = []
+        self.pools = []
+        self.capture_warmups = []
 
     def make_pool(self):
-        return object()
+        pool = object()
+        self.pools.append(pool)
+        return pool
 
-    def capture(self, function, pool):
-        del pool
+    def capture(self, function, pool, *, warmup_iterations):
+        assert pool in self.pools
         self.capture_calls += 1
+        self.capture_warmups.append(warmup_iterations)
         if self.fail_capture:
             raise RuntimeError("synthetic capture failure")
+        for _ in range(warmup_iterations):
+            function()
         graph = _FakeGraph(function)
         return CapturedExecution(graph, graph.outputs, pool_bytes=64)
 
@@ -98,6 +106,7 @@ def test_bucket_warms_captures_and_replays_with_static_input_copy():
     assert captured[0].data_ptr() != replayed[0].data_ptr()
     assert backend.capture_calls == 1
     assert backend.replay_calls == 2
+    assert backend.capture_warmups == [2]
     assert manager.stats_snapshot()["fallback_reasons"] == {
         "warmup_not_done": 2
     }
@@ -188,6 +197,7 @@ def test_lru_eviction_drops_least_recently_replayed_bucket():
     assert not manager.has_bucket(second)
     assert manager.has_bucket(third)
     assert len(backend.dropped) == 1
+    assert len({id(pool) for pool in backend.pools}) == 3
 
 
 def test_non_tensor_kwarg_change_falls_back_without_replay():
@@ -232,6 +242,7 @@ def test_stats_snapshot_and_cache_skip_hook_are_plain_dicts():
         "graph_pool_bytes": 0,
         "capture_time_ms": 0.0,
         "warmup_calls": 0,
+        "capture_warmup_calls": 0,
         "graphs": 0,
         "generation": 0,
         "fallback_reasons": {"cache_skip": 3},
@@ -246,4 +257,16 @@ def test_disabled_manager_falls_back_without_touching_backend():
 
     assert manager.try_execute(key, torch.neg, torch.tensor([1.0])) is None
     assert backend.capture_calls == 0
+    assert manager.stats_snapshot()["fallback_reasons"] == {"disabled": 1}
+
+
+def test_disabled_default_manager_does_not_initialize_cuda(monkeypatch):
+    def fail_backend(device):
+        raise AssertionError(f"CUDA backend constructed for {device}")
+
+    monkeypatch.setattr(cuda_graph_mod, "TorchCudaGraphBackend", fail_backend)
+
+    manager = CudaGraphManager(enabled=False)
+
+    assert manager.try_execute(None, lambda: None) is None
     assert manager.stats_snapshot()["fallback_reasons"] == {"disabled": 1}
