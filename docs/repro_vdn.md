@@ -125,3 +125,11 @@ Note: the upstream component log prints an `sm100 INFERENCE ... flex
 is running the STATIC block-sparse schedule` warning on this card
 (physical CC is 12.0); absolute s/eval on the diffusers path is
 therefore pessimistic vs an FA-enabled build. Row ordering unaffected.
+
+## Dense H3 residual measurement
+
+| label | profile | median denoise step | peak GiB | notes |
+|---|---|---:|---:|---|
+| dense BF16, 1×sm120, measured | store-backed `ReferenceRunner`, AdaLN host cache, no block-stream | 1.802 s | 71.890 | 256p / 120f / 8 requested steps / seed 0; one warmup forward discarded; CC 12.0 RTX PRO 6000 |
+
+Raw artifact: `results/h3_residual/dense_bf16_sm120.json`.

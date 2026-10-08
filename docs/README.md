@@ -66,6 +66,9 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
   the published VDN-H3 speedup (hypotheses H1–H6).
 - [Attribution runlog](attribution_vdn_runlog.md) — the raw replay commands
   and QA output backing the attribution study.
+- [Baseline tracking](baselines_vdn.md) — VDN-H3 as the strongest tracked
+  baseline, the MiniMax-H3 reference numbers, and the 2026-10 survey of
+  models claiming stronger video-generation results than H3.
 
 ## Research notes
 
