@@ -149,9 +149,17 @@ def _resolve_input(name: str, args: tuple, kwargs: dict, io_names: tuple):
     raise ValueError(f"could not resolve input {name!r}")
 
 
-def _module_dtype(module, fallback: torch.dtype) -> torch.dtype:
+def _module_target(module, fallback_device, fallback_dtype):
+    """Device and dtype of a module's weights, or the activation's own.
+
+    Block streaming leaves transformer submodules host-resident between
+    group onloads, so the indicator must move activations to wherever each
+    submodule's weights actually live instead of assuming one device.
+    """
     parameter = next(module.parameters(), None)
-    return fallback if parameter is None else parameter.dtype
+    if parameter is None:
+        return fallback_device, fallback_dtype
+    return parameter.device, parameter.dtype
 
 
 def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
@@ -168,25 +176,36 @@ def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
         "video_indices", args, kwargs, config.io_names
     )
 
+    device, dtype = _module_target(
+        transformer.proj_in, hidden_states.device, hidden_states.dtype
+    )
     projected = transformer.proj_in(
-        hidden_states.to(
-            _module_dtype(transformer.proj_in, hidden_states.dtype)
-        )
+        hidden_states.to(device=device, dtype=dtype)
     )
     block = transformer.transformer_blocks[0]
-    projected = projected.to(_module_dtype(block.norm1, projected.dtype))
-    temb = transformer.time_proj(timestep)
-    temb = transformer.time_embedder(
-        temb.to(_module_dtype(transformer.time_embedder, temb.dtype))
+    device, dtype = _module_target(
+        block.norm1, projected.device, projected.dtype
     )
+    projected = projected.to(device=device, dtype=dtype)
+    device, _ = _module_target(
+        transformer.time_proj, timestep.device, timestep.dtype
+    )
+    temb = transformer.time_proj(timestep.to(device=device))
+    device, dtype = _module_target(
+        transformer.time_embedder, temb.device, temb.dtype
+    )
+    temb = transformer.time_embedder(temb.to(device=device, dtype=dtype))
     shift_msa, scale_msa, *_ = block.adaln_proj(temb)
-    adaln_indices = (timestep_indices * 3 + token_tags).index_select(
-        0, video_indices
-    )
     norm_hidden_states = block.norm1(projected)
-    return norm_hidden_states * (
-        1.0 + scale_msa.index_select(0, adaln_indices)
-    ) + shift_msa.index_select(0, adaln_indices)
+    device = norm_hidden_states.device
+    adaln_indices = (
+        (timestep_indices * 3 + token_tags)
+        .index_select(0, video_indices)
+        .to(device)
+    )
+    scale_msa = scale_msa.to(device).index_select(0, adaln_indices)
+    shift_msa = shift_msa.to(device).index_select(0, adaln_indices)
+    return norm_hidden_states * (1.0 + scale_msa) + shift_msa
 
 
 def _indicator_signal(transformer, args: tuple, kwargs: dict, config):

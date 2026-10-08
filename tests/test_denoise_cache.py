@@ -344,6 +344,51 @@ def test_teacache_signal_matches_h3_first_block_adaln_formula():
     torch.testing.assert_close(actual, expected)
 
 
+class _ProjectedH3(_SyntheticH3):
+    def __init__(self, dtype):
+        super().__init__()
+        self.proj_in = torch.nn.Linear(2, 2, dtype=dtype)
+
+
+def test_teacache_signal_follows_module_weight_dtype():
+    module = _ProjectedH3(torch.float64)
+    kwargs = {
+        "hidden_states": torch.tensor([[[3.0, 4.0], [5.0, 12.0]]]),
+        "timestep": torch.tensor([[0.25, 0.5]]),
+        "timestep_indices": torch.tensor([0, 0]),
+        "token_tags": torch.tensor([0, 0]),
+        "video_indices": torch.tensor([0, 1]),
+    }
+
+    signal = denoise_module._teacache_signal(
+        module, (), kwargs, _config(indicator="teacache", accumulate=True)
+    )
+
+    assert signal.dtype == module.transformer_blocks[0].norm1.weight.dtype
+
+
+@pytest.mark.gpu
+def test_teacache_signal_bridges_offloaded_weights_and_cuda_inputs():
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    module = _ProjectedH3(torch.float32)
+    kwargs = {
+        "hidden_states": torch.tensor(
+            [[[3.0, 4.0], [5.0, 12.0]]], device="cuda"
+        ),
+        "timestep": torch.tensor([[0.25, 0.5]], device="cuda"),
+        "timestep_indices": torch.tensor([0, 0], device="cuda"),
+        "token_tags": torch.tensor([0, 0], device="cuda"),
+        "video_indices": torch.tensor([0, 1], device="cuda"),
+    }
+
+    signal = denoise_module._teacache_signal(
+        module, (), kwargs, _config(indicator="teacache", accumulate=True)
+    )
+
+    assert signal.device.type == "cpu"
+
+
 def test_cache_decision_wrapper_remains_plain_python():
     assert inspect.isfunction(denoise_module._cache_decision)
     assert inspect.isfunction(inspect.unwrap(denoise_module._cache_decision))

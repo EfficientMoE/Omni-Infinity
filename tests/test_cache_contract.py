@@ -253,9 +253,11 @@ def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
     module = types.ModuleType("omni_infinity.caches.denoise")
 
     class DenoiseCacheConfig:
-        def __init__(self, *, coefficients, threshold):
+        def __init__(self, *, coefficients, threshold, indicator, accumulate):
             self.coefficients = coefficients
             self.threshold = threshold
+            self.indicator = indicator
+            self.accumulate = accumulate
 
     module.DenoiseCacheConfig = DenoiseCacheConfig
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -268,6 +270,20 @@ def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
 
     assert config.coefficients == (2.0, 1.0, 0.5)
     assert config.threshold == 0.2
+    assert config.indicator == "raw"
+    assert config.accumulate is False
+
+    v2_args = SimpleNamespace(
+        denoise_cache_coefficients="2.0, 1.0,0.5",
+        denoise_cache_threshold=0.2,
+        denoise_cache_indicator="teacache",
+        denoise_cache_accumulate=True,
+    )
+
+    v2_config = denoise_config_from_args(v2_args)
+
+    assert v2_config.indicator == "teacache"
+    assert v2_config.accumulate is True
 
 
 def test_denoise_config_fails_closed_when_module_is_missing(monkeypatch):
@@ -300,6 +316,9 @@ def test_smoke_parser_exposes_opt_in_cache_flags():
             "1.0,0.0",
             "--denoise-cache-threshold",
             "0.2",
+            "--denoise-cache-indicator",
+            "teacache",
+            "--denoise-cache-accumulate",
         ]
     )
 
@@ -309,6 +328,8 @@ def test_smoke_parser_exposes_opt_in_cache_flags():
     assert args.encoder_cache is True
     assert args.denoise_cache_coefficients == "1.0,0.0"
     assert args.denoise_cache_threshold == 0.2
+    assert args.denoise_cache_indicator == "teacache"
+    assert args.denoise_cache_accumulate is True
 
 
 def test_parity_suites_do_not_enable_caches():
