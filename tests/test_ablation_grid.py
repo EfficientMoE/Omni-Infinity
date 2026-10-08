@@ -210,3 +210,15 @@ def test_expected_compiled_parity_failure_is_collectable(tmp_path):
         )
     )
     assert ablation._is_expected_negative_parity(artifact)
+    artifact.write_text(
+        json.dumps(
+            {
+                "config": "compile+graph",
+                "golden_gate_passed": False,
+                "graph_replayed": False,
+                "golden_provenance": {"comparable": True},
+                "parity": {"allclose": {"rtol=atol=2e-2": False}},
+            }
+        )
+    )
+    assert not ablation._is_expected_negative_parity(artifact)

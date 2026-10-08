@@ -536,8 +536,10 @@ def _is_expected_negative_parity(path: pathlib.Path) -> bool:
     payload = json.loads(path.read_text(encoding="utf-8"))
     parity = payload.get("parity") or {}
     provenance = payload.get("golden_provenance") or {}
+    config = payload.get("config")
     return bool(
-        payload.get("config") in {"compile", "compile+graph"}
+        config in {"compile", "compile+graph"}
+        and (config != "compile+graph" or payload.get("graph_replayed") is True)
         and payload.get("golden_gate_passed") is False
         and provenance.get("comparable") is True
         and not parity.get("allclose", {}).get("rtol=atol=2e-2", False)
