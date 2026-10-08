@@ -239,6 +239,51 @@ the warm median of the remaining jobs.
    spacing equals the denoiser step time; the encoder→denoiser→decoder D2D
    copies do not surface in the throughput budget.
 
+## Phase 2 — USP (Ulysses) latency spike (attempted, parity-blocked)
+
+Goal: split one FL2VA denoise across two intra-socket GPUs for lower
+single-request latency, parity-gated. The denoiser
+(`MiniMaxH3Transformer3DModel`) ships a `_cp_plan` and diffusers has a
+native context-parallel path, so the spike wires degree-2 Ulysses with
+`transformer.enable_parallelism(ContextParallelConfig(ulysses_degree=2,
+ulysses_anything=True))` plus a per-instance clear of the token-refiner
+CP config (it runs before the sequence is sharded). Harness:
+`benchmarks/ulysses_spike.py` (capture / baseline / cp), GPUs 0,1 (PIX
+pair), `native` attention backend, `torchrun --nproc-per-node=2`.
+
+Measured on this host (2026-10-08), FL2VA 256p / 124f / 8 NFE, same
+captured post-encoder state on both ranks:
+
+| metric | single GPU | degree-2 Ulysses |
+|---|---:|---:|
+| denoise latency (median of 5) | 3.565 s | 2.751 s (**1.30×**) |
+| video latents vs goldens | rms_rel 0 (bitwise) | rms_rel **5.9e-2** |
+| audio latents vs goldens | rms_rel 0 (bitwise) | rms_rel **21.6e-2** |
+| rank 0 vs rank 1 output | — | bitwise-identical |
+
+**Verdict: parity-blocked — do not ship.** The mechanics work (runs
+end-to-end, no hangs, the two ranks agree bitwise, and the 1.30× gain
+matches the PCIe all-to-all estimate for 50 layers at this sequence
+length), but the degree-2 output diverges from the single-GPU reference
+by ~6 % (video) and ~22 % (audio), far beyond the 1e-3 numerical-parity
+gate a sequence-parallel permutation should hold. The divergence is
+systematic (both ranks agree, so it is not a race) and much larger for
+audio, consistent with diffusers' **experimental** context-parallel path
+not keeping the per-row tensors of this model's packed multimodal
+sequence (`rope`, `adaln_indices`, `norm_out` `timestep_indices`,
+`hidden_states`, and the `proj_out` / `audio_proj_out` gathers) aligned
+under the uneven `ulysses_anything` split — the audio rows are a small
+contiguous band whose gather order is the most sensitive to a
+mispartition.
+
+Root-causing diffusers' experimental CP internals is out of scope for a
+spike. Per the P7 plan's risk note, **stage pipelining (Phase 1) is the
+delivered multi-GPU win** (9.2× at 2 GPUs, 25× at 6); USP single-request
+latency is parked pending a diffusers CP fix or a hand-written Ulysses at
+the `MiniMaxH3AttnProcessor` seam that shards the packed sequence itself.
+`benchmarks/ulysses_spike.py` is kept as the reproduction and the gate
+for any retry.
+
 ## Reproduction
 
 ```bash
