@@ -23,6 +23,9 @@ Record one-line verdict per commit below.
 - 855f0ba docs(p2): qualify combined graph speedup — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 385e9b2 bench(p2): phase-0 profile + decision note — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 936274c fix(p2): clarify phase-0 methodology — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 9776c7c docs(p2): mark phase-1 task complete — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- b6533da docs(p2): record graph review verdicts — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 251ac20 docs(p2): mark phase-2 task complete — APPROVE (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 
 ## [2026-10-08] REVIEW MODEL UPDATE (user directive)
 openai/gpt-5.2 FAILS on this installation — do not use. Review model is now elm/gpt-5.6-sol.
