@@ -133,3 +133,32 @@ therefore pessimistic vs an FA-enabled build. Row ordering unaffected.
 | dense BF16, 1×sm120, measured | store-backed `ReferenceRunner`, AdaLN host cache, no block-stream | 1.802 s | 71.890 | 256p / 120f / 8 requested steps / seed 0; one warmup forward discarded; CC 12.0 RTX PRO 6000 |
 
 Raw artifact: `results/h3_residual/dense_bf16_sm120.json`.
+
+### Byte-floor vs measured: the kernel-efficiency gap grows with N
+
+The PRO 5000 feasibility report
+(`Infra4VideoStreaming/papers/报告_H3_PRO5000性能上界与加速手段.md`) bounds
+H3 with a published-spec-only byte floor `(2·P_active + 50·4·N·d·2)/1.344e12`
+(`P_active=20e9`, `d=7168`). That floor is 74–88% QKVO activation traffic and
+only 12–26% weights; the irreducible weight-only floor is 29.8 ms/step
+(1.46 s at 49 steps), *below* a 5.167 s playback. So the floor is a provable
+*lower* bound, not the binding constraint. The binding constraint for dense
+full attention is the O(N²) attention compute, which cannot be bounded from
+NVIDIA-published specs (no BF16/FP8 tensor TFLOPS) and is therefore anchored by
+the dense measurements above:
+
+| config | N | measured | byte floor / NFE | efficiency gap | implied R |
+|---|---:|---:|---:|---:|---:|
+| dense 222f/768p, 8 NFE | 69,090 | 28.50 s/NFE | 177 ms | **161×** | 9.25 / 228 = **0.041** |
+| dense 222f/768p, 49 NFE | 69,090 | 28.50 s/NFE | 177 ms | **161×** | 9.25 / 1396 = **0.0066** |
+| dense 345f/768p | 102,816 | 58.56 s/NFE | 249 ms | **235×** | 14.375 / 468 (8 NFE) = **0.031** |
+| dense 256p/120f | ~4,300 | 1.802 s/step | ~39 ms | **~46×** | 5.0 / 12.6 = **~0.40** |
+
+The gap **grows with N** (~46× → 161× → 235×), the fingerprint of the O(N²)
+attention compute the byte floor omits, and confirms that the floor→wall-clock
+bridge should be anchored by these direct dense-H3 measurements rather than the
+LongLive-1.3B 30–40× extrapolation (a different architecture/regime). All R ≪ 1.
+These are PRO 6000 (≈1.71× SMs, ≈1.33× BW vs PRO 5000), so they are an
+*optimistic* proxy: R_PRO5000 ≤ R_PRO6000. (256p/120f N is approximate, scaled
+by area from the 768p/120f token count; the others use the attribution
+`scaling.csv` counts.)

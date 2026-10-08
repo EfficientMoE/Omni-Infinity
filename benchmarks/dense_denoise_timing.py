@@ -137,9 +137,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_environment() -> None:
-    if os.environ.get("CUDA_VISIBLE_DEVICES") != "0":
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    if not visible or "," in visible:
         raise SystemExit(
-            "set CUDA_VISIBLE_DEVICES=0; this measurement is GPU-0 only"
+            "set CUDA_VISIBLE_DEVICES to exactly one idle GPU index"
         )
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise SystemExit("exactly one visible CUDA device is required")
