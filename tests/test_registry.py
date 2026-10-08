@@ -16,6 +16,7 @@ def test_categories_are_disjoint_and_complete():
         "adaln-host-cache",
         "fp8",
         "block-stream",
+        "sage-attn",
         "text-encoder-stream",
     }
     assert not arch_names & opt_names
@@ -95,3 +96,12 @@ def test_resolve_profile_returns_runner_checkpoint_and_merged_kwargs():
         "offload": True,
         "block_stream_blocks_per_group": 1,
     }
+
+
+def test_sage_attn_is_vdn_only_and_opt_in():
+    spec = registry.OPTIMIZATIONS["sage-attn"]
+    assert spec.supported_archs == ("vdn-hybrid",)
+    kwargs = registry.runner_kwargs_for("vdn-hybrid", ["sage-attn"])
+    assert kwargs["softmax_backend"] == "sage"
+    with pytest.raises(ValueError):
+        registry.runner_kwargs_for("h3-dense", ["sage-attn"])

@@ -121,6 +121,19 @@ OPTIMIZATIONS = {
             }
         ),
     ),
+    "sage-attn": OptimizationSpec(
+        name="sage-attn",
+        description=(
+            "SageAttention (INT8 QK) window softmax on the VDN hybrid. "
+            "NOT parity-class: rms_rel ~1.3e-2 vs the fp32 reference "
+            "(bf16 backends sit at ~2.3e-3); accuracy-gated opt-in, "
+            "never a default."
+        ),
+        supported_archs=("vdn-hybrid",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"vdn-hybrid": _kw(softmax_backend="sage")}
+        ),
+    ),
     "text-encoder-stream": OptimizationSpec(
         name="text-encoder-stream",
         description=("Leaf-level streaming of the Qwen3-VL text encoder."),
