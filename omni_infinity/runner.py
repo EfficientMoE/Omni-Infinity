@@ -324,7 +324,7 @@ class ReferenceRunner:
                         fp8_skip_last_blocks=fp8_skip_last_blocks,
                         fp8_protect_blocks=(
                             parse_protect_blocks(fp8_protect_blocks)
-                            if fp8_protect_blocks
+                            if fp8_protect_blocks is not None
                             else None
                         ),
                         fp8_mode=fp8_scale,
