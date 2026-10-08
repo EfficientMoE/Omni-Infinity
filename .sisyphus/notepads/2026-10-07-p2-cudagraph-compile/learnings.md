@@ -143,3 +143,29 @@
   successful generation into a failed job. CPU-only tests cover persistence,
   API conversion, fallback-reason counts, manager absence, failure isolation,
   and legacy records.
+
+## [2026-10-08] Phase 2 Task 5 optimization ablation
+
+- The 4×2 timing grid and four NFE-8 parity cells are normalized under
+  `results/p2_phase2_ablation/`; the original 16-row VDN `GRID` remains
+  unchanged and P2 is selected with `--suite p2`.
+- GPU-4 graph replay was stable across NFE: 966.42 ms canonical at NFE 8 and
+  965.41 ms at NFE 16. Compile+graph capture succeeded (it did not quarantine),
+  replaying at 924.82/924.90 ms with ~2.67 s one-time capture and 24.23 GiB
+  pinned AdaLN host memory.
+- Compile+graph's faster replay is not usable under the accuracy contract:
+  GPU-0 parity was `rms_rel=0.04114`, cosine 0.999162, and failed elementwise
+  allclose at `rtol=atol=2e-2`. Compile-only also failed (`rms_rel=0.06644`,
+  cosine 0.997807). Baseline and graph remained bitwise.
+- Pageable AdaLN H2D is host-state-sensitive. An initial baseline recheck
+  produced a 3082.59 ms median because copy time inflated to 2552.94 ms while
+  compute stayed at 508.29 ms; a clean retry returned 1492.84 ms. The fresh
+  compile recheck was unusually favorable at 1238.67 ms. Keep the committed
+  Phase-0/1/2 canonical NFE-8 timings in the headline table and retain fresh
+  values in JSON as rechecks rather than silently replacing canonical data.
+- The shared latent cosine helper can return 1.000004 for bitwise-identical
+  bf16 tensors because it computes cosine in fp32; use `rms_rel=0` plus the
+  explicit `bitwise` tier as the exactness criterion, not cosine clipping.
+- `/proc/driver/nvidia/version` contains the driver after `Kernel Module for
+  x86_64`; selecting the token after the word `Module` incorrectly records
+  `for`. The harness now parses the numeric version explicitly.
