@@ -126,6 +126,13 @@ loading because group-offload hooks can expose stale weight pointers to a
 compiled region. The C5 decision still wraps the whole transformer forward, so
 a cache hit bypasses the compiled blocks.
 
+This differs from the initial Phase 1 assumption: in diffusers 0.40.0,
+`HostResidentAdaLN.forward` is called inside each repeated transformer's block
+forward, so per-block AdaLN materialization is also inside the compiled region.
+Only host-cache installation and C5's outer skip decision remain outside. The
+extra H2D work inside that scope is a likely contributor to the wall-time
+regression below.
+
 The canonical compile-ON run used the same physical GPU 4 and workload as the
 Phase 0 resident artifact: store-backed transformer + AdaLN host cache, 256p,
 120 requested (124 effective) frames, seed 0, and 8 requested scheduler steps
