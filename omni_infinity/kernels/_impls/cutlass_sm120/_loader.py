@@ -29,11 +29,15 @@ def _cutlass_include_dir() -> Path:
             "cutlass_sm120 backend could not find CUTLASS headers under "
             f"OMO_CUTLASS_DIR={cutlass_dir!r}"
         )
+    try:
+        header_text = version_header.read_text()
+    except OSError as exc:
+        raise RuntimeError(
+            f"cutlass_sm120 backend could not read {version_header} "
+            f"({exc}); is OMO_CUTLASS_DIR a complete CUTLASS checkout?"
+        ) from exc
     version = dict(
-        re.findall(
-            r"#define CUTLASS_(MAJOR|MINOR)\s+(\d+)",
-            version_header.read_text(),
-        )
+        re.findall(r"#define CUTLASS_(MAJOR|MINOR)\s+(\d+)", header_text)
     )
     found = (int(version.get("MAJOR", 0)), int(version.get("MINOR", 0)))
     if found < _MIN_CUTLASS:
@@ -47,9 +51,15 @@ def _cutlass_include_dir() -> Path:
 
 
 def _check_nvcc_version(nvcc: str) -> None:
-    output = subprocess.run(
-        [nvcc, "--version"], capture_output=True, text=True, check=True
-    ).stdout
+    try:
+        output = subprocess.run(
+            [nvcc, "--version"], capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(
+            f"cutlass_sm120 backend could not run '{nvcc} --version' "
+            f"({exc}); check the CUDA toolkit installation"
+        ) from exc
     match = re.search(r"release (\d+)\.(\d+)", output)
     found = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
     if found < _MIN_CUDA:
