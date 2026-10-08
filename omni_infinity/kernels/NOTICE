@@ -2,3 +2,7 @@ omni_infinity/kernels/_fused_fp8_gemm.py contains a Triton kernel derived from
 EfficientMoE/BatchGen (batchgen/attention/mla/fused_gemm_rmsnorm.py), Apache-2.0.
 Hardened for Omni-Infinity: added @triton.autotune, optional post-GEMM bias, and a
 corrected out=/3D-shape return contract. Original: Copyright (c) EfficientMoE.
+
+omni_infinity/kernels/_impls/cutlass_sm120 contains an adapted copy of vLLM's
+CUTLASS SM120 blockwise FP8 scaled-matmul kernel and support headers,
+Apache-2.0. Original: Copyright contributors to the vLLM project.

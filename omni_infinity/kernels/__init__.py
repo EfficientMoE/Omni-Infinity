@@ -26,7 +26,7 @@ __all__ = [
 
 _FORCE_REFERENCE = os.environ.get("OMO_KERNELS_REFERENCE") == "1"
 
-_BACKENDS = ("triton", "scaled_mm")
+_BACKENDS = ("triton", "scaled_mm", "cutlass_sm120")
 
 
 def _select_impl(device: torch.device, backend: str | None = None):
@@ -45,6 +45,10 @@ def _select_impl(device: torch.device, backend: str | None = None):
         from ._scaled_mm import fused_fp8_gemm_scaled_mm
 
         return fused_fp8_gemm_scaled_mm
+    if backend == "cutlass_sm120":
+        from ._impls.cutlass_sm120 import fused_fp8_gemm_cutlass_sm120
+
+        return fused_fp8_gemm_cutlass_sm120
     if _FORCE_REFERENCE or device.type != "cuda":
         return fused_fp8_gemm_reference
     try:
@@ -69,7 +73,8 @@ def fused_fp8_gemm(
     scale: [ceil(N/128), ceil(K/128)] fp32 (block-wise). Returns [..., N] bf16.
 
     backend: None (default) keeps the v0.1 Triton/reference dispatch;
-    "scaled_mm" selects the true-FP8-compute w8a8 path (CUDA-only).
+    "scaled_mm" selects the true-FP8-compute w8a8 path (CUDA-only), while
+    "cutlass_sm120" preserves 128x128 weight scales on SM120 via lazy JIT.
     ``OMO_KERNELS_BACKEND`` provides the same selection via env var.
     """
     return _select_impl(a.device, backend)(a, b_fp8, scale, bias, out=out)

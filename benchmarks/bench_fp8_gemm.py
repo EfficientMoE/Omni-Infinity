@@ -14,6 +14,8 @@ three implementations:
                              (Rung A drop-in: per-call dequant->requant).
   (E) scaled_mm_prequant  -- per-row pre-quantized weight + dynamic
                              per-token activation quant (Rung A deploy).
+  (F) cutlass_sm120       -- lazy-JIT CUTLASS w8a8 preserving 128x128
+                             weight scales (Rung B deploy).
 
 Reports per-op median CUDA-event latency, peak memory
 (``torch.cuda.max_memory_allocated``), and streamed weight bytes (bf16 vs fp8).
@@ -103,6 +105,9 @@ def bench(M: int, N: int, K: int, dev: str = "cuda") -> None:
         )
         return c + b
 
+    def cutlass_sm120():
+        return fused_fp8_gemm(x, qb, sb, b, backend="cutlass_sm120")
+
     bf16_mb = 2 * N * K / 1e6
     fp8_mb = N * K / 1e6
     print(
@@ -115,6 +120,7 @@ def bench(M: int, N: int, K: int, dev: str = "cuda") -> None:
         ("scaled_mm_w8a8", w8a8),
         ("scaled_mm_backend", scaled_mm_backend),
         ("scaled_mm_prequant", scaled_mm_prequant),
+        ("cutlass_sm120", cutlass_sm120),
     )
     for name, fn in impls:
         try:
