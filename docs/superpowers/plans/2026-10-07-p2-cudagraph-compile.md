@@ -71,3 +71,43 @@ harness; OOM check at 22 GiB envelope (graph pools count against budget).
   Phase 3 may be infeasible; Phase 1+2 still deliver value.
 - compile recompile storms on frame-count changes → `mark_dynamic` on the
   temporal dim, document supported shape envelope.
+
+## Phase 0 decision note (2026-10-08)
+
+Measured on physical GPU 4 (RTX PRO 6000 Blackwell Max-Q, 96 GB) with
+PyTorch 2.12.0+cu130 and diffusers 0.40.0. Both runs used the store-backed
+transformer and AdaLN host cache at 256p, 120 requested frames, seed 0, and
+8 requested scheduler steps. This scheduler executes 7 transformer forwards;
+the first forward was discarded and the table reports medians over the
+remaining 6. Raw records are in `results/p2_phase0/{resident,block-stream}.json`.
+
+| profile | step wall (ms) | compute busy (ms) | copy busy (ms) | launch gap (ms) | launch gap | kernels/step |
+|---|---:|---:|---:|---:|---:|---:|
+| resident | 1483.38 | 507.70 | 955.75 | 18.66 | 1.31% | 2487 |
+| block-stream | 2951.59 | 508.56 | 2360.30 | 72.91 | 2.41% | 2487 |
+
+Method: `torch.profiler` CPU+CUDA tracing with a `record_function` range
+entered/exited by transformer forward hooks. Per-stream CUDA annotation
+windows bound each step. Compute busy is the union of kernel intervals; copy
+busy is the separately reported union of memcpy intervals (block-stream uses
+copy stream 13 in addition to compute/default stream 7). `launch gap` is the
+step envelope minus the union of compute and copy intervals, so serialized or
+overlapped weight H2D is not mislabeled as CPU launch overhead. Per-step CUDA
+events were also recorded as a wall-time fallback and agree with the profiler
+median within 0.22 ms. Peak allocated memory was 71.89 GiB resident and
+13.37 GiB block-stream (including the discarded warmup forward).
+
+**Verdict.** Block-stream launch overhead is **2.41%**, below the 5% decision
+threshold. Demote P2 for block-stream: Phase 1 regional compile and Phase 2
+graph experiments are resident-profile-only, and Phase 3 pointer-stable graph
+capture under block streaming is dropped. The resident copy-adjusted launch
+gap is also only 1.31%, which bounds the likely pure launch-overhead win; keep
+resident as the sole target because its transformer pointers are stable, but
+require the later ablation to justify continuation rather than assuming a
+graph speedup.
+
+Measurement gotchas: FL2VA requires `tests/fixtures/ref.png`; an image-less
+call fails before denoising. The merged local H3 snapshot keeps the transformer
+config under `FL2VA/transformer`, so the benchmark applies a process-local
+config lookup adapter while leaving the checkpoint and runtime sources
+unchanged. The video VAE rounds 120 requested frames to 124 internally.

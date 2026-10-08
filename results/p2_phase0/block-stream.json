@@ -1,0 +1,228 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-10-08T07:27:26.528589+00:00",
+  "profile": "block-stream",
+  "model_arch": "h3-dense",
+  "optimizations": [
+    "adaln-host-cache",
+    "block-stream",
+    "text-encoder-stream"
+  ],
+  "method": {
+    "profiler": "torch.profiler CPU+CUDA (CUPTI)",
+    "step_boundary": "transformer forward-hook record_function annotation",
+    "step_wall": "CUDA annotation envelope across per-step streams",
+    "compute_busy": "union of CUDA kernel intervals",
+    "copy_busy": "union of CUDA memcpy intervals",
+    "launch_gap": "step wall minus union(kernel, memcpy); copy stalls excluded",
+    "fallback_wall": "per-step CUDA-event elapsed time"
+  },
+  "parameters": {
+    "prompt": "a red ball bouncing",
+    "first_frame": "/mnt/raid0nvme0/leyang/omni-wt/p2-cudagraph-compile/tests/fixtures/ref.png",
+    "first_frame_sha256": "04f07c1bc50128a772dd14b95275e566a2d34635fe5856a7569383ad06a569f9",
+    "steps": 8,
+    "actual_transformer_forwards": 7,
+    "resolution": "256p",
+    "frames": 120,
+    "seed": 0,
+    "warmup_steps_discarded": 1
+  },
+  "environment": {
+    "python": "3.13.9",
+    "torch": "2.12.0+cu130",
+    "cuda": "13.0",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",
+    "cuda_visible_devices": "4",
+    "checkpoint": "/mnt/raid0nvme0/leyang/.cache/huggingface/hub/models--MiniMaxAI--MiniMax-H3/snapshots/42ed227ee7df40d41602854ae760620d6eb651fe",
+    "store_dir": "/mnt/raid0nvme0/leyang/h3-store-v2"
+  },
+  "full_generation_wall_seconds": 38.880588001571596,
+  "steps": [
+    {
+      "step": 1,
+      "step_wall_ms": 2280.6129549999996,
+      "cuda_event_wall_ms": 2286.708984375,
+      "cpu_enqueue_ms": 2286.836222745478,
+      "compute_busy_ms": 507.97359999998656,
+      "copy_busy_ms": 1639.0816839999864,
+      "h2d_busy_ms": 1402.4541999999908,
+      "compute_copy_union_ms": 2147.055283999973,
+      "compute_only_gap_ms": 1772.639355000013,
+      "launch_gap_ms": 133.55767100002663,
+      "launch_gap_pct": 5.8562182025326015,
+      "kernel_count": 2487,
+      "copy_count": 682,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 12.648937225341797,
+      "peak_reserved_gib": 14.513671875
+    },
+    {
+      "step": 2,
+      "step_wall_ms": 2117.1610179999993,
+      "cuda_event_wall_ms": 2117.382080078125,
+      "cpu_enqueue_ms": 2117.462472990155,
+      "compute_busy_ms": 508.38210099999884,
+      "copy_busy_ms": 1568.262398999989,
+      "h2d_busy_ms": 1400.0122269999897,
+      "compute_copy_union_ms": 2074.9959549999835,
+      "compute_only_gap_ms": 1608.7789170000003,
+      "launch_gap_ms": 42.16506300001591,
+      "launch_gap_pct": 1.991585082170445,
+      "kernel_count": 2487,
+      "copy_count": 683,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 13.368833541870117,
+      "peak_reserved_gib": 15.720703125
+    },
+    {
+      "step": 3,
+      "step_wall_ms": 2186.072181999999,
+      "cuda_event_wall_ms": 2186.33154296875,
+      "cpu_enqueue_ms": 2186.45304068923,
+      "compute_busy_ms": 508.6638420000039,
+      "copy_busy_ms": 1630.0272130000033,
+      "h2d_busy_ms": 1403.820747000007,
+      "compute_copy_union_ms": 2136.9660280000103,
+      "compute_only_gap_ms": 1677.4083399999952,
+      "launch_gap_ms": 49.10615399998892,
+      "launch_gap_pct": 2.2463189644114387,
+      "kernel_count": 2487,
+      "copy_count": 683,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 13.368833541870117,
+      "peak_reserved_gib": 15.720703125
+    },
+    {
+      "step": 4,
+      "step_wall_ms": 2705.3313479999993,
+      "cuda_event_wall_ms": 2705.55322265625,
+      "cpu_enqueue_ms": 2705.6146524846554,
+      "compute_busy_ms": 508.64949000005424,
+      "copy_busy_ms": 2132.8569700000044,
+      "h2d_busy_ms": 1776.1651159999985,
+      "compute_copy_union_ms": 2639.789468000062,
+      "compute_only_gap_ms": 2196.681857999945,
+      "launch_gap_ms": 65.54187999993749,
+      "launch_gap_pct": 2.4226932515453745,
+      "kernel_count": 2487,
+      "copy_count": 683,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 13.368833541870117,
+      "peak_reserved_gib": 15.720703125
+    },
+    {
+      "step": 5,
+      "step_wall_ms": 3197.8439780000003,
+      "cuda_event_wall_ms": 3198.052978515625,
+      "cpu_enqueue_ms": 3198.115499690175,
+      "compute_busy_ms": 508.79163199999,
+      "copy_busy_ms": 2587.750563000016,
+      "h2d_busy_ms": 2273.0570490000136,
+      "compute_copy_union_ms": 3094.8222540000156,
+      "compute_only_gap_ms": 2689.05234600001,
+      "launch_gap_ms": 103.02172399998456,
+      "launch_gap_pct": 3.221599449777301,
+      "kernel_count": 2487,
+      "copy_count": 683,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 13.368833541870117,
+      "peak_reserved_gib": 15.720703125
+    },
+    {
+      "step": 6,
+      "step_wall_ms": 3338.0290710000004,
+      "cuda_event_wall_ms": 3338.22265625,
+      "cpu_enqueue_ms": 3338.285142555833,
+      "compute_busy_ms": 508.46687999996544,
+      "copy_busy_ms": 2751.0079900000096,
+      "h2d_busy_ms": 2437.6123919999973,
+      "compute_copy_union_ms": 3257.74852199997,
+      "compute_only_gap_ms": 2829.562191000035,
+      "launch_gap_ms": 80.28054900003039,
+      "launch_gap_pct": 2.4050284551889805,
+      "kernel_count": 2487,
+      "copy_count": 683,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 13.368833541870117,
+      "peak_reserved_gib": 15.720703125
+    },
+    {
+      "step": 7,
+      "step_wall_ms": 3526.674155000001,
+      "cuda_event_wall_ms": 3526.904541015625,
+      "cpu_enqueue_ms": 3527.0288605242968,
+      "compute_busy_ms": 508.3820109999962,
+      "copy_busy_ms": 2931.9803329999895,
+      "h2d_busy_ms": 2599.9103479999862,
+      "compute_copy_union_ms": 3438.6404119999893,
+      "compute_only_gap_ms": 3018.292144000005,
+      "launch_gap_ms": 88.0337430000119,
+      "launch_gap_pct": 2.496225597570464,
+      "kernel_count": 2487,
+      "copy_count": 683,
+      "compute_stream_ids": [
+        7
+      ],
+      "copy_stream_ids": [
+        7,
+        13
+      ],
+      "peak_allocated_gib": 13.368833541870117,
+      "peak_reserved_gib": 15.720703125
+    }
+  ],
+  "summary": {
+    "median_step_wall_ms": 2951.587663,
+    "median_cuda_event_wall_ms": 2951.8031005859375,
+    "median_cpu_enqueue_ms": 2951.865076087415,
+    "median_compute_busy_ms": 508.55818500000987,
+    "median_copy_busy_ms": 2360.30376650001,
+    "median_h2d_busy_ms": 2024.611082500006,
+    "median_compute_copy_union_ms": 2867.305861000039,
+    "median_compute_only_gap_ms": 2442.8671019999774,
+    "median_launch_gap_ms": 72.91121449998394,
+    "median_launch_gap_pct": 2.4138608533671775,
+    "median_kernel_count": 2487.0,
+    "peak_allocated_gib": 13.368833541870117,
+    "peak_reserved_gib": 15.720703125,
+    "warmup_steps_discarded": 1,
+    "measured_steps": 6
+  }
+}
