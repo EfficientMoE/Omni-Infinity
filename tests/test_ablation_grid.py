@@ -145,12 +145,17 @@ def test_collect_p2_row_reuses_existing_cell_artifacts(tmp_path):
     run = next(
         run for run in ablation.P2_GRID if run.name == "p2-baseline-8nfe"
     )
+    canonical = tmp_path / "canonical.json"
+    canonical.write_text(
+        json.dumps({"summary": {"median_step_wall_ms": 1500.0}})
+    )
     timing = {
         "s_per_eval": 1.25,
         "peak_gib": 71.89,
         "rms_rel": None,
         "summary": {"measurement_scope": "post-first-forward median"},
         "graph_note": "not requested",
+        "canonical_source_artifact": str(canonical),
     }
     parity = {
         "rms_rel": 0.0,
@@ -161,7 +166,7 @@ def test_collect_p2_row_reuses_existing_cell_artifacts(tmp_path):
     (tmp_path / "baseline-nfe8-timing.json").write_text(json.dumps(timing))
     (tmp_path / "baseline-nfe8-parity.json").write_text(json.dumps(parity))
     row = ablation.collect_p2_row(run, tmp_path)
-    assert row["s_per_nfe"] == 1.25
+    assert row["s_per_nfe"] == 1.5
     assert row["rms_rel"] == 0.0
     assert row["cosine"] == 1.0
     assert "parity=bitwise" in row["notes"]

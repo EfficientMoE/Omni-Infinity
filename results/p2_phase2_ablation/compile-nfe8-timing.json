@@ -31,9 +31,8 @@
     "store_dir": "/mnt/raid0nvme0/leyang/h3-store-v2"
   },
   "full_generation_wall_seconds": 70.17253646161407,
-  "s_per_eval": 1.579381117999997,
+  "s_per_eval": 1.2386745539999977,
   "canonical_source_artifact": "results/p2_phase1/compile-resident.json",
-  "fresh_recheck_s_per_eval": 1.2386745539999977,
   "peak_gib": 71.8899073600769,
   "rms_rel": null,
   "cosine": null,

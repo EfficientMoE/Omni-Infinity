@@ -883,6 +883,15 @@ def collect_p2_row(
     timing = json.loads(timing_path.read_text(encoding="utf-8"))
     notes = [str(timing["summary"]["measurement_scope"])]
     if source := timing.get("canonical_source_artifact"):
+        source_path = pathlib.Path(source)
+        if not source_path.is_absolute():
+            repo = pathlib.Path(__file__).resolve().parents[1]
+            source_path = repo / source_path
+        source_payload = json.loads(source_path.read_text(encoding="utf-8"))
+        source_summary = source_payload.get("replay_summary")
+        if source_summary is None:
+            source_summary = source_payload["summary"]
+        seconds = float(source_summary["median_step_wall_ms"]) / 1e3
         notes.append(f"canonical timing source={source}")
     if "cuda-graph" in run.params["optimizations"]:
         notes.append(str(timing["graph_note"]))
