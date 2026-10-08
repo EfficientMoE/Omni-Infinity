@@ -78,6 +78,26 @@ that same worker.
 | `artifacts.py` | `write_artifacts` → `output.wav` (SoundFile) + `output.mp4` (`diffusers … encode_video`). |
 | `stream.py` | `StreamService` / `StreamSession`, `DemoStreamService` / `DemoStreamSession`, `ChunkPipe`, `chunk_message`. |
 | `__main__.py` | `python -m omni_infinity.serve` entry point. |
+| `roles.py` | Multi-GPU role abstraction (P7): `Role`, `OMNI_DEVICE_MAP` parsing, `StagePayload`, and the intra-process `HandoffQueue` (source-side copy stream + CUDA events). |
+| `split.py` | Split-stage execution (P7): `STAGE_BLOCKS` maps roles onto the modular pipeline's five top-level block groups; `prepare_state`/`run_stage`/`run_all_stages` carry an explicit `PipelineState` across stages. |
+
+### Multi-GPU roles (P7, in progress)
+
+The profile gains `OMNI_ROLE={all,encoder,denoiser,decoder}` plus
+`OMNI_DEVICE_MAP` (e.g. `encoder=cuda:0,denoiser=cuda:1,decoder=cuda:2`).
+`role=all` is the unchanged single-process default; split roles fail
+fast at startup until the cross-process transport
+(`torch.multiprocessing` CUDA-IPC queues, one device per role process)
+lands. Stage handoffs are copy-engine D2D copies, never NCCL
+collectives, and collective groups must stay within one CPU socket —
+both rules come from measured platform behavior, see
+[docs/multigpu_platform.md](docs/multigpu_platform.md). H3 is
+guidance-distilled — upstream diffusers states "there is no negative
+prompt and no unconditional branch … every step runs exactly one
+forward pass" (`diffusers/modular_pipelines/minimax_h3/
+modular_pipeline.py`, 0.40.0) — so there is no cond/uncond parallelism;
+the split-vs-one-shot bitwise parity gate is
+`tests/test_split_parity.py` (gpu+weights).
 
 ## Request lifecycle — job
 
