@@ -108,6 +108,24 @@ def test_key_is_deterministic_and_changes_with_prefix_or_image():
     assert len(first) == 64
 
 
+def test_key_covers_every_non_vision_encoder_input():
+    model = _Encoder()
+    cache = EncoderPrefixCache()
+    enable_encoder_cache(SimpleNamespace(model=model), cache)
+    prefix = torch.tensor([[1, 2, 3]])
+
+    model(input_ids=prefix, attention_mask=torch.tensor([[1, 1, 1]]))
+    model(input_ids=prefix, attention_mask=torch.tensor([[1, 1, 0]]))
+
+    assert cache.stats() == {
+        "hits": 0,
+        "misses": 2,
+        "entries": 2,
+        "bytes": cache.stats()["bytes"],
+    }
+    assert model.calls == 2
+
+
 def test_concurrent_get_and_put_remain_bounded():
     cache = EncoderPrefixCache(max_entries=8, max_bytes=8 * 4)
 

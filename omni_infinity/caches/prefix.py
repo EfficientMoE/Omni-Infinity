@@ -37,6 +37,7 @@ def encoder_prefix_key(
     image_refs: tuple = (),
     *,
     namespace: str | None = None,
+    extra_inputs=None,
 ) -> str:
     """Return the versioned digest for one exact encoder presentation."""
     hasher = hashlib.sha256()
@@ -45,6 +46,7 @@ def encoder_prefix_key(
         namespace,
         tokenized_prefix,
         tuple(_reference_bytes(reference) for reference in image_refs),
+        extra_inputs,
     ):
         update_hash_for_value(hasher, value)
     return hasher.hexdigest()
@@ -132,7 +134,17 @@ def _call_key(args, kwargs, namespace: str) -> str:
         for name in _VISION_INPUT_NAMES
         if kwargs.get(name) is not None
     )
-    return encoder_prefix_key(input_ids, image_refs, namespace=namespace)
+    extra_inputs = (
+        tuple(args[1:]),
+        {
+            name: kwargs[name]
+            for name in sorted(kwargs)
+            if name != "input_ids" and name not in _VISION_INPUT_NAMES
+        },
+    )
+    return encoder_prefix_key(
+        input_ids, image_refs, namespace=namespace, extra_inputs=extra_inputs
+    )
 
 
 def _first_tensor_device(args, kwargs):
