@@ -188,7 +188,29 @@ def _cross_rank_equal(tensor: Any, device: str) -> bool:
     return all(torch.equal(gathered[0], other) for other in gathered)
 
 
-def cp(trials: int, degree: int) -> None:
+def _packed_seq_probe(anything: bool):
+    done = {"v": False}
+
+    def hook(module, args, kwargs):
+        if done["v"]:
+            return
+        shapes = [
+            tuple(t.shape)
+            for t in (*args, *kwargs.values())
+            if torch.is_tensor(t) and t.dim() == 3
+        ]
+        if shapes:
+            seq = shapes[0][1]
+            print(
+                f"  packed-seq probe: 3D shapes={shapes} S={seq} "
+                f"even={seq % 2 == 0} ulysses_anything={anything}"
+            )
+            done["v"] = True
+
+    return hook
+
+
+def cp(trials: int, degree: int, anything: bool = True) -> None:
     import torch.distributed as dist
     from diffusers import ContextParallelConfig
 
@@ -209,9 +231,15 @@ def cp(trials: int, degree: int) -> None:
         transformer.set_attention_backend("native")
         transformer.enable_parallelism(
             config=ContextParallelConfig(
-                ring_degree=1, ulysses_degree=degree, ulysses_anything=True
+                ring_degree=1,
+                ulysses_degree=degree,
+                ulysses_anything=anything,
             )
         )
+        if rank == 0:
+            transformer.register_forward_pre_hook(
+                _packed_seq_probe(anything), with_kwargs=True
+            )
         # The token refiner runs before the packed sequence is sharded, so
         # its replicated text attention must not do the Ulysses all-to-all.
         for block in transformer.token_refiner.refiner_blocks:
@@ -264,13 +292,18 @@ def main() -> int:
     )
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--degree", type=int, default=2)
+    parser.add_argument(
+        "--ulysses-anything",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     args = parser.parse_args()
     if args.mode == "capture":
         capture()
     elif args.mode == "baseline":
         baseline(args.trials)
     else:
-        cp(args.trials, args.degree)
+        cp(args.trials, args.degree, args.ulysses_anything)
     return 0
 
 

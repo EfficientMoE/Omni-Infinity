@@ -266,15 +266,19 @@ end-to-end, no hangs, the two ranks agree bitwise, and the 1.30× gain
 matches the PCIe all-to-all estimate for 50 layers at this sequence
 length), but the degree-2 output diverges from the single-GPU reference
 by ~6 % (video) and ~22 % (audio), far beyond the 1e-3 numerical-parity
-gate a sequence-parallel permutation should hold. The divergence is
-systematic (both ranks agree, so it is not a race) and much larger for
-audio, consistent with diffusers' **experimental** context-parallel path
-not keeping the per-row tensors of this model's packed multimodal
-sequence (`rope`, `adaln_indices`, `norm_out` `timestep_indices`,
-`hidden_states`, and the `proj_out` / `audio_proj_out` gathers) aligned
-under the uneven `ulysses_anything` split — the audio rows are a small
-contiguous band whose gather order is the most sensitive to a
-mispartition.
+gate a sequence-parallel permutation should hold.
+
+The divergence is systematic (both ranks agree, so it is not a race) and
+much larger for audio. A follow-up run with `--no-ulysses-anything` on an
+even packed sequence (`S=2432`, i.e. an exact-halves split, probed via a
+transformer forward pre-hook) reproduces the **identical** error (video
+5.868e-2, audio 2.165e-1) — which **rules out the uneven `ulysses_anything`
+split** as the cause. The mispartition is in diffusers' *experimental*
+context-parallel path itself: it does not keep this model's packed
+multimodal sequence (the per-row `rope`, `adaln_indices`, `norm_out`
+`timestep_indices`, and the `proj_out` / `audio_proj_out` gathers) aligned
+even for a clean even split. The audio rows are a small contiguous band
+whose gather order is the most sensitive, hence the larger audio error.
 
 Root-causing diffusers' experimental CP internals is out of scope for a
 spike. Per the P7 plan's risk note, **stage pipelining (Phase 1) is the
@@ -308,7 +312,12 @@ Consequences for a spatial shard:
    "are the blended-tile ones"). Blending is a weighted average across the
    overlap, not a bitwise reconstruction — it is a memory tool, not a
    seam-exact shard. (At ≤256-px output the decode is a single tile, so
-   the committed 256p goldens exercise no seam at all.)
+   the committed 256p goldens exercise no seam at all.) `benchmarks/
+   vae_shard_probe.py` measures this directly: decoding the golden latents
+   with tiling forced on (the threshold lowered so the 256-px frame splits
+   into blended tiles) vs single-shot diverges by **rms_rel 12.1 %**
+   (max-abs 4.74) — a large, visible seam, because each tile loses the
+   cross-tile context the global attention needs.
 3. **An exact spatial parallelization is context parallelism, not halo
    exchange.** Making a global-attention decoder exact across GPUs needs
    all-gather/all-to-all attention over the token grid — the same diffusers
