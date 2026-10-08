@@ -75,3 +75,19 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - docs(p2): record serve telemetry review verdicts — APPROVE
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+
+## [2026-10-08] Phase 2 Task 5 ablation decisions
+
+- Preserve the 16-point VDN `GRID` and add a separate `P2_GRID`, selected via
+  `--suite p2`, so existing defaults, command construction, and tests do not
+  change.
+- Run every timing/parity cell in its own subprocess with exactly one physical
+  GPU visible. Timing uses GPU 4; parity uses GPU 0 only at NFE 8. NFE-16 CSV
+  parity columns stay blank and notes explicitly say `no golden at this NFE`.
+- For NFE 8, report the committed Phase-0 baseline, Phase-1 compile, and
+  Phase-2 graph medians as the canonical comparison. Store fresh rechecks in
+  the normalized artifacts and identify each canonical source path; this
+  avoids cherry-picking host-copy variability while preserving all evidence.
+- Treat compile+graph as a successful graph execution but a failed candidate:
+  capture/replay is real and faster than graph-only, yet the NFE-8 latent fails
+  allclose at `2e-2`. The operator recommendation therefore remains graph-only.
