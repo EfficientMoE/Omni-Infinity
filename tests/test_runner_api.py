@@ -4,6 +4,7 @@
 # EfficientMoE Team
 
 import inspect
+from contextlib import contextmanager
 
 import pytest
 import torch
@@ -347,6 +348,35 @@ def test_cuda_graph_pins_adaln_only_with_sufficient_host_headroom():
             available_bytes=(required * 6) // 5 - 1,
             pin=lambda tensor: tensor,
         )
+
+
+def test_component_offload_invalidates_graphs_between_generations():
+    class FakePipeline:
+        def __call__(self, **kwargs):
+            return type("State", (), {"values": {}})()
+
+    class FakeManager:
+        def __init__(self):
+            self.invalidations = []
+
+        @contextmanager
+        def bucket(self, key):
+            yield
+
+        def invalidate(self, reason):
+            self.invalidations.append(reason)
+
+    manager = FakeManager()
+    runner = ReferenceRunner(
+        FakePipeline(),
+        cuda_graph_manager=manager,
+        cuda_graph_invalidate_between_generations=True,
+    )
+
+    runner.generate("first", num_frames=120)
+    runner.generate("second", num_frames=120)
+
+    assert manager.invalidations == ["component offload generation boundary"]
 
 
 def test_compile_blocks_uses_diffusers_regional_compile_api():

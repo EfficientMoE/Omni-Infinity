@@ -329,12 +329,17 @@ class ReferenceRunner:
         transformer_component: str = "transformer",
         cuda_graph_manager=None,
         pinned_adaln_bytes: int = 0,
+        cuda_graph_invalidate_between_generations: bool = False,
     ):
         self.pipeline = pipeline
         self.overlap_controller = overlap_controller
         self.transformer_component = transformer_component
         self.cuda_graph_manager = cuda_graph_manager
         self.pinned_adaln_bytes = pinned_adaln_bytes
+        self.cuda_graph_invalidate_between_generations = (
+            cuda_graph_invalidate_between_generations
+        )
+        self._cuda_graph_generation_started = False
 
     @classmethod
     def from_pretrained(
@@ -514,6 +519,7 @@ class ReferenceRunner:
             transformer_component=transformer_component,
             cuda_graph_manager=cuda_graph_manager,
             pinned_adaln_bytes=pinned_adaln_bytes,
+            cuda_graph_invalidate_between_generations=offload and cuda_graph,
         )
         attach_caches(
             runner,
@@ -576,6 +582,14 @@ class ReferenceRunner:
         if self.cuda_graph_manager is not None:
             from omni_infinity.cuda_graph import GraphKey
 
+            if (
+                self.cuda_graph_invalidate_between_generations
+                and self._cuda_graph_generation_started
+            ):
+                self.cuda_graph_manager.invalidate(
+                    "component offload generation boundary"
+                )
+            self._cuda_graph_generation_started = True
             graph_context = self.cuda_graph_manager.bucket(
                 GraphKey(
                     height=height,
