@@ -132,6 +132,17 @@ OPTIMIZATIONS = {
             {"h3-dense": _kw(compile_blocks=True)}
         ),
     ),
+    "cuda-graph": OptimizationSpec(
+        name="cuda-graph",
+        description=(
+            "resident-profile-only CUDA-graph capture of the denoise "
+            "transformer forward."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(cuda_graph=True)}
+        ),
+    ),
     "text-encoder-stream": OptimizationSpec(
         name="text-encoder-stream",
         description=("Leaf-level streaming of the Qwen3-VL text encoder."),
