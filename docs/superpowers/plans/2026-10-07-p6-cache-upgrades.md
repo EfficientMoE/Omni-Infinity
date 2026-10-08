@@ -51,8 +51,12 @@ quantified in cache_benchmarks.
 
 ## Tasks
 
-- [x] C5 indicator v2 + polynomial fit on existing probe set
-- [x] taylor1 mode + FBCache-style alternative; A/B on probe
+- [x] C5 indicator v2 implementation + fitting script
+      (`benchmarks.caches.denoise_fit`); the fitted run on the probe set
+      is weights-gated
+- [x] taylor1 mode + FBCache-style alternative implemented; probe
+      records both signals for the A/B — the measured A/B run is
+      weights-gated
 - [ ] cache_benchmarks rows (speedup vs quality curves, thresholds) —
       suite cells, verdicts, and fitting workflow landed; measured rows
       are weights-gated (see cache_benchmarks "Pending weights-gated
@@ -61,7 +65,8 @@ quantified in cache_benchmarks.
 - [ ] C2 contribution row (VidProM trace + multi-prompt demo timing) —
       cell, stats plumbing, and verdict rule landed; measured row is
       weights-gated
-- [x] Contract doc updates (caches_c5/caches_c2) + #42 checkboxes
+- [x] Contract doc updates (caches_c5/caches_c2) + status posted to #42
+      (the #42 P6 checkbox stays open until the weights-gated rows land)
 
 ## Verification
 
