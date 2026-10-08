@@ -91,3 +91,28 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
 - Treat compile+graph as a successful graph execution but a failed candidate:
   capture/replay is real and faster than graph-only, yet the NFE-8 latent fails
   allclose at `2e-2`. The operator recommendation therefore remains graph-only.
+
+## [2026-10-08] Phase 2 Task 5 review verdicts
+
+- 19415d0 bench(p2): add optimization ablation harness — REQUEST-CHANGES
+  (path forwarding, graph replay gates, and parity provenance; resolved by
+  d839857)
+- d839857 fix(p2): enforce ablation execution provenance — REQUEST-CHANGES
+  (compiled parity failures were not surfaced; resolved by c780b33)
+- c780b33 fix(p2): surface negative parity gates — REQUEST-CHANGES
+  (compile+graph eager fallback could still be accepted; resolved by 98b4932)
+- 98b4932 fix(p2): reject graph parity fallback — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 0cd6ff7 bench(p2): record optimization timing evidence — REQUEST-CHANGES
+  (parity evidence was absent and canonical timings replaced raw measurements;
+  resolved by 438ce4d)
+- 438ce4d fix(p2): make ablation evidence self-consistent — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 55d17db docs(p2): document optimization ablation — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 34ee5b8 docs(p2): record ablation learnings — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 3fd414a docs(p2): record ablation decisions — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- docs(p2): record ablation review verdicts — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
