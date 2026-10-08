@@ -42,11 +42,11 @@ misdetection logged by the upstream component (physical CC is 12.0).
 
 ## Tasks
 
-- [ ] Capability-pinned dispatch + backend logging
-- [ ] `benchmarks/attn_bakeoff.py` matrix runner (bounded runtime)
-- [ ] cuDNN / FA4 / fmha_v2 adapters behind existing backend enum
-- [ ] SageAttention2 opt-in + accuracy tier doc
-- [ ] VDN ladder rerun; update ablation/attribution docs + issue #42
+- [x] Capability-pinned dispatch + backend logging
+- [x] `benchmarks/attn_bakeoff.py` matrix runner (bounded runtime)
+- [x] cuDNN / FA4 / fmha_v2 adapters behind existing backend enum
+- [x] SageAttention2 opt-in + accuracy tier doc
+- [x] VDN ladder rerun; update ablation/attribution docs + issue #42
 
 ## Verification
 

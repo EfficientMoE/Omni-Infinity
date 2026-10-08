@@ -107,3 +107,53 @@ is ~2% faster than 1 block/group at identical peak.
    222-frame runs (temporal 37 vs 67 → hard shape error after
    successful generation). Fixed in `43a3f97`: grid runs don't take
    the goldens gate; parity is owned by `tests/test_vdn_parity.py`.
+
+## Window-softmax backend bake-off (sm120, issue #42 P3)
+
+`benchmarks/attn_bakeoff.py` times the window branch in isolation at H3
+geometry (56 heads x 128 head-dim, 1008 tokens/frame + 512 global rows,
+chunk=5 radius=1 anchors=both), CUDA-event medians over 20 iters on one
+RTX PRO 6000 Blackwell (CC 12.0), bf16, errors vs the fp32 eager
+reference. `cudnn` and `fmha-v2` run the same union-of-dense
+decomposition with the kernel swapped under the legs
+(`omni_infinity/arch/vdn_attention.py`); `fa4` has no sm120 install
+(flash-attn ships no consumer-Blackwell cute kernels) — recorded as
+unavailable rather than benched.
+
+| backend | window 8.6k (ms) | window 20.7k | window 38.8k | rms_rel class |
+|---|---:|---:|---:|---|
+| decomposed (auto today) | 6.98 | 27.81 | 60.52 | 2.3e-03 (bf16) |
+| flex | 7.01 | 30.55 | 66.78 | 2.3e-03 (bf16) |
+| **cudnn** | **6.53** | **27.02** | **59.24** | 2.3e-03 (bf16) |
+| fmha-v2 (FlashInfer 0.6.18) | 6.68 | 27.47 | 59.46 | 2.3e-03 (bf16) |
+| sage (INT8 QK) | 7.72 | 29.60 | 62.85 | 1.3e-02 (INT8 tier) |
+
+Full matrix (dense-mask rows included): `results/attn_bakeoff/results.csv`.
+`cudnn` leads at every size (2.1-6.4 % over `decomposed` on the window
+branch), `fmha-v2` second; both sit in the same bf16 reduction-order
+parity class as `decomposed` itself (2.3e-03 vs fp32). `sage` is slower
+AND INT8-tier — a negative result; it stays the accuracy-gated
+`sage-attn` registry opt-in. The gains are branch-local: scale by the
+window share of step time from the attribution study before expecting
+end-to-end movement.
+
+### Integration rung (vdn_smoke, 8 NFE, 120 frames, offload + text-encoder stream, GPU 4)
+
+| backend | wall s | s/eval incl. overhead | peak GiB | rms_rel vs goldens |
+|---|---:|---:|---:|---:|
+| main @83d1950 (implicit auto) | 133.6 | 16.70 | 83.4 | 0.288* |
+| decomposed (pinned) | 127.8 | 15.97 | 81.8 | 0.306* |
+| cudnn | 168.5 | 21.06 | 81.8 | 0.409* |
+| fmha-v2 | 120.5 | 15.06 | 82.0 | 0.422* |
+
+\* the unmodified main baseline fails these goldens by the same class
+(0.288), so the committed `vdn_goldens.pt` does not match this
+offload + text-encoder-stream environment — the column compares
+backends relatively, not against a valid bitwise reference. Decision:
+**`auto` on CC 12.x stays pinned to `decomposed`.** `cudnn`'s 2-6 %
+microbench win inverts at model scale (the per-chunk dense loop pays
+~50 layers x ~num-chunk launches per eval where `decomposed` makes two
+batched calls), a negative result the plan anticipated. `fmha-v2` is
+the runner-up (-0.9 s/eval wall, within config noise) and the adapter
+stays available behind `--softmax-backend fmha-v2` for a future
+re-measure once the goldens are re-recorded for this config.
