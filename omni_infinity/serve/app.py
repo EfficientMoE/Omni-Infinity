@@ -144,6 +144,24 @@ def load_runner(settings: ServerSettings):
     profile = resolve_profile(
         settings.model_arch, settings.optimizations, settings.checkpoint
     )
+    if settings.role == "pipeline":
+        from omni_infinity.serve.role_pipeline import RoleServeRunner
+        from omni_infinity.serve.roles import Role as StageRole
+
+        if profile.model_arch != "h3-dense":
+            raise ValueError(
+                "OMNI_ROLE=pipeline supports only h3-dense profiles"
+            )
+        if settings.checkpoint is None:
+            raise ValueError("OMNI_ROLE=pipeline requires OMNI_CHECKPOINT")
+        device_map = {
+            StageRole(name): device for name, device in settings.device_map
+        }
+        return RoleServeRunner(
+            settings.checkpoint,
+            device_map,
+            store_dir=settings.store_dir,
+        )
     kwargs = dict(profile.runner_kwargs)
     if kwargs.get("condition_cache"):
         kwargs["condition_cache_dir"] = settings.condition_cache_dir
@@ -236,6 +254,9 @@ def create_app(
         finally:
             stream_service.shutdown()
             service.shutdown()
+            runner_shutdown = getattr(runner, "shutdown", None)
+            if callable(runner_shutdown):
+                runner_shutdown()
 
     app = FastAPI(lifespan=lifespan)
 

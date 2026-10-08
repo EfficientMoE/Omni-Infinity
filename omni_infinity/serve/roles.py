@@ -23,9 +23,16 @@ import torch
 
 
 class Role(str, enum.Enum):
-    """Serving role. ``ALL`` is the single-process default."""
+    """Serving role.
+
+    ``ALL`` is the single-process default; ``PIPELINE`` is the
+    single-host coordinator that spawns the three stage roles as local
+    processes (contract addition over the P7 plan's enum, noted in
+    #42); the stage values are reserved for future per-role servers.
+    """
 
     ALL = "all"
+    PIPELINE = "pipeline"
     ENCODER = "encoder"
     DENOISER = "denoiser"
     DECODER = "decoder"
@@ -72,10 +79,10 @@ def parse_device_map(
                 "role=device"
             )
         role = parse_role(name)
-        if role is Role.ALL:
+        if role not in _SPLIT_ROLES:
             raise ValueError(
                 "OMNI_DEVICE_MAP may only map encoder/denoiser/decoder, "
-                "not 'all'"
+                f"not {role.value!r}"
             )
         mapping[role] = device.strip()
     return mapping

@@ -33,6 +33,9 @@ class TestParseRole:
     def test_case_and_whitespace(self):
         assert parse_role(" Encoder ") is Role.ENCODER
 
+    def test_pipeline_coordinator_role(self):
+        assert parse_role("pipeline") is Role.PIPELINE
+
     def test_invalid_role(self):
         with pytest.raises(ValueError, match="OMNI_ROLE"):
             parse_role("transcoder")
@@ -72,6 +75,10 @@ class TestParseDeviceMap:
         with pytest.raises(ValueError, match="not 'all'"):
             parse_device_map("all=cuda:0")
 
+    def test_pipeline_rejected(self):
+        with pytest.raises(ValueError, match="not 'pipeline'"):
+            parse_device_map("pipeline=cuda:0")
+
 
 class TestServerSettingsRole:
     def test_defaults(self, clean_env):
@@ -103,6 +110,120 @@ class TestServerSettingsRole:
         clean_env.setenv("OMNI_ROLE", "bogus")
         with pytest.raises(ValueError, match="OMNI_ROLE"):
             ServerSettings.from_env()
+
+
+class TestPipelineRoleWiring:
+    def test_load_runner_dispatches_to_role_serve_runner(
+        self, clean_env, monkeypatch
+    ):
+        from omni_infinity.serve import app as app_module
+
+        captured = {}
+
+        class _FakeRunner:
+            def __init__(self, checkpoint, device_map, *, store_dir=None):
+                captured["checkpoint"] = checkpoint
+                captured["device_map"] = device_map
+                captured["store_dir"] = store_dir
+
+        monkeypatch.setattr(
+            "omni_infinity.serve.role_pipeline.RoleServeRunner",
+            _FakeRunner,
+        )
+        settings = app_module.ServerSettings(
+            checkpoint="/ckpt",
+            store_dir="/store",
+            role="pipeline",
+            device_map=(
+                ("decoder", "cuda:2"),
+                ("denoiser", "cuda:1"),
+                ("encoder", "cuda:0"),
+            ),
+        )
+        runner = app_module.load_runner(settings)
+        assert isinstance(runner, _FakeRunner)
+        assert captured["checkpoint"] == "/ckpt"
+        assert captured["store_dir"] == "/store"
+        assert captured["device_map"] == {
+            Role.ENCODER: "cuda:0",
+            Role.DENOISER: "cuda:1",
+            Role.DECODER: "cuda:2",
+        }
+
+    def test_load_runner_pipeline_requires_checkpoint(self, clean_env):
+        from omni_infinity.serve import app as app_module
+
+        settings = app_module.ServerSettings(role="pipeline")
+        with pytest.raises(ValueError, match="OMNI_CHECKPOINT"):
+            app_module.load_runner(settings)
+
+    def test_role_serve_runner_cleans_up_on_warmup_failure(self, monkeypatch):
+        from omni_infinity.serve import role_pipeline as rp
+
+        events = []
+
+        class _FakePipeline:
+            def __init__(self, checkpoint, device_map, *, store_dir=None):
+                self._workers = []
+
+            def warmup(self, timeout=900.0):
+                events.append("warmup")
+                raise TimeoutError("worker never answered")
+
+            def shutdown(self, timeout=120.0):
+                events.append("shutdown")
+
+        monkeypatch.setattr(rp, "RolePipeline", _FakePipeline)
+        with pytest.raises(TimeoutError, match="never answered"):
+            rp.RoleServeRunner("/ckpt", {})
+        assert events == ["warmup", "shutdown"]
+
+    def test_role_serve_runner_terminates_workers_if_shutdown_fails(
+        self, monkeypatch
+    ):
+        from omni_infinity.serve import role_pipeline as rp
+
+        events = []
+
+        class _FakeProcess:
+            def __init__(self, explode=False):
+                self._explode = explode
+
+            def is_alive(self):
+                return True
+
+            def terminate(self):
+                if self._explode:
+                    raise OSError("terminate exploded")
+                events.append("terminate")
+
+            def join(self, timeout=None):
+                events.append("join")
+
+        class _FakePipeline:
+            def __init__(self, checkpoint, device_map, *, store_dir=None):
+                self._workers = [
+                    (_FakeProcess(explode=True), None, None),
+                    (_FakeProcess(), None, None),
+                ]
+
+            def warmup(self, timeout=900.0):
+                raise TimeoutError("worker never answered")
+
+            def shutdown(self, timeout=120.0):
+                raise SystemExit("shutdown exploded")
+
+        monkeypatch.setattr(rp, "RolePipeline", _FakePipeline)
+        with pytest.raises(TimeoutError, match="never answered"):
+            rp.RoleServeRunner("/ckpt", {})
+        assert events == ["terminate", "join"]
+
+    def test_main_rejects_per_role_servers(self, clean_env, monkeypatch):
+        from omni_infinity.serve.__main__ import main
+
+        monkeypatch.setenv("OMNI_ROLE", "decoder")
+        with pytest.raises(NotImplementedError, match="per-role"):
+            main()
 
 
 class TestStagePayload:

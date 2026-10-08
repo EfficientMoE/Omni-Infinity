@@ -62,6 +62,8 @@ def _run_role_stage(role: Role, config: dict[str, Any], payload: StagePayload):
 
     pipeline = _worker_pipeline(role, config)
     device = config["device"]
+    if payload.meta.get("warmup"):
+        return payload
     if role is Role.ENCODER:
         request = payload.meta.pop("request")
         state = prepare_state(pipeline, **request)
@@ -166,6 +168,21 @@ class RolePipeline:
         self._entry = self._workers[0][1]
         self._exit = self._workers[-1][2]
 
+    def warmup(self, timeout: float = 900.0) -> None:
+        """Force every role process to load its components now."""
+
+        self._entry.put(
+            StagePayload(
+                job_id="__warmup__",
+                stage=Role.ENCODER,
+                tensors={},
+                meta={"warmup": True},
+            )
+        )
+        ack = self._exit.get(timeout=timeout)
+        if ack.job_id != "__warmup__":
+            raise RuntimeError("unexpected payload during warmup")
+
     def submit(self, job_id: str, request: dict[str, Any]) -> None:
         self._entry.put(
             StagePayload(
@@ -215,3 +232,98 @@ class RolePipeline:
             )
             error.leftovers = leftovers
             raise error
+
+
+class RoleServeRunner:
+    """Serve-facing runner backed by the cross-process role pipeline.
+
+    Drop-in for ``ReferenceRunner`` inside ``JobService``: ``generate``
+    submits one job and blocks for its result, so the HTTP contract
+    (single serialized worker, HTTP 409 semantics) is unchanged.
+    Cross-job stage overlap inside the server needs a JobService
+    refactor and is tracked as follow-up in #42; the win wired here is
+    the fully-resident multi-GPU path (~3.8s/job vs ~38s streamed).
+    Progress is coarse: completed steps jump 0 -> total on completion.
+    """
+
+    def __init__(
+        self,
+        checkpoint: str,
+        device_map: dict[Role, str],
+        *,
+        store_dir: str | None = None,
+        warmup_timeout: float = 900.0,
+    ) -> None:
+        self._pipeline = RolePipeline(
+            checkpoint, device_map, store_dir=store_dir
+        )
+        try:
+            self._pipeline.warmup(timeout=warmup_timeout)
+        except BaseException:
+            try:
+                self._pipeline.shutdown(timeout=30.0)
+            except BaseException:
+                for process, _, _ in self._pipeline._workers:
+                    try:
+                        if process.is_alive():
+                            process.terminate()
+                            process.join(timeout=30)
+                    except BaseException:
+                        continue
+            raise
+        self._job_counter = 0
+
+    def generate(
+        self,
+        prompt: str,
+        *,
+        seed: int = 0,
+        num_inference_steps: int = 8,
+        resolution: str = "256p",
+        num_frames: int = 8,
+        output_type: str = "np",
+        references: list[Any] | None = None,
+        image: Any = None,
+        last_image: Any = None,
+        step_callback: Any = None,
+        denoise_cache: Any = None,
+    ):
+        from omni_infinity.runner import (
+            GenerationResult,
+            resolve_resolution,
+        )
+
+        if denoise_cache is not None:
+            raise ValueError(
+                "denoise_cache is not supported on the role pipeline"
+            )
+        height, width = resolve_resolution(resolution)
+        request: dict[str, Any] = {
+            "prompt": prompt,
+            "height": height,
+            "width": width,
+            "num_frames": num_frames,
+            "num_inference_steps": num_inference_steps,
+            "generator": torch.Generator("cpu").manual_seed(seed),
+            "output_type": output_type,
+        }
+        if image is not None:
+            request["image"] = image
+        if last_image is not None:
+            request["last_image"] = last_image
+        if references is not None:
+            request["references"] = references
+        self._job_counter += 1
+        job_id = f"role-job-{self._job_counter}"
+        self._pipeline.submit(job_id, request)
+        result = self._pipeline.collect(timeout=3600)
+        if result.job_id != job_id:
+            raise RuntimeError(
+                f"out-of-order result {result.job_id!r} for {job_id!r}"
+            )
+        if step_callback is not None:
+            step_callback(num_inference_steps, num_inference_steps)
+        return GenerationResult(**result.meta["outputs"])
+
+    def shutdown(self) -> None:
+        self._pipeline.shutdown()

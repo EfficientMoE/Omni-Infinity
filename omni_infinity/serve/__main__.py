@@ -10,11 +10,10 @@ def main() -> None:
     settings = ServerSettings.from_env()
     if settings.workers != 1:
         raise ValueError("OMNI_WORKERS must be 1 for the job-serving API")
-    if settings.role != "all":
+    if settings.role in {"encoder", "denoiser", "decoder"}:
         raise NotImplementedError(
-            "OMNI_ROLE split-role serving is not wired up yet; "
-            "only OMNI_ROLE=all is currently supported (P7 Phase 1 "
-            "lands split roles in a later increment)"
+            "per-role servers are not wired up yet; use OMNI_ROLE=all "
+            "or the single-host coordinator OMNI_ROLE=pipeline"
         )
     uvicorn.run(
         "omni_infinity.serve.app:create_app",
