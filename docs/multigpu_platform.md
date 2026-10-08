@@ -72,7 +72,7 @@ Unidirectional, P2P **enabled** (GB/s) — ~52–55 intra-socket, ~46–50 cross
 ```
 
 Unidirectional, P2P **disabled**: flat ~40–42 GB/s (staged through host).
-P2P gain: **+30 %** bandwidth.
+P2P gain: **+30 %** intra-socket (~+17–20 % cross-socket).
 
 Bidirectional, P2P **enabled** (GB/s):
 
@@ -164,13 +164,21 @@ NCCL_P2P_DISABLE=1
   socket** (degree ≤4 on GPUs 0–3, or a PIX/NODE subset). Never span
   sockets with `NCCL_P2P_LEVEL=SYS`.
 - **Role placement:** put the bidirectionally-chatty pair (denoiser group
-  internals) on NODE pairs (0↔2, 1↔3: 104 GB/s bidi) in preference to PIX
-  pairs (52 GB/s bidi cap). Encoder→denoiser→decoder handoffs are
-  unidirectional and placement-insensitive.
-- **Sizing check:** a 256p/120f latent (≈ `1×C×120×16×16` bf16) is a few
-  tens of MB — a sub-millisecond copy at 50 GB/s. Handoff bandwidth is not
-  a bottleneck for stage pipelining; latency discipline (streams, events)
-  is what matters.
+  internals) on NODE pairs (0↔2, 1↔3) in preference to PIX pairs. Note the
+  regimes: the 104 vs 52 GB/s gap is for **CE copies**; for **NCCL
+  collectives** the NODE advantage is ~24 % (24.6 vs 19.8 GB/s alltoall
+  busbw), not 2×. Encoder→denoiser→decoder handoffs are unidirectional
+  and placement-insensitive. The PIX bidi cap is plausibly an ACS-on
+  upstream-redirection effect — disabling ACS (contingency above) could
+  lift PIX bidi toward ~104 GB/s and change this calculus.
+- **Sizing check:** a 256p/120f latent handoff (latents + embeds) is at
+  most a few hundred MB — single-digit milliseconds at ~50 GB/s. Handoff
+  bandwidth is not a bottleneck for stage pipelining; latency discipline
+  (streams, events) is what matters.
+- **Caveat:** NCCL numbers were measured with system NCCL 2.28.9; serving
+  uses torch's bundled 2.29.7. Re-confirm the two decisive rows (6-GPU
+  chan8, cross-socket SYS collapse) on the torch stack before relying on
+  them in production tuning.
 
 ## Reproduction
 

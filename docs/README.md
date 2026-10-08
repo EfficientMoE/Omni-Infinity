@@ -67,6 +67,13 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
 - [Attribution runlog](attribution_vdn_runlog.md) — the raw replay commands
   and QA output backing the attribution study.
 
+## Multi-GPU (P7, issue #42)
+
+- [Platform validation](multigpu_platform.md) — measured P2P/NCCL results
+  on the 6× RTX PRO 6000 host, tuning recommendations, and the Phase 0
+  gate verdict for the
+  [P7 plan](superpowers/plans/2026-10-07-p7-multigpu.md).
+
 ## Research notes
 
 - [SM120 optimization gap analysis](sm120_gap_analysis.md) — what vLLM and
