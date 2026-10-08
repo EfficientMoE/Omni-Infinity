@@ -114,5 +114,5 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 3fd414a docs(p2): record ablation decisions — APPROVE
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
-- docs(p2): record ablation review verdicts — APPROVE
+- 4ff0c61 docs(p2): record ablation review verdicts — APPROVE (delegate self-review, 2026-10-08)
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
