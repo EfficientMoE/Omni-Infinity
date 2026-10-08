@@ -57,3 +57,19 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
   host cache is installed.
 - Keep C5 outside the graph wrapper. A cache-hit step bypasses replay; generation
   completion forwards the C5 skipped count to the manager's cache-skip reason.
+
+## [2026-10-08] Phase 2 Task 4 review verdicts
+
+- 62dc7b6 feat(serve): persist CUDA graph telemetry — REQUEST-CHANGES
+  (lifetime counters were not job-scoped; resolved by 937fd80)
+- 937fd80 fix(serve): scope graph telemetry to each job — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 5bdb189 docs(p2): document serve graph telemetry — REQUEST-CHANGES
+  (review requested the plan checkbox; explicit user directive reserves it for
+  orchestrator verification, clarified by follow-up documentation)
+- bc47fc2 docs(p2): preserve telemetry task ownership — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 46e7b05 docs(p2): record serve telemetry learnings — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- docs(p2): record serve telemetry review verdicts — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
