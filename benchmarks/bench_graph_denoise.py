@@ -145,11 +145,21 @@ def parse_driver_version(banner: str) -> str:
 def graph_execution_gate_passes(profile_name: str, stats: dict | None) -> bool:
     if profile_name != "graph-resident":
         return True
+    expected_fallbacks = {"warmup_not_done", "shape_bucket_miss"}
+    unexpected_fallback = bool(
+        stats is not None
+        and any(
+            count and reason not in expected_fallbacks
+            for reason, count in stats["fallback_reasons"].items()
+        )
+    )
     return bool(
         stats is not None
         and stats["captures"] >= 1
         and stats["replays"] >= 1
         and stats["capture_failures"] == 0
+        and stats["graphs"] >= 1
+        and not unexpected_fallback
     )
 
 

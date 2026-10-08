@@ -11,6 +11,7 @@ def _stats(*, captures=0, replays=0, failures=0, fallbacks=None):
         "captures": captures,
         "replays": replays,
         "capture_failures": failures,
+        "graphs": 1 if captures else 0,
         "fallback_reasons": fallbacks or {},
     }
 
@@ -115,6 +116,20 @@ def test_graph_execution_gate_rejects_eager_fallback_and_capture_failure():
     assert not bench_graph_denoise.graph_execution_gate_passes(
         "graph-resident", _stats(captures=1, replays=3, failures=1)
     )
+    assert not bench_graph_denoise.graph_execution_gate_passes(
+        "graph-resident",
+        _stats(captures=1, replays=2, fallbacks={"replay_failed": 1}),
+    )
+    dropped = _stats(captures=1, replays=3)
+    dropped["graphs"] = 0
+    assert not bench_graph_denoise.graph_execution_gate_passes(
+        "graph-resident", dropped
+    )
     assert bench_graph_denoise.graph_execution_gate_passes(
-        "graph-resident", _stats(captures=1, replays=3)
+        "graph-resident",
+        _stats(
+            captures=1,
+            replays=3,
+            fallbacks={"warmup_not_done": 2, "shape_bucket_miss": 1},
+        ),
     )
