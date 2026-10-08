@@ -2,6 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status update ([P6](2026-10-07-p6-cache-upgrades.md), 2026-10-08):** C2
+> is no longer deferred. `encoder-cache` joined `condition-cache` and
+> `vision-cache` as a dynamically loaded registry optimization
+> (`omni_infinity/caches/prefix.py`), and C5 gained the v2 indicator,
+> accumulate trigger, and approximator modes. The "C2 and C4 have no
+> registry entry" constraint below describes the contract as of this
+> plan's completion date; [caches_c2_prefix](../../caches_c2_prefix.md)
+> owns the current C2 design.
+
 **Goal:** Add the shared hooks the five issue-#24 caches plug into, without implementing any cache.
 
 **Architecture:** Cache modules stay optional imports. `registry.runner_kwargs_for` consults `load_cache_optimizations()` after the static `OPTIMIZATIONS` dict, so `tests/test_registry.py` keeps its exact four-name set. `attach.py` is the only place runners call into a cache. A missing module and a set flag is a loud error, not a silent no-op.

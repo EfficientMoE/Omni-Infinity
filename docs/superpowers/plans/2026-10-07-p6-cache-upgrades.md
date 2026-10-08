@@ -51,12 +51,17 @@ quantified in cache_benchmarks.
 
 ## Tasks
 
-- [ ] C5 indicator v2 + polynomial fit on existing probe set
-- [ ] taylor1 mode + FBCache-style alternative; A/B on probe
-- [ ] cache_benchmarks rows (speedup vs quality curves, thresholds)
-- [ ] C2 exact cache + `encoder-cache` registry opt + LRU bounds
-- [ ] C2 contribution row (VidProM trace + multi-prompt demo timing)
-- [ ] Contract doc updates (caches_c5/caches_c2) + #42 checkboxes
+- [x] C5 indicator v2 + polynomial fit on existing probe set
+- [x] taylor1 mode + FBCache-style alternative; A/B on probe
+- [ ] cache_benchmarks rows (speedup vs quality curves, thresholds) —
+      suite cells, verdicts, and fitting workflow landed; measured rows
+      are weights-gated (see cache_benchmarks "Pending weights-gated
+      measurements")
+- [x] C2 exact cache + `encoder-cache` registry opt + LRU bounds
+- [ ] C2 contribution row (VidProM trace + multi-prompt demo timing) —
+      cell, stats plumbing, and verdict rule landed; measured row is
+      weights-gated
+- [x] Contract doc updates (caches_c5/caches_c2) + #42 checkboxes
 
 ## Verification
 
