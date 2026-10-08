@@ -56,7 +56,7 @@ comparable DiTs; FastUSP found kernel-launch overhead dominant on Blackwell.
 - [x] Graph manager (vendored pattern) + resident-profile capture
 - [x] Fallback-reason telemetry in job logs
 - [x] Ablation rows: baseline / compile / graph / compile+graph × NFE
-- [ ] Update issue #42; note interaction rules with C5 in caches docs
+- [x] Update issue #42; note interaction rules with C5 in caches docs
 
 ## Verification
 

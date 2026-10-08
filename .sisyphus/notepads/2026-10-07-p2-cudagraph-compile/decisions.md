@@ -116,3 +116,18 @@ REQUEST-CHANGES is blocking: fix, re-review, then push. Everything else in the p
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
 - 4ff0c61 docs(p2): record ablation review verdicts — APPROVE (delegate self-review, 2026-10-08)
   (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+- 7464f13 docs(p2): mark task 5 complete — APPROVE
+  (elm/gpt-5.6-sol, single-pass, 2026-10-08)
+
+## [2026-10-08] Phase 2 Task 6 — issue update + C5 interaction docs
+
+- Append a "P2 CUDA graphs and regional compile" section to
+  docs/caches_c5_denoise.md documenting the wrapper nesting (C5 cached_forward
+  outside graph_forward outside the real/compiled transformer forward), the
+  cache-hit bypass of replay, the post-generation record_cache_skip accounting,
+  and the resident-only large-GPU scope. Verified against
+  omni_infinity/caches/denoise.py, omni_infinity/cuda_graph.py, and
+  omni_infinity/runner.py before writing.
+- Post an honest P2 summary comment on issue #42 (graph-only is the sole fast +
+  bitwise config; compile/compile+graph fail the golden gate; resident/large-GPU
+  scope; block-stream demoted in Phase 0). Do not close the issue.
