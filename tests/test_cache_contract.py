@@ -29,6 +29,7 @@ def test_static_optimization_set_excludes_caches():
     assert set(registry.OPTIMIZATIONS) == {
         "adaln-host-cache",
         "fp8",
+        "fp4",
         "block-stream",
         "text-encoder-stream",
     }

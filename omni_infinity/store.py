@@ -183,6 +183,7 @@ def load_transformer_with_adaln_cache(
     fp8_skip_last_blocks: int = 0,
     adaln_fp8: bool = False,
     fp8_mode: str = "block",
+    fp4: bool = False,
 ):
     from omni_infinity.adaln import HostResidentAdaLN
 
@@ -227,6 +228,13 @@ def load_transformer_with_adaln_cache(
             skip_blocks=skip_blocks,
             mode=fp8_mode,
         )
+    if fp4:
+        # MXFP4 mirrors the FP8 branch above one rung down the quality
+        # ladder (P5 phase 1): packed E2M1 weights + E8M0 scales, applied
+        # on the CPU model so weights are 4-bit before .to(device).
+        from omni_infinity.fp4 import apply_scaled_fp4_casting
+
+        apply_scaled_fp4_casting(model, compute_dtype=torch_dtype)
     return model.eval()
 
 

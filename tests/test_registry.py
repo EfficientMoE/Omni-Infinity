@@ -15,6 +15,7 @@ def test_categories_are_disjoint_and_complete():
     assert opt_names == {
         "adaln-host-cache",
         "fp8",
+        "fp4",
         "block-stream",
         "text-encoder-stream",
     }
@@ -58,6 +59,15 @@ def test_runner_kwargs_for_uses_arch_specific_fp8_names():
     hybrid = registry.runner_kwargs_for("vdn-hybrid", ["fp8"])
     assert dense == {"transformer_fp8": True}
     assert hybrid == {"fp8": True}
+
+
+def test_fp4_is_h3_only_and_maps_to_transformer_fp4():
+    spec = registry.OPTIMIZATIONS["fp4"]
+    assert spec.supported_archs == ("h3-dense",)
+    dense = registry.runner_kwargs_for("h3-dense", ["fp4"])
+    assert dense == {"transformer_fp4": True}
+    with pytest.raises(ValueError, match="fp4"):
+        registry.runner_kwargs_for("vdn-hybrid", ["fp4"])
 
 
 def test_resolve_profile_rejects_unknown_arch_and_duplicates():
