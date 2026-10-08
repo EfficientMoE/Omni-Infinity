@@ -175,6 +175,15 @@ def _module_target(module, fallback_device, fallback_dtype):
     return parameter.device, parameter.dtype
 
 
+def _module_device(module, fallback_device):
+    if not isinstance(module, torch.nn.Module):
+        return fallback_device
+    tensor = next(module.parameters(), None)
+    if tensor is None:
+        tensor = next(module.buffers(), None)
+    return fallback_device if tensor is None else tensor.device
+
+
 def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
     """Return the first H3 block's AdaLN-modulated noisy video input."""
     hidden_states = _resolve_input(
@@ -208,9 +217,8 @@ def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
         transformer.time_embedder, temb.device, temb.dtype
     )
     temb = transformer.time_embedder(temb.to(device=device, dtype=dtype))
-    device, dtype = _module_target(block.adaln_proj, temb.device, temb.dtype)
     shift_msa, scale_msa, *_ = block.adaln_proj(
-        temb.to(device=device, dtype=dtype)
+        temb.to(device=_module_device(block.adaln_proj, temb.device))
     )
     norm_hidden_states = block.norm1(projected)
     device = norm_hidden_states.device
@@ -287,10 +295,11 @@ def _fbcache_signal(transformer, args: tuple, kwargs: dict, config):
     block = transformer.transformer_blocks[0]
     device, dtype = _module_target(block.norm1, packed.device, packed.dtype)
     packed = packed.to(device=device, dtype=dtype)
-    device, dtype = _module_target(block.adaln_proj, temb.device, temb.dtype)
-    temb = temb.to(device=device, dtype=dtype)
+    temb = temb.to(device=_module_device(block.adaln_proj, temb.device))
     adaln_indices = (timestep_indices * 3 + token_tags).to(packed.device)
-    rotary_emb = transformer.rope(position_ids.to(packed.device))
+    rotary_emb = transformer.rope(
+        position_ids.to(_module_device(transformer.rope, packed.device))
+    )
     rotary_emb = tree_map(lambda tensor: tensor.to(packed.device), rotary_emb)
     block_output = block(packed, temb, adaln_indices, rotary_emb)
     packed = packed.to(device=block_output.device, dtype=block_output.dtype)

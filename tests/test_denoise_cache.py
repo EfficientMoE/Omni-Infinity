@@ -530,9 +530,11 @@ class _ParamAdaLN(_SyntheticAdaLN):
     def __init__(self):
         super().__init__()
         self.proj = torch.nn.Linear(2, 2)
+        self.received_dtype = None
 
     def forward(self, temb):
-        return super().forward(self.proj(temb))
+        self.received_dtype = temb.dtype
+        return super().forward(self.proj(temb.to(self.proj.weight.dtype)))
 
 
 class _ProjectedH3(_SyntheticH3):
@@ -579,6 +581,54 @@ def test_teacache_signal_bridges_offloaded_weights_and_cuda_inputs():
     )
 
     assert signal.device.type == "cpu"
+
+
+def test_adaln_receives_temb_at_incoming_precision():
+    module = _ProjectedH3(torch.float64)
+    kwargs = {
+        "hidden_states": torch.tensor([[[3.0, 4.0], [5.0, 12.0]]]),
+        "timestep": torch.tensor([[0.25, 0.5]]),
+        "timestep_indices": torch.tensor([0, 0]),
+        "token_tags": torch.tensor([0, 0]),
+        "video_indices": torch.tensor([0, 1]),
+    }
+
+    denoise_module._teacache_signal(
+        module, (), kwargs, _config(indicator="teacache", accumulate=True)
+    )
+
+    adaln = module.transformer_blocks[0].adaln_proj
+    assert adaln.received_dtype == torch.float32
+
+
+class _BufferRope(torch.nn.Module):
+    def __init__(self, device):
+        super().__init__()
+        self.register_buffer(
+            "inv_freq", torch.ones(2, device=device), persistent=False
+        )
+
+    def forward(self, position_ids):
+        return (position_ids, -position_ids)
+
+
+@pytest.mark.gpu
+def test_fbcache_signal_bridges_gpu_rope_buffer_and_cpu_block():
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    module = _SyntheticFBCacheH3()
+    module.rope = _BufferRope("cuda")
+    kwargs = {
+        name: value.to("cuda") for name, value in _fbcache_kwargs(3.0).items()
+    }
+
+    signal = denoise_module._fbcache_signal(
+        module, (), kwargs, _config(indicator="fbcache")
+    )
+
+    torch.testing.assert_close(
+        signal.cpu(), _fbcache_kwargs(3.0)["hidden_states"] * 0.1
+    )
 
 
 def test_cache_decision_wrapper_remains_plain_python():
