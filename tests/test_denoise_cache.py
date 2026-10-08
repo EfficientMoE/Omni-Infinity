@@ -344,10 +344,20 @@ def test_teacache_signal_matches_h3_first_block_adaln_formula():
     torch.testing.assert_close(actual, expected)
 
 
+class _ParamAdaLN(_SyntheticAdaLN):
+    def __init__(self):
+        super().__init__()
+        self.proj = torch.nn.Linear(2, 2)
+
+    def forward(self, temb):
+        return super().forward(self.proj(temb))
+
+
 class _ProjectedH3(_SyntheticH3):
     def __init__(self, dtype):
         super().__init__()
         self.proj_in = torch.nn.Linear(2, 2, dtype=dtype)
+        self.transformer_blocks[0].adaln_proj = _ParamAdaLN().to(dtype)
 
 
 def test_teacache_signal_follows_module_weight_dtype():

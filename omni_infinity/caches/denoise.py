@@ -195,16 +195,24 @@ def _teacache_signal(transformer, args: tuple, kwargs: dict, config):
         transformer.time_embedder, temb.device, temb.dtype
     )
     temb = transformer.time_embedder(temb.to(device=device, dtype=dtype))
-    shift_msa, scale_msa, *_ = block.adaln_proj(temb)
+    device, dtype = _module_target(block.adaln_proj, temb.device, temb.dtype)
+    shift_msa, scale_msa, *_ = block.adaln_proj(
+        temb.to(device=device, dtype=dtype)
+    )
     norm_hidden_states = block.norm1(projected)
     device = norm_hidden_states.device
+    dtype = norm_hidden_states.dtype
     adaln_indices = (
         (timestep_indices * 3 + token_tags)
         .index_select(0, video_indices)
         .to(device)
     )
-    scale_msa = scale_msa.to(device).index_select(0, adaln_indices)
-    shift_msa = shift_msa.to(device).index_select(0, adaln_indices)
+    scale_msa = scale_msa.to(device=device, dtype=dtype).index_select(
+        0, adaln_indices
+    )
+    shift_msa = shift_msa.to(device=device, dtype=dtype).index_select(
+        0, adaln_indices
+    )
     return norm_hidden_states * (1.0 + scale_msa) + shift_msa
 
 
