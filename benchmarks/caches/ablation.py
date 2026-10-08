@@ -180,6 +180,16 @@ def _runner_kwargs(cell: Cell, args) -> dict:
     return kwargs
 
 
+def c5_cell_skip(config: CacheConfig, args) -> str | None:
+    if not config.denoise_cache:
+        return None
+    if not args.c5_coefficients:
+        return "c5-uncalibrated"
+    if config.denoise_indicator != args.c5_fit_signal:
+        return "c5-signal-mismatch"
+    return None
+
+
 def _denoise_config(config: CacheConfig, args):
     if not config.denoise_cache:
         return None
@@ -203,10 +213,9 @@ def _run_cell(cell: Cell, args) -> dict:
     config = cell.config
     denoise_config = None
     if config.denoise_cache:
-        if not args.c5_coefficients:
-            return {"cell": cell.name, "skip": "c5-uncalibrated"}
-        if config.denoise_indicator != args.c5_fit_signal:
-            return {"cell": cell.name, "skip": "c5-signal-mismatch"}
+        skip = c5_cell_skip(config, args)
+        if skip is not None:
+            return {"cell": cell.name, "skip": skip}
         denoise_config = _denoise_config(config, args)
 
     from omni_infinity.runner import ReferenceRunner, _transformer_component

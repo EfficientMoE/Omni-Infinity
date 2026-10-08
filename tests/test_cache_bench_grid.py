@@ -101,6 +101,36 @@ def test_c5_cell_with_mismatched_fit_signal_is_marked_skip():
     assert row["notes"] == "c5-signal-mismatch"
 
 
+def test_c5_fit_signal_gate_matches_each_indicator_to_its_cells():
+    from benchmarks.caches.ablation import c5_cell_skip
+    from benchmarks.caches.contract import CACHE_CONFIGS
+
+    configs = {config.name: config for config in CACHE_CONFIGS}
+    runnable = {
+        "raw": {"c5"},
+        "teacache": {"c5-teacache", "c5-taylor1"},
+        "fbcache": {"c5-fbcache"},
+    }
+    c5_names = {
+        name for name, config in configs.items() if config.denoise_cache
+    }
+
+    for fit_signal, expected in runnable.items():
+        args = SimpleNamespace(
+            c5_coefficients=(1.0, 0.0), c5_fit_signal=fit_signal
+        )
+        for name in c5_names:
+            skip = c5_cell_skip(configs[name], args)
+            if name in expected:
+                assert skip is None
+            else:
+                assert skip == "c5-signal-mismatch"
+
+    uncalibrated = SimpleNamespace(c5_coefficients=(), c5_fit_signal="raw")
+    assert c5_cell_skip(configs["c5"], uncalibrated) == "c5-uncalibrated"
+    assert c5_cell_skip(configs["baseline"], uncalibrated) is None
+
+
 def test_c5_cell_rows_carry_step_counters_and_score():
     cell = next(
         candidate for candidate in GRID if candidate.config.name == "c5"
