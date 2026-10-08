@@ -80,6 +80,23 @@ def test_every_p2_run_builds_timing_and_nfe8_parity_commands():
             assert parity[parity.index("--p2-cell") + 1] == "parity"
 
 
+def test_p2_cell_command_forwards_runtime_paths():
+    run = ablation.P2_GRID[0]
+    argv = ablation.build_p2_cell_command(
+        run,
+        mode="parity",
+        results_dir="/tmp/p2",
+        checkpoint="/tmp/checkpoint",
+        store_dir="/tmp/store",
+        first_frame="/tmp/frame.png",
+        goldens="/tmp/goldens.pt",
+    )
+    assert argv[argv.index("--checkpoint") + 1] == "/tmp/checkpoint"
+    assert argv[argv.index("--store-dir") + 1] == "/tmp/store"
+    assert argv[argv.index("--first-frame") + 1] == "/tmp/frame.png"
+    assert argv[argv.index("--goldens") + 1] == "/tmp/goldens.pt"
+
+
 def test_p2_import_and_dry_run_are_cpu_only(tmp_path):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(pathlib.Path(__file__).resolve().parents[1])
@@ -148,3 +165,33 @@ def test_collect_p2_row_reuses_existing_cell_artifacts(tmp_path):
     assert row["rms_rel"] == 0.0
     assert row["cosine"] == 1.0
     assert "parity=bitwise" in row["notes"]
+
+
+def test_p2_cell_gate_requires_provenance_and_every_graph_replay():
+    comparable = {"comparable": True}
+    mismatch = {"comparable": False}
+    failed_parity = {"bitwise": False}
+    assert not ablation._p2_cell_gate_passes(
+        config="compile",
+        mode="parity",
+        optimizations=ablation.P2_CONFIG_OPTIMIZATIONS["compile"],
+        provenance=mismatch,
+        parity=failed_parity,
+        graph_replayed=None,
+    )
+    assert ablation._p2_cell_gate_passes(
+        config="compile",
+        mode="parity",
+        optimizations=ablation.P2_CONFIG_OPTIMIZATIONS["compile"],
+        provenance=comparable,
+        parity=failed_parity,
+        graph_replayed=None,
+    )
+    assert not ablation._p2_cell_gate_passes(
+        config="compile+graph",
+        mode="timing",
+        optimizations=ablation.P2_CONFIG_OPTIMIZATIONS["compile+graph"],
+        provenance=None,
+        parity=None,
+        graph_replayed=False,
+    )

@@ -327,13 +327,18 @@ def build_p2_cell_command(
     *,
     mode: str,
     results_dir: os.PathLike[str] | str,
+    checkpoint: os.PathLike[str] | str = P2_CHECKPOINT,
+    store_dir: os.PathLike[str] | str = P2_STORE,
+    first_frame: os.PathLike[str] | str | None = None,
+    goldens: os.PathLike[str] | str | None = None,
 ) -> list[str]:
     """Build one isolated P2 timing or parity subprocess command."""
     if run.stack != "p2":
         raise ValueError(f"not a P2 run: {run.name}")
     if mode not in {"timing", "parity"}:
         raise ValueError(f"unknown P2 cell mode: {mode}")
-    return [
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    argv = [
         "python",
         "benchmarks/ablation_vdn.py",
         "--p2-cell",
@@ -345,10 +350,31 @@ def build_p2_cell_command(
         "--results-dir",
         str(_path(results_dir)),
         "--checkpoint",
-        str(P2_CHECKPOINT),
+        str(_path(checkpoint)),
         "--store-dir",
-        str(P2_STORE),
+        str(_path(store_dir)),
     ]
+    argv.extend(
+        [
+            "--first-frame",
+            str(
+                _path(first_frame)
+                if first_frame is not None
+                else repo / "tests" / "fixtures" / "ref.png"
+            ),
+            "--goldens",
+            str(
+                _path(goldens)
+                if goldens is not None
+                else repo
+                / "tests"
+                / "fixtures"
+                / "goldens"
+                / "fl2va_goldens.pt"
+            ),
+        ]
+    )
+    return argv
 
 
 def _sample_peak_vram(
@@ -479,6 +505,26 @@ def _p2_graph_execution(
         f"capture_failures={graph_stats['capture_failures']}, "
         f"graphs={graph_stats['graphs']}"
     )
+
+
+def _p2_cell_gate_passes(
+    *,
+    config: str,
+    mode: str,
+    optimizations: list[str],
+    provenance: dict[str, Any] | None,
+    parity: dict[str, Any] | None,
+    graph_replayed: bool | None,
+) -> bool:
+    if "cuda-graph" in optimizations and graph_replayed is not True:
+        return False
+    if mode != "parity":
+        return True
+    if provenance is None or not provenance["comparable"]:
+        return False
+    if config in {"baseline", "graph"}:
+        return bool(parity is not None and parity["bitwise"])
+    return True
 
 
 def _parse_nvidia_driver_version(banner: str) -> str:
@@ -714,12 +760,15 @@ def _run_p2_cell(args) -> int:
             f"cosine={cosine:.9f}; {graph_note}",
             flush=True,
         )
-    if args.p2_config in {"baseline", "graph"} and args.p2_cell == "parity":
-        if not provenance["comparable"] or not parity["bitwise"]:
-            print("required bitwise parity gate failed", flush=True)
-            return 1
-    if args.p2_config == "graph" and graph_replayed is not True:
-        print("required graph-only replay gate failed", flush=True)
+    if not _p2_cell_gate_passes(
+        config=args.p2_config,
+        mode=args.p2_cell,
+        optimizations=optimizations,
+        provenance=provenance,
+        parity=parity,
+        graph_replayed=graph_replayed,
+    ):
+        print("P2 execution/provenance gate failed", flush=True)
         return 1
     if compile_cache is not None:
         shutil.rmtree(compile_cache, ignore_errors=True)
@@ -732,6 +781,10 @@ def execute_p2(
     *,
     timing_gpu: int,
     parity_gpu: int,
+    checkpoint: os.PathLike[str] | str = P2_CHECKPOINT,
+    store_dir: os.PathLike[str] | str = P2_STORE,
+    first_frame: os.PathLike[str] | str | None = None,
+    goldens: os.PathLike[str] | str | None = None,
 ) -> dict[str, Any]:
     """Execute one timing cell and its NFE-8 parity companion."""
     results = _path(results_dir)
@@ -747,14 +800,26 @@ def execute_p2(
         }
     )
     timing_command = build_p2_cell_command(
-        run, mode="timing", results_dir=results
+        run,
+        mode="timing",
+        results_dir=results,
+        checkpoint=checkpoint,
+        store_dir=store_dir,
+        first_frame=first_frame,
+        goldens=goldens,
     )
     _run_subprocess(timing_command, repo, env, timing_gpu, sample_vram=False)
     if nfe == 8:
         parity_env = env.copy()
         parity_env["CUDA_VISIBLE_DEVICES"] = str(parity_gpu)
         parity_command = build_p2_cell_command(
-            run, mode="parity", results_dir=results
+            run,
+            mode="parity",
+            results_dir=results,
+            checkpoint=checkpoint,
+            store_dir=store_dir,
+            first_frame=first_frame,
+            goldens=goldens,
         )
         _run_subprocess(
             parity_command,
@@ -955,12 +1020,24 @@ def main() -> int:
         for run in runs:
             if run.stack == "p2":
                 timing = build_p2_cell_command(
-                    run, mode="timing", results_dir=results
+                    run,
+                    mode="timing",
+                    results_dir=results,
+                    checkpoint=args.checkpoint,
+                    store_dir=args.store_dir,
+                    first_frame=args.first_frame,
+                    goldens=args.goldens,
                 )
                 print(_dry_run_line(run, timing, vdn_dir, args.timing_gpu))
                 if run.params["nfe"] == 8:
                     parity = build_p2_cell_command(
-                        run, mode="parity", results_dir=results
+                        run,
+                        mode="parity",
+                        results_dir=results,
+                        checkpoint=args.checkpoint,
+                        store_dir=args.store_dir,
+                        first_frame=args.first_frame,
+                        goldens=args.goldens,
                     )
                     print(_dry_run_line(run, parity, vdn_dir, args.parity_gpu))
             else:
@@ -987,6 +1064,10 @@ def main() -> int:
                 results,
                 timing_gpu=args.timing_gpu,
                 parity_gpu=args.parity_gpu,
+                checkpoint=args.checkpoint,
+                store_dir=args.store_dir,
+                first_frame=args.first_frame,
+                goldens=args.goldens,
             )
         else:
             row = execute(run, results, vdn_dir, args.ckpts, args.gpu)
