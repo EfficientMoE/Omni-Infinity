@@ -286,6 +286,13 @@ jobs/<uuid>/
   output.mp4
 ```
 
+Successful records optionally include `graph_telemetry` in `job.json` and the
+job API response when the loaded runner has a CUDA-graph manager. It reports
+per-job capture/replay counts, capture failures and time, warmup and eager
+fallback counts, plus final live-graph, pool-byte, and manager-generation
+gauges.
+Profiles without a manager and older records expose `graph_telemetry: null`.
+
 On process restart, persisted `running` jobs become `failed` with a restart
 message; denoising is not resumed. Queued records remain on disk but are not
 automatically resubmitted. Terminal records remain pollable directly by their

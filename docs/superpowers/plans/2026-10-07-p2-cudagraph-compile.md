@@ -231,3 +231,36 @@ sources (copy time falls 52.5%). T5 should expect graph-only to be the useful
 row. Compile+graph may recover some H2D time but still inherits Phase 1's
 failed compile parity and should not be expected to beat or validate against
 graph-only without new evidence.
+
+## Phase 2 Task 4 — serve telemetry (2026-10-08)
+
+Successful serve records now expose optional `JobRecord.graph_telemetry` data
+in both persisted `job.json` and `GET /v1/jobs/{id}` responses. `JobService`
+brackets generation with CUDA-graph manager snapshots: the terminal
+`succeeded` transition stores per-job deltas for capture, replay, failure,
+warmup, capture time, and fallback-reason counters, plus the final graph-pool,
+live-graph, and generation gauges. Profiles without a graph manager and legacy
+records remain valid with `graph_telemetry: null`; a telemetry snapshot failure
+is logged without changing successful job completion.
+
+Example `job.json` fragment:
+
+```json
+{
+  "graph_telemetry": {
+    "capture_failures": 0,
+    "capture_time_ms": 2561.91,
+    "capture_warmup_calls": 2,
+    "captures": 1,
+    "fallback_reasons": {
+      "shape_bucket_miss": 1,
+      "warmup_not_done": 2
+    },
+    "generation": 0,
+    "graph_pool_bytes": 34539520,
+    "graphs": 1,
+    "replays": 3,
+    "warmup_calls": 3
+  }
+}
+```
