@@ -66,9 +66,10 @@ design contracts, and measurement reports.
 - **Denoising-step scheduling.** Cross-step weight prefetch overlaps H2D copies
   with denoising compute (measured H2D/compute overlap of **0.637** and
   **0.599** at steps 2 and 3), with step-granular checkpointing for preemption.
-- **Opt-in caches (C1–C5).** Exact condition, vision-embedding, and
-  calibrated denoise-step caches. Nothing is on by default; contributions are
-  quantified in [docs/cache_benchmarks.md](docs/cache_benchmarks.md).
+- **Opt-in caches (C1–C5).** Exact condition, encoder-prefix,
+  vision-embedding, and calibrated denoise-step caches. Nothing is on by
+  default; contributions are quantified in
+  [docs/cache_benchmarks.md](docs/cache_benchmarks.md).
 - **Job-oriented serving.** Generation jobs with progress and artifact polling
   — not OpenAI chat completions — plus opt-in WebSocket streaming playback and
   a multi-prompt demo.
@@ -117,8 +118,9 @@ for [issue #24](https://github.com/EfficientMoE/Omni-Infinity/issues/24).
 | cache | opt-in interface | status |
 |---|---|---|
 | C1 | `condition-cache` | Registry optimization. |
-| C2 / C4 | — | C2 is deferred. C4 is unchanged upstream. |
+| C2 | `encoder-cache` | C2 is an exact encoder-prefix cache. |
 | C3 | `vision-cache` | Registry optimization. |
+| C4 | — | C4 is unchanged upstream. |
 | C5 | `--denoise-cache-coefficients` plus `--denoise-cache-threshold` | Off the registry. C5 refuses to run without H3-calibrated coefficients. |
 
 Benchmarks quantifying each cache level's contribution (microbenchmarks,

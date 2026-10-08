@@ -186,3 +186,21 @@ is `docs/superpowers/plans/2026-10-07-p6-cache-upgrades.md`.
 - Ported commit `5252cda`'s `forward_delegate` + `functools.wraps` + pre-hook
   guardian pattern because an offload/rebinding wrapper can replace
   `forward` during a computed call.
+
+## [2026-10-08] C2 exact encoder-prefix cache implementation findings
+
+- Encoder wrap site: diffusers 0.40
+  `diffusers/modular_pipelines/minimax_h3/encoders.py:91-98` calls
+  `text_encoder.model(input_ids=..., attention_mask=...,
+  mm_token_type_ids=..., use_cache=False, output_hidden_states=True,
+  **vision_kwargs)`. C2 therefore wraps `text_encoder.model.forward`, not the
+  top-level language-model head.
+- Key design: SHA256 `omni-encoder-v1` over the encoder-model namespace, full
+  token-ID tensor, and ordered vision tensors normalized through C1's
+  `stable_image_bytes()`. This is whole-presentation exact matching only; no
+  block hashes or partial-prefix splicing.
+- Admission: `max_entries=4` and an 8 GiB default `max_bytes` bound share one
+  locked OrderedDict LRU. Hits promote entries; pressure evicts oldest first.
+  An output larger than the entire byte budget has no viable victim set and is
+  transient (returned but not stored), matching MoE-Infinity's
+  TRANSIENT_ON_PRESSURE policy shape without leases/refcounts.

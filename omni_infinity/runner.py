@@ -250,6 +250,7 @@ class ReferenceRunner:
         condition_cache: bool = False,
         condition_cache_dir: str | None = None,
         vision_cache: bool = False,
+        encoder_cache: bool = False,
     ) -> "ReferenceRunner":
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
@@ -377,6 +378,7 @@ class ReferenceRunner:
             condition_cache=condition_cache,
             condition_cache_dir=condition_cache_dir,
             vision_cache=vision_cache,
+            encoder_cache=encoder_cache,
             cache_namespace=f"ReferenceRunner:{checkpoint}",
         )
         return runner
