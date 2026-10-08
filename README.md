@@ -105,7 +105,9 @@ backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
 per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
 streaming ~20 GiB peak. Ablation study:
 [docs/ablation_vdn.md](docs/ablation_vdn.md). Speedup attribution study:
-[docs/attribution_vdn.md](docs/attribution_vdn.md). Tracking:
+[docs/attribution_vdn.md](docs/attribution_vdn.md). Baseline tracking —
+VDN-H3 as the strongest tracked baseline plus the survey of claimed-stronger
+challengers: [docs/baselines_vdn.md](docs/baselines_vdn.md). Tracking:
 [#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
 
 ### Opt-in caches
@@ -538,9 +540,11 @@ golden-recording stack.
 
 A nightly workflow (`.github/workflows/nightly-gpu.yml`) runs the `gpu` and
 `weights` suites — the bitwise parity gates, the store-backed path, and the
-real job/stream API gates — on a self-hosted sm120 runner with the local
-H3 snapshot and moe-store. It is schedule/manual only, so pull requests
-never execute on the self-hosted runner.
+real job/stream API gates — on a self-hosted sm120 runner. The suite runs
+in a non-root container (`docker/Dockerfile.ci`) with the H3 snapshot and
+moe-store mounted read-only and reports written to a host-owned output
+directory. It is schedule/manual only, so pull requests never execute on
+the self-hosted runner.
 
 ## Contributing and Security
 
