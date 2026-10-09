@@ -61,11 +61,12 @@ def resolve_backend(
     if requested in (None, "auto"):
         if not torch.cuda.is_available():
             return "flex", "cpu: flex (training kernel)"
-        probe = (
-            torch.device(device)
-            if device is not None
-            else torch.device("cuda", 0)
-        )
+        if device is None:
+            probe = torch.device("cuda", 0)
+        elif isinstance(device, int):
+            probe = torch.device("cuda", device)
+        else:
+            probe = torch.device(device)
         if probe.type != "cuda":
             probe = torch.device("cuda", 0)
         cc = torch.cuda.get_device_capability(probe)
