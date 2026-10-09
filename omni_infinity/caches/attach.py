@@ -45,6 +45,7 @@ def attach_caches(
     condition_cache_dir: str | None,
     vision_cache: bool,
     cache_namespace: str,
+    encoder_cache: bool = False,
 ) -> None:
     """Attach requested optional caches to ``runner`` or fail loudly."""
     runner.condition_cache = None
@@ -70,6 +71,20 @@ def attach_caches(
         if text_encoder is None:
             text_encoder = runner.pipeline.text_encoder
         runner.vision_cache_controller = enable_vision_cache(text_encoder)
+
+    runner.encoder_cache_controller = None
+    if encoder_cache:
+        try:
+            from omni_infinity.caches.prefix import enable_encoder_cache
+        except ModuleNotFoundError as exc:
+            if not _module_is_missing(exc, "omni_infinity.caches.prefix"):
+                raise
+            raise RuntimeError("encoder-cache is not installed") from None
+        components = getattr(runner.pipeline, "components", {})
+        text_encoder = components.get("text_encoder")
+        if text_encoder is None:
+            text_encoder = runner.pipeline.text_encoder
+        runner.encoder_cache_controller = enable_encoder_cache(text_encoder)
 
     runner.cache_namespace = cache_namespace
 
@@ -148,4 +163,7 @@ def denoise_config_from_args(args):
     return DenoiseCacheConfig(
         coefficients=tuple(float(value) for value in coefficients.split(",")),
         threshold=threshold,
+        approximator=getattr(args, "denoise_cache_mode", None) or "reuse",
+        indicator=getattr(args, "denoise_cache_indicator", None) or "raw",
+        accumulate=bool(getattr(args, "denoise_cache_accumulate", False)),
     )

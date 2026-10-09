@@ -60,8 +60,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--condition-cache", action="store_true")
     parser.add_argument("--condition-cache-dir")
     parser.add_argument("--vision-cache", action="store_true")
+    parser.add_argument("--encoder-cache", action="store_true")
     parser.add_argument("--denoise-cache-coefficients")
     parser.add_argument("--denoise-cache-threshold", type=float)
+    parser.add_argument(
+        "--denoise-cache-indicator",
+        choices=["raw", "teacache", "fbcache"],
+        default="raw",
+    )
+    parser.add_argument("--denoise-cache-accumulate", action="store_true")
+    parser.add_argument(
+        "--denoise-cache-mode",
+        choices=["reuse", "taylor1"],
+        default="reuse",
+    )
     parser.add_argument("--transformer-fp8", action="store_true")
     parser.add_argument(
         "--fp8-scale",
@@ -306,6 +318,7 @@ def main() -> int:
         condition_cache=getattr(args, "condition_cache", False),
         condition_cache_dir=getattr(args, "condition_cache_dir", None),
         vision_cache=getattr(args, "vision_cache", False),
+        encoder_cache=getattr(args, "encoder_cache", False),
     )
     probe = None
     if args.max_vram is not None and args.vram_window == "denoise":

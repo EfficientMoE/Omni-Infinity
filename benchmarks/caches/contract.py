@@ -36,6 +36,8 @@ FIELDS: tuple[str, ...] = (
     "speedup_vs_baseline",
     "verdict",
     "notes",
+    "c2_hits",
+    "c2_misses",
 )
 
 PROMPT = "a red ball bouncing"
@@ -57,19 +59,47 @@ class CacheConfig:
 
     name: str
     condition_cache: bool = False
+    encoder_cache: bool = False
     vision_cache: bool = False
     denoise_cache: bool = False
+    denoise_indicator: str = "raw"
+    denoise_accumulate: bool = False
+    denoise_approximator: str = "reuse"
 
 
 CACHE_CONFIGS: tuple[CacheConfig, ...] = (
     CacheConfig("baseline"),
     CacheConfig("c1", condition_cache=True),
+    CacheConfig("c2", encoder_cache=True),
     CacheConfig("c3", vision_cache=True),
     CacheConfig("c5", denoise_cache=True),
+    CacheConfig(
+        "c5-teacache",
+        denoise_cache=True,
+        denoise_indicator="teacache",
+        denoise_accumulate=True,
+    ),
+    CacheConfig(
+        "c5-taylor1",
+        denoise_cache=True,
+        denoise_indicator="teacache",
+        denoise_accumulate=True,
+        denoise_approximator="taylor1",
+    ),
+    CacheConfig(
+        "c5-fbcache",
+        denoise_cache=True,
+        denoise_indicator="fbcache",
+    ),
     CacheConfig("all-exact", condition_cache=True, vision_cache=True),
 )
 
-_SKIP_NOTES = ("weights-absent", "c5-uncalibrated", "server-down")
+_SKIP_NOTES = (
+    "weights-absent",
+    "c5-uncalibrated",
+    "c5-signal-mismatch",
+    "server-down",
+)
 
 
 def _present(row: dict, key: str):
@@ -87,9 +117,9 @@ def verdict_for(row: dict) -> str:
     config = row.get("cache_config")
     if suite in ("micro", "serve-trace") or config == "baseline":
         return "REPORT"
-    if config in ("c1", "c3", "all-exact"):
+    if config in ("c1", "c2", "c3", "all-exact"):
         return _exact_verdict(row, config)
-    if config == "c5":
+    if config in ("c5", "c5-teacache", "c5-taylor1", "c5-fbcache"):
         return _c5_verdict(row)
     return "REPORT"
 
@@ -103,6 +133,7 @@ def _exact_verdict(row: dict, config: str) -> str:
         return "FAIL"
     hit_keys = {
         "c1": ("c1_hits",),
+        "c2": ("c2_hits",),
         "c3": ("c3_hits",),
         "all-exact": ("c1_hits",),
     }[config]

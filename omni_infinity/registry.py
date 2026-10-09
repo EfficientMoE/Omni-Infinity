@@ -189,6 +189,7 @@ def load_cache_optimizations() -> dict[str, OptimizationSpec]:
     optimizations = {}
     for module_name in (
         "omni_infinity.caches.condition",
+        "omni_infinity.caches.prefix",
         "omni_infinity.caches.vision",
     ):
         try:

@@ -35,6 +35,7 @@ class GenerationRequest(BaseModel):
             "block-stream",
             "text-encoder-stream",
             "condition-cache",
+            "encoder-cache",
             "vision-cache",
         ]
     ] = Field(default_factory=list)

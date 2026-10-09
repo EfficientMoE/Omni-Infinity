@@ -38,7 +38,7 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
 - [Cache benchmarks](cache_benchmarks.md) — datasets, suites, the frozen
   metric contract, and how each level's contribution is quantified.
 - [C1 — exact condition cache](caches_c1_condition.md) — `condition-cache`.
-- [C2 — encoder prefix cache (deferred)](caches_c2_prefix.md).
+- [C2 — exact encoder-prefix cache](caches_c2_prefix.md) — `encoder-cache`.
 - [C3 — vision-embedding cache](caches_c3_vision.md) — `vision-cache`.
 - [C4 — VDN shape-cache limits](caches_c4_shape.md).
 - [C5 — denoise-step cache](caches_c5_denoise.md) — calibrated opt-in only.

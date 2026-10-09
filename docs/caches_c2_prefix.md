@@ -1,30 +1,28 @@
-# C2 encoder prefix cache
+# C2 exact encoder-prefix cache
 
-Deferred until the Qwen3-VL tower stays resident. The current encoder path
-releases the tower, so a prefix cache would not provide reusable residency.
+C2 v1 reuses only an exact tokenized presentation. Enable it for the dense H3
+runner with the `encoder-cache` registry optimization or `--encoder-cache` in
+the FL2VA smoke CLI. It wraps Qwen3-VL's model forward and stores the complete
+structured encoder output on CPU; a hit materializes that output on the input
+device without running the encoder.
 
-A hit is a complete leading block only. Vision tokens in front of the text are part of the prefix. Picture 1 matches only when the image bytes match and it is first. Do not reorder [Shot N] blocks. vLLM's block hash is the reuse rule
-being copied, and partial blocks are not stored.
+The SHA256 key is versioned with `omni-encoder-v1` and covers the model
+namespace, the full token-ID tensor, and ordered byte-stable image/video input
+tensors. A changed token, image, image order, dtype, or shape is a miss, so a
+hit is bitwise by construction.
 
-The future cache-key API must include a hash of each image's content and that
-image's token-span position. `token_ids` alone cannot establish byte identity:
-the pinned Qwen3-VL path repeats `<|image_pad|>` IDs while the image content
-is carried separately in `pixel_values`.
+The host LRU uses a lock and promotes hits.
+Both the entry cap and byte budget are enforced. Admission follows
+MoE-Infinity's policy shape: pressure evicts the oldest resident entry; an
+output too large to fit after all possible evictions is transient, so it is
+returned but not stored. The single-worker serving model needs no lease or
+refcount machinery.
 
-Do not install ContextPilot. This plan does not implement prefix_blocks.
+Partial-prefix splicing is not implemented. C2 v1 does not hash token blocks,
+reuse a leading subset, or merge cached and newly encoded hidden states.
 
-```python
-def prefix_blocks(token_ids: tuple[int, ...], block_size: int) -> list[bytes]:
-    """Hash complete leading blocks of token_ids and image metadata.
-
-    The cache key also includes image content hashes and token-span positions.
-    Drop the tail if it is shorter than block_size. Do not reorder shots.
-    """
-```
-
-`prefix_blocks` only hashes inputs. It has no tower-residency state and must
-not claim to determine residency or return an empty result for a non-resident
-tower. Its caller must invoke it only while the Qwen3-VL tower is resident.
-
-A later implementation may call C3's `VisionEmbedCache` for images inside a
-block that still has to run. This PR does not import `caches.vision`.
+C2's contribution is measured as encoder time saved on exact repeats in the
+seeded VidProM serving trace and on repeated encoder presentations in the
+multi-prompt demo. The one-factor `c2` ablation row records cold/warm latency,
+bitwise `rms_rel`, and encoder-cache hit/miss counters; measured numbers remain
+weights-gated in [cache_benchmarks.md](cache_benchmarks.md).

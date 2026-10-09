@@ -20,7 +20,33 @@ import argparse
 import contextlib
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
+
+from omni_infinity.caches.denoise import _fbcache_signal, _teacache_signal
+
+
+@dataclass(frozen=True)
+class _ProbeSignalConfig:
+    signal_name: str
+    io_names: tuple[str, ...]
+
+
+_SIGNAL_CONFIG = _ProbeSignalConfig(
+    signal_name="hidden_states",
+    io_names=(
+        "hidden_states",
+        "audio_hidden_states",
+        "encoder_hidden_states",
+        "timestep",
+        "timestep_indices",
+        "token_tags",
+        "position_ids",
+        "video_indices",
+        "audio_indices",
+        "text_indices",
+    ),
+)
 
 
 def _rel_l1(current, previous) -> float | None:
@@ -42,7 +68,22 @@ def probe_forward(module, signal_name: str = "hidden_states"):
     replacement wrapper, while ``__call__`` hooks keep firing.
     """
     records: list[dict] = []
-    state = {"input": None, "output": None}
+    state = {
+        "input": None,
+        "output": None,
+        "teacache": None,
+        "fbcache": None,
+    }
+
+    def indicator(name, function, hooked, args, kwargs):
+        try:
+            signal = function(hooked, args, kwargs, _SIGNAL_CONFIG)
+            distance = _rel_l1(signal, state[name])
+            state[name] = signal.detach().clone()
+            return distance, None
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            return None, reason
 
     def record(hooked, args, kwargs, output):
         signal = kwargs.get(signal_name, args[0] if args else None)
@@ -50,6 +91,12 @@ def probe_forward(module, signal_name: str = "hidden_states"):
 
         leaves = tree_tensors(output)
         leaf = leaves[0] if leaves else None
+        teacache_rel_l1, teacache_error = indicator(
+            "teacache", _teacache_signal, hooked, args, kwargs
+        )
+        fbcache_rel_l1, fbcache_error = indicator(
+            "fbcache", _fbcache_signal, hooked, args, kwargs
+        )
         records.append(
             {
                 "call": len(records),
@@ -57,6 +104,10 @@ def probe_forward(module, signal_name: str = "hidden_states"):
                 "output_rel_l1": (
                     _rel_l1(leaf, state["output"]) if leaf is not None else None
                 ),
+                "teacache_rel_l1": teacache_rel_l1,
+                "fbcache_rel_l1": fbcache_rel_l1,
+                "teacache_error": teacache_error,
+                "fbcache_error": fbcache_error,
             }
         )
         state["input"] = signal.detach().clone()

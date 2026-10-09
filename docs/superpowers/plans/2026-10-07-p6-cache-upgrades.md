@@ -1,5 +1,7 @@
 # P6 — C5 denoise-cache upgrade + C2 encoder-prefix revisit
 
+> **Tracking PR** — implementation for this plan lands on this branch. Roadmap: #42.
+
 Tracking: [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42) (P6).
 Refs: [caches_c5](../../caches_c5_denoise.md), [caches_c2](../../caches_c2_prefix.md),
 [cache_benchmarks](../../cache_benchmarks.md), [caches contract](2026-09-30-caches-contract.md),
@@ -49,12 +51,22 @@ quantified in cache_benchmarks.
 
 ## Tasks
 
-- [ ] C5 indicator v2 + polynomial fit on existing probe set
-- [ ] taylor1 mode + FBCache-style alternative; A/B on probe
-- [ ] cache_benchmarks rows (speedup vs quality curves, thresholds)
-- [ ] C2 exact cache + `encoder-cache` registry opt + LRU bounds
-- [ ] C2 contribution row (VidProM trace + multi-prompt demo timing)
-- [ ] Contract doc updates (caches_c5/caches_c2) + #42 checkboxes
+- [x] C5 indicator v2 implementation + fitting script
+      (`benchmarks.caches.denoise_fit`); the fitted run on the probe set
+      is weights-gated
+- [x] taylor1 mode + FBCache-style alternative implemented; probe
+      records both signals for the A/B — the measured A/B run is
+      weights-gated
+- [ ] cache_benchmarks rows (speedup vs quality curves, thresholds) —
+      suite cells, verdicts, and fitting workflow landed; measured rows
+      are weights-gated (see cache_benchmarks "Pending weights-gated
+      measurements")
+- [x] C2 exact cache + `encoder-cache` registry opt + LRU bounds
+- [ ] C2 contribution row (VidProM trace + multi-prompt demo timing) —
+      cell, stats plumbing, and verdict rule landed; measured row is
+      weights-gated
+- [x] Contract doc updates (caches_c5/caches_c2) + status posted to #42
+      (the #42 P6 checkbox stays open until the weights-gated rows land)
 
 ## Verification
 

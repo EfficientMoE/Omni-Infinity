@@ -76,16 +76,27 @@ def test_attach_caches_records_disabled_state_and_namespace():
 
     assert runner.condition_cache is None
     assert runner.vision_cache_controller is None
+    assert runner.encoder_cache_controller is None
     assert runner.cache_namespace == "ReferenceRunner:/ckpt"
 
 
-@pytest.mark.parametrize("cache_name", ["condition_cache", "vision_cache"])
+@pytest.mark.parametrize(
+    "cache_name", ["condition_cache", "vision_cache", "encoder_cache"]
+)
 def test_attach_caches_fails_closed_when_module_is_missing(
     cache_name, monkeypatch
 ):
-    kwargs = {"condition_cache": False, "vision_cache": False}
+    kwargs = {
+        "condition_cache": False,
+        "vision_cache": False,
+        "encoder_cache": False,
+    }
     kwargs[cache_name] = True
-    module_name = cache_name.removesuffix("_cache")
+    module_name = {
+        "condition_cache": "condition",
+        "vision_cache": "vision",
+        "encoder_cache": "prefix",
+    }[cache_name]
     monkeypatch.setitem(
         sys.modules, f"omni_infinity.caches.{module_name}", None
     )
@@ -121,6 +132,35 @@ def test_attach_caches_surfaces_broken_vision_module(monkeypatch):
         )
 
     assert exc_info.value.name == "httpx"
+
+
+def test_attach_caches_wraps_the_text_encoder_for_encoder_cache(monkeypatch):
+    module_name = "omni_infinity.caches.prefix"
+    module = types.ModuleType(module_name)
+    text_encoder = object()
+    controller = object()
+    calls = []
+
+    def enable_encoder_cache(value):
+        calls.append(value)
+        return controller
+
+    module.enable_encoder_cache = enable_encoder_cache
+    monkeypatch.setitem(sys.modules, module_name, module)
+    runner = _Runner()
+    runner.pipeline = SimpleNamespace(components={"text_encoder": text_encoder})
+
+    attach_caches(
+        runner,
+        condition_cache=False,
+        condition_cache_dir=None,
+        vision_cache=False,
+        encoder_cache=True,
+        cache_namespace="ReferenceRunner:/ckpt",
+    )
+
+    assert calls == [text_encoder]
+    assert runner.encoder_cache_controller is controller
 
 
 def test_cache_optimization_loader_surfaces_broken_module(monkeypatch):
@@ -190,7 +230,7 @@ def test_request_accepts_cache_optimizations_and_rejects_denoise():
     GenerationRequest(
         type="fl2va",
         prompt="a",
-        optimizations=["condition-cache", "vision-cache"],
+        optimizations=["condition-cache", "encoder-cache", "vision-cache"],
     )
     with pytest.raises(ValidationError):
         GenerationRequest(
@@ -217,9 +257,20 @@ def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
     module = types.ModuleType("omni_infinity.caches.denoise")
 
     class DenoiseCacheConfig:
-        def __init__(self, *, coefficients, threshold):
+        def __init__(
+            self,
+            *,
+            coefficients,
+            threshold,
+            indicator,
+            accumulate,
+            approximator,
+        ):
             self.coefficients = coefficients
             self.threshold = threshold
+            self.indicator = indicator
+            self.accumulate = accumulate
+            self.approximator = approximator
 
     module.DenoiseCacheConfig = DenoiseCacheConfig
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -232,6 +283,23 @@ def test_denoise_config_parses_coefficients_in_cli_order(monkeypatch):
 
     assert config.coefficients == (2.0, 1.0, 0.5)
     assert config.threshold == 0.2
+    assert config.indicator == "raw"
+    assert config.accumulate is False
+    assert config.approximator == "reuse"
+
+    v2_args = SimpleNamespace(
+        denoise_cache_coefficients="2.0, 1.0,0.5",
+        denoise_cache_threshold=0.2,
+        denoise_cache_indicator="teacache",
+        denoise_cache_accumulate=True,
+        denoise_cache_mode="taylor1",
+    )
+
+    v2_config = denoise_config_from_args(v2_args)
+
+    assert v2_config.indicator == "teacache"
+    assert v2_config.accumulate is True
+    assert v2_config.approximator == "taylor1"
 
 
 def test_denoise_config_fails_closed_when_module_is_missing(monkeypatch):
@@ -259,18 +327,28 @@ def test_smoke_parser_exposes_opt_in_cache_flags():
             "--condition-cache-dir",
             "/tmp/cache",
             "--vision-cache",
+            "--encoder-cache",
             "--denoise-cache-coefficients",
             "1.0,0.0",
             "--denoise-cache-threshold",
             "0.2",
+            "--denoise-cache-indicator",
+            "fbcache",
+            "--denoise-cache-accumulate",
+            "--denoise-cache-mode",
+            "taylor1",
         ]
     )
 
     assert args.condition_cache is True
     assert args.condition_cache_dir == "/tmp/cache"
     assert args.vision_cache is True
+    assert args.encoder_cache is True
     assert args.denoise_cache_coefficients == "1.0,0.0"
     assert args.denoise_cache_threshold == 0.2
+    assert args.denoise_cache_indicator == "fbcache"
+    assert args.denoise_cache_accumulate is True
+    assert args.denoise_cache_mode == "taylor1"
 
 
 def test_parity_suites_do_not_enable_caches():
@@ -282,16 +360,18 @@ def test_parity_suites_do_not_enable_caches():
         text = (Path("tests") / name).read_text()
         assert "condition_cache" not in text
         assert "vision_cache" not in text
+        assert "encoder_cache" not in text
         assert "denoise_cache" not in text
         assert "condition-cache" not in text
         assert "vision-cache" not in text
+        assert "encoder-cache" not in text
 
 
 def test_readme_points_at_the_cache_stack():
     text = Path("README.md").read_text()
     for sentence in (
         "Nothing is on by default.",
-        "C2 is deferred.",
+        "C2 is an exact encoder-prefix cache.",
         "C5 refuses to run without H3-calibrated coefficients.",
         "C4 is unchanged upstream.",
     ):
