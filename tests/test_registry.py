@@ -11,7 +11,7 @@ from omni_infinity import registry
 def test_categories_are_disjoint_and_complete():
     arch_names = set(registry.ARCHS)
     opt_names = set(registry.OPTIMIZATIONS)
-    assert arch_names == {"h3-dense", "vdn-hybrid"}
+    assert arch_names == {"h3-dense", "vdn-hybrid", "ltx-2.5"}
     assert opt_names == {
         "adaln-host-cache",
         "fp8",
