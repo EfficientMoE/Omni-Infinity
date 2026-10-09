@@ -262,6 +262,40 @@ def test_double_install_and_bad_slot_count_are_rejected():
         ArenaBlockStreamer(_seeded(), num_slots=1, backend=FakeArenaBackend())
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_gpu_eager_streamed_forward_is_bitwise_and_pointer_stable():
+    torch.manual_seed(0)
+    model = ToyTransformer(n_blocks=4, hidden=64).to(torch.bfloat16)
+    torch.manual_seed(0)
+    reference = (
+        ToyTransformer(n_blocks=4, hidden=64).to(torch.bfloat16).to("cuda")
+    )
+    streamer = ArenaBlockStreamer(model, device="cuda")
+
+    pointers = {
+        name: param.data_ptr() for name, param in model.named_parameters()
+    }
+    x = torch.randn(2, 64, device="cuda", dtype=torch.bfloat16)
+    with torch.no_grad():
+        expected = reference(x)
+        for _ in range(3):
+            actual = model(x)
+            torch.cuda.synchronize()
+            assert torch.equal(actual, expected)
+    assert pointers == {
+        name: param.data_ptr() for name, param in model.named_parameters()
+    }
+
+    for pinned in streamer._pinned:
+        for flat in pinned.values():
+            flat.zero_()
+    with torch.no_grad():
+        mutated = model(x)
+        torch.cuda.synchronize()
+    assert not torch.equal(mutated, expected)
+
+
 def test_remove_restores_hooks_and_to_method():
     model = _seeded()
     streamer, backend = _install(model)

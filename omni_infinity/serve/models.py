@@ -82,6 +82,8 @@ class GraphTelemetry(BaseModel):
     capture_warmup_calls: int
     graphs: int
     generation: int
+    arena_bytes: int = 0
+    pinned_host_bytes: int = 0
     fallback_reasons: dict[str, int] = Field(default_factory=dict)
 
 

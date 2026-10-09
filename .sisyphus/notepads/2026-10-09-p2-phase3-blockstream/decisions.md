@@ -30,3 +30,4 @@ Every commit MUST pass review BEFORE push:
 ## Review verdicts
 (record here, newest last)
 - cd5c6b5 probe(p2-phase3): Phase 0 feasibility probe + decision note — APPROVE (claude-fable-5; minor non-blocking: soften 'exact config' phrasing re offload_to_disk_path; cross-step hazard note for Phase 1/3; toy≠H3 caveat)
+- 6f937c0 feat(p2-phase3): arena block streamer (Phase 1) — APPROVE (claude-fable-5; non-blocking: multi-ModuleList execution-order assumption worth an assertion/doc before Phase 3; document "pinned host buffers are sole source of truth, never read weights outside the hook schedule"; single copy stream vs plan's 3-stream pool is a recorded deviation — D2H unnecessary since weights are read-only)

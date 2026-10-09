@@ -95,6 +95,25 @@ def _enable_block_streaming(
     )
 
 
+def _enable_arena_block_streaming(
+    pipeline,
+    device,
+    blocks_per_group,
+    component_name="transformer",
+):
+    # Arena streaming replaces the diffusers hooks for the graphed
+    # profile only: stock hooks CPU-sync inside the capture region and
+    # rebind param.data per onload (see graph_arena module docstring).
+    from omni_infinity.graph_arena import ArenaBlockStreamer
+
+    transformer = _transformer_component(pipeline, component_name)
+    return ArenaBlockStreamer(
+        transformer,
+        num_blocks_per_group=max(blocks_per_group, 1),
+        device=device,
+    )
+
+
 def _validate_compile_blocks(
     *, compile_blocks: bool, block_stream_blocks_per_group: int
 ) -> None:
@@ -107,12 +126,36 @@ def _validate_compile_blocks(
 
 
 def _validate_cuda_graph(
-    *, cuda_graph: bool, block_stream_blocks_per_group: int
+    *,
+    cuda_graph: bool,
+    block_stream_blocks_per_group: int,
+    block_stream_to_disk: str | None = None,
+    step_overlap: bool = False,
 ) -> None:
-    if cuda_graph and block_stream_blocks_per_group > 0:
+    # The block-stream + cuda-graph combination is supported through the
+    # arena streamer (pointer-stable per-group weight arenas; captured
+    # H2D from pinned host buffers). Two sub-configurations stay rejected:
+    # - disk-backed streaming: safetensors reads are CPU-side and cannot
+    #   be captured, and the arena path pins the full block set in host
+    #   memory, which contradicts offloading it to disk;
+    # - step_overlap: cross-step prefetch is not captured in v1. Graph
+    #   replays serialize on the launch stream, so a prefetch launched at
+    #   the end of step N would overwrite arena slot 0 while replay N may
+    #   still read it; the fork event instead orders each step's copies
+    #   behind the previous step's compute.
+    if not cuda_graph:
+        return
+    if block_stream_blocks_per_group > 0 and block_stream_to_disk:
         raise ValueError(
-            "cuda-graph is incompatible with block streaming: captured "
-            "graphs require resident, pointer-stable transformer weights"
+            "cuda-graph with block streaming does not support "
+            "block_stream_to_disk: disk reads cannot be captured into "
+            "a CUDA graph"
+        )
+    if step_overlap:
+        raise ValueError(
+            "cuda-graph is incompatible with step_overlap: cross-step "
+            "weight prefetch is not captured (replays serialize on the "
+            "launch stream and would race the arena slot-0 refill)"
         )
 
 
@@ -330,12 +373,14 @@ class ReferenceRunner:
         cuda_graph_manager=None,
         pinned_adaln_bytes: int = 0,
         cuda_graph_invalidate_between_generations: bool = False,
+        arena_streamer=None,
     ):
         self.pipeline = pipeline
         self.overlap_controller = overlap_controller
         self.transformer_component = transformer_component
         self.cuda_graph_manager = cuda_graph_manager
         self.pinned_adaln_bytes = pinned_adaln_bytes
+        self.arena_streamer = arena_streamer
         self.cuda_graph_invalidate_between_generations = (
             cuda_graph_invalidate_between_generations
         )
@@ -375,6 +420,8 @@ class ReferenceRunner:
         _validate_cuda_graph(
             cuda_graph=cuda_graph,
             block_stream_blocks_per_group=block_stream_blocks_per_group,
+            block_stream_to_disk=block_stream_to_disk,
+            step_overlap=step_overlap,
         )
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
@@ -463,6 +510,7 @@ class ReferenceRunner:
                 _transformer_component(pipeline, transformer_component)
             )
         overlap_controller = None
+        arena_streamer = None
         if block_stream_blocks_per_group:
             if not offload:
                 raise ValueError(
@@ -470,13 +518,21 @@ class ReferenceRunner:
                     "manages its own device placement; other components need "
                     "the ComponentsManager)"
                 )
-            _enable_block_streaming(
-                pipeline,
-                device,
-                block_stream_blocks_per_group,
-                block_stream_to_disk,
-                transformer_component,
-            )
+            if cuda_graph:
+                arena_streamer = _enable_arena_block_streaming(
+                    pipeline,
+                    device,
+                    block_stream_blocks_per_group,
+                    transformer_component,
+                )
+            else:
+                _enable_block_streaming(
+                    pipeline,
+                    device,
+                    block_stream_blocks_per_group,
+                    block_stream_to_disk,
+                    transformer_component,
+                )
         if compile_blocks:
             # The AdaLN host-cache modules are installed before regional
             # compilation. C5 wraps the whole transformer forward later, so
@@ -510,6 +566,11 @@ class ReferenceRunner:
             from omni_infinity.cuda_graph import CudaGraphManager
 
             cuda_graph_manager = CudaGraphManager(device=device, max_buckets=2)
+            if arena_streamer is not None:
+                cuda_graph_manager.arena_bytes = arena_streamer.arena_bytes
+                cuda_graph_manager.pinned_host_bytes = (
+                    arena_streamer.pinned_host_bytes
+                )
             _wrap_transformer_with_cuda_graph(
                 pipeline, cuda_graph_manager, transformer_component
             )
@@ -520,6 +581,7 @@ class ReferenceRunner:
             cuda_graph_manager=cuda_graph_manager,
             pinned_adaln_bytes=pinned_adaln_bytes,
             cuda_graph_invalidate_between_generations=offload and cuda_graph,
+            arena_streamer=arena_streamer,
         )
         attach_caches(
             runner,

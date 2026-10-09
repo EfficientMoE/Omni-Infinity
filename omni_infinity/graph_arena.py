@@ -26,6 +26,14 @@ profile only:
 - non-block ("unmatched") transformer tensors are moved resident once --
   they are small next to the streamed blocks.
 
+Two contracts callers must respect: the pinned host buffers are the sole
+source of truth for block weights -- groups ``g`` and ``g + num_slots``
+alias the same slot, so reading ``param.data`` (``state_dict()``, parity
+dumps) outside the hook schedule returns whatever last refilled the slot;
+and the forward pass must execute the groups in discovery order (the
+hazard events assume it), which holds for H3's single sequential block
+list exactly as it does for diffusers block_level.
+
 CUDA primitives stay behind the injectable :class:`ArenaBackend` so the
 grouping, sizing, slot-assignment, rebinding, and accounting logic is
 CPU-testable (mirrors the ``cuda_graph.py`` backend pattern).
