@@ -60,3 +60,4 @@ mirrored in the plan doc Phase 4 note). Bench harness peak (71.9/75.6 GiB)
 includes the resident text encoder - NOT the envelope gate; envelope evidence
 stays the Phase-3 smoke 13.40 GiB denoise-window peak.
 - c399446 bench(p2-phase3): timing ablation 2.24x — APPROVE (claude-fable-5; all numbers independently recomputed; non-blocking F1 cold-start metric attribution + F2 7-vs-8 step note fixed in follow-up; F3 DEFAULT_RESULTS nit + F4 profile-gate test gap recorded, not blocking)
+- 0ba572e docs(p2-phase3): cold-start attribution + step accounting — APPROVE (claude-fable-5; all numbers re-verified vs evidence; stylistic nit only)
