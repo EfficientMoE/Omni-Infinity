@@ -32,3 +32,20 @@ Every commit MUST pass review BEFORE push:
 - cd5c6b5 probe(p2-phase3): Phase 0 feasibility probe + decision note — APPROVE (claude-fable-5; minor non-blocking: soften 'exact config' phrasing re offload_to_disk_path; cross-step hazard note for Phase 1/3; toy≠H3 caveat)
 - 6f937c0 feat(p2-phase3): arena block streamer (Phase 1) — APPROVE (claude-fable-5; non-blocking: multi-ModuleList execution-order assumption worth an assertion/doc before Phase 3; document "pinned host buffers are sole source of truth, never read weights outside the hook schedule"; single copy stream vs plan's 3-stream pool is a recorded deviation — D2H unnecessary since weights are read-only)
 - 3f9c8eb feat(p2-phase3): runner wiring + scoped guard lift (Phase 2) — APPROVE (claude-fable-5; recorded deviation: guard lift lands in Phase 2 not Phase 3, general for h3-dense; Phase 4 parity/22GiB/net-win MUST gate before merge; non-blocking: CM interplay rests on the .to() guard — add a data_ptr spot-check to the Phase 4 harness; toy≠H3, real-model smoke is the parity test)
+- f824041 feat(p2-phase3): capture glue + real-model smoke (Phase 3) — APPROVE (claude-fable-5; Namespace defect fixed by 299dc8c; carry-forwards: pipefail-safe gate runs; Phase 4 docs must say the supported envelope is "whole-forward capture or eager fallback — no sub-graph tier"; raw fallback counters recorded below)
+- 299dc8c fix(p2-phase3): namespace-safe cuda-graph access — APPROVE (claude-fable-5; clean minimal fix)
+
+## [2026-10-09] Phase 3 real-model smoke (GPU 0, shared, correctness only)
+Raw telemetry: {"captures": 1, "replays": 3, "capture_failures": 0,
+"graph_pool_bytes": 34542592, "capture_time_ms": 9366.87,
+"warmup_calls": 3, "capture_warmup_calls": 2, "graphs": 1,
+"generation": 0, "arena_bytes": 1541450752,
+"pinned_host_bytes": 38536268800, "fallback_reasons":
+{"warmup_not_done": 2, "shape_bucket_miss": 1}}
+7 transformer forwards (8 steps): warmup, kwarg-reset warmup, warmup,
+capture, 3 replays. Parity: bitwise=True rms_rel=0.0000 allclose=True.
+Denoise-window peak 13.40 GiB (22 GiB budget). Wall 92.5 s on a ~70%
+utilized shared GPU — NOT a timing result; Phase 4 ablation pending an
+idle GPU. Whole-forward capture succeeded; sub-graph fallback NOT built
+(not needed). Gate-run lesson: never pipe pytest through tail without
+checking the exit code (pipefail).
