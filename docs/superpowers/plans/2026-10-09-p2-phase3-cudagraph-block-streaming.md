@@ -92,7 +92,9 @@ arena slots are reused within one forward, the real hazard schedule); evidence
 correctness only), torch 2.12.0+cu130, diffusers 0.40.0.
 
 - **stock**: `apply_group_offloading(block_level, num_blocks_per_group=1,
-  use_stream=True)` — the exact `_enable_block_streaming` config — capture
+  use_stream=True)` — the `_enable_block_streaming` hook configuration
+  (applied directly, without `enable_group_offload`'s `offload_to_disk_path`
+  plumbing, which Phase 2 must also keep rejected under graphs) — capture
   **fails** with `cudaErrorStreamCaptureInvalidated`. Root cause (read from
   diffusers 0.40.0 source): `ModuleGroup._onload_from_memory` calls
   `self.stream.synchronize()` on every onload, and
@@ -124,8 +126,36 @@ while the AdaLN host-cache pinning path keeps working.
 - [x] Pointer-stable double-buffered per-group arena allocator + VRAM accounting (`omni_infinity/graph_arena.py`; single copy stream — D2H unneeded, weights are read-only from pinned host)
 - [x] Streaming→arena H2D on copy stream with event-synced compute-stream replay (arena hooks installed by the runner for the graphed profile only)
 - [x] Capture path (whole-forward, sub-graph fallback) + scoped lift of the block-stream guard — whole-forward capture SUCCEEDED on real H3 (capture_failures=0, bitwise parity, 13.40 GiB denoise peak); the sub-graph fallback was not needed
-- [ ] Validation: bitwise parity, 22 GiB OOM check, block-stream timing ablation (net win), telemetry
-- [ ] Docs: supported block-stream+graph envelope + updated P2 status
+- [x] Validation: bitwise parity (GPU 0 smoke + GPU 4 bench, both bitwise), 22 GiB check (13.40 GiB denoise-window peak under the emulated envelope), timing ablation NET WIN 2.24× (below), telemetry gauges + fallback reasons present
+- [x] Docs: supported block-stream+graph envelope + updated P2 status
+
+## Phase 4 validation note (2026-10-09)
+
+Timing ablation on an **idle GPU 4** (2 MiB / 0% util before, during, and
+after; other tenants on GPUs 0–2 only), `benchmarks/bench_graph_denoise.py
+--mode timing`, 256p / 120 frames / seed 0 / 8 steps, store-backed,
+adaln-host-cache, `block_stream_blocks_per_group=1`; evidence
+`results/p2_phase3/{block-stream,graph-block-stream}.json` (local; `results/`
+is gitignored — medians recorded here and in the notepad):
+
+| profile | median step wall | compute busy | copy busy | launch gap | wall |
+|---|---|---|---|---|---|
+| block-stream (eager) | 2657.1 ms | 508.6 ms | 2037.8 ms | 106.2 ms (3.94%) | 69.9 s |
+| block-stream + cuda-graph | **1186.2 ms** | 514.1 ms | 1127.8 ms | 0.8 ms (0.06%) | 34.4 s |
+
+**Net step-wall win = 2.24×** vs the block-stream baseline (replay-step median
+1185.7 ms over 3 replays; captures=1, capture_failures=0; fallback reasons
+only `warmup_not_done`×2 + `shape_bucket_miss`×1, i.e. the expected warmup
+path). Both profiles reproduce the goldens **bitwise** on GPU 4 as well. As
+Phase 0 predicted, the win is dominated by captured pinned H2D (copy busy
+−44.7%, cold-start 25.0 s → 0.8 s from eliminating the lazy-prefetch trace),
+not the 3.94% launch gap alone. Note: the bench harness does not emulate the
+22 GiB envelope (its whole-run peak includes the resident text encoder); the
+envelope evidence is the Phase-3 smoke's 13.40 GiB denoise-window peak under
+`--max-vram 22GiB` semantics with arenas (1.54 GB) + graph pool (34.5 MB)
+counted. Supported envelope: **whole-forward capture or eager fallback — no
+sub-graph tier is shipped** (it was proven feasible in Phase 0 but not needed
+on real H3).
 
 ## Verification
 

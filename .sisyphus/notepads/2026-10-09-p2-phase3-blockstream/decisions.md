@@ -49,3 +49,13 @@ utilized shared GPU — NOT a timing result; Phase 4 ablation pending an
 idle GPU. Whole-forward capture succeeded; sub-graph fallback NOT built
 (not needed). Gate-run lesson: never pipe pytest through tail without
 checking the exit code (pipefail).
+
+## [2026-10-09] Phase 4 timing ablation (GPU 4, idle: 2 MiB/0% before+during+after)
+block-stream median step wall 2657.1 ms vs graph-block-stream 1186.2 ms
+=> NET WIN 2.24x. Replay median 1185.7 ms (3 replays); captures=1, fails=0;
+fallbacks warmup_not_done:2 shape_bucket_miss:1 only. Both bitwise. Copy busy
+2037.8->1127.8 ms; launch gap 106.2->0.8 ms; cold start 25.0s->0.8s. Evidence
+results/p2_phase3/{block-stream,graph-block-stream}.json (gitignored, medians
+mirrored in the plan doc Phase 4 note). Bench harness peak (71.9/75.6 GiB)
+includes the resident text encoder - NOT the envelope gate; envelope evidence
+stays the Phase-3 smoke 13.40 GiB denoise-window peak.
