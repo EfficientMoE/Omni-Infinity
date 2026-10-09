@@ -66,6 +66,9 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
   the published VDN-H3 speedup (hypotheses H1–H6).
 - [Attribution runlog](attribution_vdn_runlog.md) — the raw replay commands
   and QA output backing the attribution study.
+- [Baseline tracking](baselines_vdn.md) — VDN-H3 as the strongest tracked
+  baseline, the MiniMax-H3 reference numbers, and the 2026-10 survey of
+  models claiming stronger video-generation results than H3.
 
 ## Multi-GPU (P7, issue #42)
 
@@ -83,3 +86,7 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
   T2V serving framework landscape (FastVideo, SGLang diffusion, vLLM-omni,
   TensorRT-LLM VisualGen, xDiT), attention/caching/quantization techniques,
   and a ranked porting list for this stack.
+- [H3 sm120 measured roofline](h3_sm120_measured_roofline.md) — measured PRO 6000
+  roofline (BW 1485 GB/s, BF16 411 / FP8 721 TFLOPS, ridge 277 FLOP/byte), the
+  compute-bound binding of dense attention, the gap-vs-N curve (46→89×), and the
+  measured dense R≪1 verdict with the derived PRO 5000 upper bound.
