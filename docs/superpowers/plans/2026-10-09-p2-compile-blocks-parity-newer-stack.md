@@ -67,8 +67,9 @@ Success is either:
 3. **Phase 2 — adopt (only if Phase 1 closes parity).** On the winning stack: run the
    full CPU suite, the GPU parity + timing ablation, and a provenance-clean golden
    re-baseline (its own reviewed change). Decision gate before proposing a pin bump:
-   parity passes, no CPU-suite regression, no timing regression vs the pinned baseline
-   on the same GPU, sm120 + fp8 intact.
+   parity passes, no CPU-suite regression, a **net step-wall speedup** (not merely
+   no-regression — the pinned stack was already `0.939×`) vs the pinned baseline on the
+   same GPU, sm120 + fp8 intact.
 4. **Phase 3 — document + registry.** Update the `compile-blocks` parity-tier doc and
    the plan/README status with the supported stack envelope; keep the registry opt
    gated and labelled with its validated stack.
@@ -85,9 +86,9 @@ Success is either:
 
 Compile-parity harness `rms_rel` + allclose tiers on GPU 0 (provenance match); CPU
 suite `pytest tests/ -m "not gpu and not weights"` on the candidate stack (no
-regression vs the 430 passed / 13 deselected baseline); timing ablation non-regression
-on GPU 4; sm120 + opt-in fp8 smoke on any candidate stack; golden re-baseline only
-behind its own review.
+regression vs the 430 passed / 13 deselected baseline); timing ablation showing a
+**net step-wall speedup** (not merely non-regression) on GPU 4; sm120 + opt-in fp8
+smoke on any candidate stack; golden re-baseline only behind its own review.
 
 ## Risks
 

@@ -75,8 +75,9 @@ step-wall win vs the block-stream baseline.
    AdaLN host-cache pinning path working in this profile.
 4. **Phase 3 — capture granularity.** Attempt whole-forward capture; if syncs/pointer
    issues block it, fall back to **per-block-group sub-graphs** (each group its own small
-   graph). Lift the `_validate_cuda_graph` block-stream rejection **only** for the
-   validated config + shapes; everything else still falls back to eager.
+   graph). The sub-graph fallback carries the **same bitwise-parity bar** as
+   whole-forward capture. Lift the `_validate_cuda_graph` block-stream rejection
+   **only** for the validated config + shapes; everything else still falls back to eager.
 5. **Phase 4 — validate.** Bitwise parity (GPU 0); 22 GiB OOM check with arenas + pools
    counted; timing ablation block-stream OFF vs block-stream+graph (must be a **net** win);
    serve `graph_telemetry` fallback reasons; CPU suite non-regression.
