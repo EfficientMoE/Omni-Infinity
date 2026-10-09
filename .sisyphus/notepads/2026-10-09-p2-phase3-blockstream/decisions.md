@@ -29,3 +29,4 @@ Every commit MUST pass review BEFORE push:
 
 ## Review verdicts
 (record here, newest last)
+- cd5c6b5 probe(p2-phase3): Phase 0 feasibility probe + decision note — APPROVE (claude-fable-5; minor non-blocking: soften 'exact config' phrasing re offload_to_disk_path; cross-step hazard note for Phase 1/3; toy≠H3 caveat)
