@@ -73,7 +73,7 @@ class ServerSettings:
     stream_enabled: bool = False
     stream_max_sessions: int = 1
     stream_session_ttl: float = 30.0
-    stream_chunk_frames: int = 24
+    stream_chunk_frames: int = 124
     stream_queue_chunks: int = 8
     stream_fallback_hls: bool = False
 
@@ -129,7 +129,7 @@ class ServerSettings:
                 os.environ.get("OMNI_STREAM_SESSION_TTL", "30")
             ),
             stream_chunk_frames=int(
-                os.environ.get("OMNI_STREAM_CHUNK_FRAMES", "24")
+                os.environ.get("OMNI_STREAM_CHUNK_FRAMES", "124")
             ),
             stream_queue_chunks=int(
                 os.environ.get("OMNI_STREAM_QUEUE_CHUNKS", "8")

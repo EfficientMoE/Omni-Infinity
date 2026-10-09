@@ -389,7 +389,7 @@ Streaming settings:
 - `OMNI_STREAM_SESSION_TTL` defaults to `30` seconds. Sessions that never
   connect are checked when the next session is created, then cancelled.
   This is not a background timer.
-- `OMNI_STREAM_CHUNK_FRAMES` defaults to `24`.
+- `OMNI_STREAM_CHUNK_FRAMES` defaults to `124` (one 5.167-second H3 clip).
 - `OMNI_STREAM_QUEUE_CHUNKS` defaults to `8` and bounds socket buffering.
 - `OMNI_STREAM_FALLBACK_HLS` defaults off. When enabled, it adds
   `/v1/streams/{id}/playlist.m3u8`, `init.mp4`, `seg/{n}.m4s`, and

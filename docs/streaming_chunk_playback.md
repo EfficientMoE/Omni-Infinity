@@ -162,7 +162,7 @@ Added on `ServerSettings.from_env`:
 | `OMNI_STREAM_ENABLED` | off | Register stream routes and `/` |
 | `OMNI_STREAM_MAX_SESSIONS` | 1 | Cap concurrent streams |
 | `OMNI_STREAM_SESSION_TTL` | 30 | Seconds before an unconnected session can be cancelled. It is checked when the next session is created. |
-| `OMNI_STREAM_CHUNK_FRAMES` | 24 | Frames per fMP4 fragment (about 1 s at 24 fps) |
+| `OMNI_STREAM_CHUNK_FRAMES` | 124 | Frames per fMP4 fragment (one 5.167 s H3 clip at 24 fps) |
 | `OMNI_STREAM_QUEUE_CHUNKS` | 8 | Bounded async sender queue capacity |
 | `OMNI_STREAM_FALLBACK_HLS` | off | Publish the playlist / segment / prompt sidecar |
 
