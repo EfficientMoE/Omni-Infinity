@@ -30,6 +30,8 @@ def test_static_optimization_set_excludes_caches():
         "adaln-host-cache",
         "fp8",
         "block-stream",
+        "compile-blocks",
+        "cuda-graph",
         "text-encoder-stream",
     }
 

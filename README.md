@@ -94,6 +94,8 @@ supported configuration; the smoke CLIs and the ablation harness
 | `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
+| `compile-blocks` (regional compile; resident only, measured fail at `rtol=2e-2`) | ✓ | — |
+| `cuda-graph` (resident graph + pinned AdaLN; 1.54× combined, bitwise parity) | ✓ | — |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
@@ -285,6 +287,13 @@ jobs/<uuid>/
   output.wav
   output.mp4
 ```
+
+Successful records optionally include `graph_telemetry` in `job.json` and the
+job API response when the loaded runner has a CUDA-graph manager. It reports
+per-job capture/replay counts, capture failures and time, warmup and eager
+fallback counts, plus final live-graph, pool-byte, and manager-generation
+gauges.
+Profiles without a manager and older records expose `graph_telemetry: null`.
 
 On process restart, persisted `running` jobs become `failed` with a restart
 message; denoising is not resumed. Queued records remain on disk but are not

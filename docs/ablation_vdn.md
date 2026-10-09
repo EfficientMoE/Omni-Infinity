@@ -107,3 +107,46 @@ is ~2% faster than 1 block/group at identical peak.
    222-frame runs (temporal 37 vs 67 → hard shape error after
    successful generation). Fixed in `43a3f97`: grid runs don't take
    the goldens gate; parity is owned by `tests/test_vdn_parity.py`.
+
+## P2 resident optimization ablation
+
+This separate, filterable P2 suite uses `--suite p2` in the same harness. It
+tests the `h3-dense` portable stack at 256p, 120 requested/124 effective
+frames, seed 0, `tests/fixtures/ref.png`, and prompt “a red ball bouncing.”
+Timing columns come from physical GPU 4, an RTX PRO 6000 Blackwell Max-Q
+Workstation Edition, using the median CUDA step window after the first forward
+for eager rows and steady replay windows for graph rows. Parity columns come
+from separate NFE-8 runs on physical GPU 0, the RTX PRO 6000 Blackwell Server
+Edition matching the golden provenance. Both used driver 590.48.01, PyTorch
+2.12.0+cu130, and diffusers 0.40.0.
+
+| config | NFE | s_per_nfe (ms) | peak_gib | rms_rel | cosine | parity tier | notes |
+|---|---:|---:|---:|---:|---:|---|---|
+| baseline | 8 | 1483.38 | 71.89 | 0 | 1.000004 | bitwise | canonical Phase-0 timing; reference |
+| baseline | 16 | 1492.56 | 71.89 | — | — | no golden | fresh timing; no golden at this NFE |
+| compile | 8 | 1579.38 | 71.89 | 0.06644 | 0.997807 | **FAIL 2e-2** | canonical Phase-1 timing; 0.939x, slower |
+| compile | 16 | 1446.59 | 71.89 | — | — | no golden | fresh timing; no golden at this NFE |
+| graph | 8 | **966.42** | 71.89 | 0 | 1.000004 | bitwise | 1.535x; 24.23 GiB host pinned; ≈2.5 s capture |
+| graph | 16 | **965.41** | 71.89 | — | — | no golden | 11 steady replays; no golden at this NFE |
+| compile+graph | 8 | 924.82 | 71.89 | 0.04114 | 0.999162 | **FAIL 2e-2** | capture succeeded; 2.67 s capture |
+| compile+graph | 16 | 924.90 | 71.89 | — | — | no golden | capture succeeded; no golden at this NFE |
+
+The NFE-8 baseline, compile, and graph timing cells deliberately report the
+canonical Phase 0/1/2 records so the headline comparison retains identical
+provenance. Fresh same-GPU rechecks are also preserved in their normalized
+JSON artifacts: baseline was 1492.84 ms, compile was 1238.67 ms, and graph was
+964.76 ms. The pageable AdaLN H2D portion of the eager rows varied materially
+with host-memory state, while pinned graph replay remained stable; replacing
+the canonical eager numbers with the favorable compile recheck would therefore
+be misleading. The NFE-16 rows are fresh measurements and should be read with
+that host-copy variability in mind. Exact records and the aggregate CSV are in
+`results/p2_phase2_ablation/`.
+
+**Verdict.** Graph-only is the single useful configuration: it preserves
+bitwise golden parity and delivers the canonical 1.535x resident-profile win.
+Compile-only remains a measured NFE-8 regression and fails the `2e-2` parity
+gate. Compile+graph did capture on torch 2.12 and replayed about 4% faster than
+graph-only, but it inherited compile's numerical failure, so that speed is not
+usable under the golden contract. Readers with enough memory for the
+~71.89 GiB resident profile and an additional 24.23 GiB of pinned host memory
+should choose resident graph-only; none of these rows is a 22 GiB profile.

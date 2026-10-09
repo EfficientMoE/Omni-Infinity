@@ -16,6 +16,8 @@ def test_categories_are_disjoint_and_complete():
         "adaln-host-cache",
         "fp8",
         "block-stream",
+        "compile-blocks",
+        "cuda-graph",
         "text-encoder-stream",
     }
     assert not arch_names & opt_names
@@ -39,6 +41,28 @@ def test_adaln_host_cache_is_h3_only():
     # has no store, so the optimization must not claim vdn-hybrid.
     spec = registry.OPTIMIZATIONS["adaln-host-cache"]
     assert spec.supported_archs == ("h3-dense",)
+
+
+def test_compile_blocks_is_resident_h3_only():
+    spec = registry.OPTIMIZATIONS["compile-blocks"]
+    assert spec.supported_archs == ("h3-dense",)
+    assert "resident-profile-only" in spec.description
+    assert registry.runner_kwargs_for("h3-dense", ["compile-blocks"]) == {
+        "compile_blocks": True
+    }
+    with pytest.raises(ValueError, match="compile-blocks"):
+        registry.runner_kwargs_for("vdn-hybrid", ["compile-blocks"])
+
+
+def test_cuda_graph_is_resident_h3_only():
+    spec = registry.OPTIMIZATIONS["cuda-graph"]
+    assert spec.supported_archs == ("h3-dense",)
+    assert "resident-profile-only" in spec.description
+    assert registry.runner_kwargs_for("h3-dense", ["cuda-graph"]) == {
+        "cuda_graph": True
+    }
+    with pytest.raises(ValueError, match="cuda-graph"):
+        registry.runner_kwargs_for("vdn-hybrid", ["cuda-graph"])
 
 
 def test_runner_kwargs_for_merges_optimizations():

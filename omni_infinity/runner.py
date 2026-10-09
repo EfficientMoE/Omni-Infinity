@@ -16,8 +16,11 @@ fixtures for the parity gate in ``tests/test_reference_parity.py``.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from functools import wraps
+from types import MethodType
 from typing import Any
 
 import torch
@@ -25,6 +28,7 @@ import torch
 from omni_infinity.caches.attach import attach_caches, bind_generation
 
 StepCallback = Callable[[int, int], None]
+logger = logging.getLogger(__name__)
 
 
 def _transformer_component(pipeline, component_name="transformer"):
@@ -89,6 +93,101 @@ def _enable_block_streaming(
         low_cpu_mem_usage=False,
         offload_to_disk_path=to_disk,
     )
+
+
+def _validate_compile_blocks(
+    *, compile_blocks: bool, block_stream_blocks_per_group: int
+) -> None:
+    if compile_blocks and block_stream_blocks_per_group > 0:
+        raise ValueError(
+            "compile-blocks is incompatible with block streaming: "
+            "group-offload hooks can leave compiled regions with stale "
+            "weight pointers"
+        )
+
+
+def _validate_cuda_graph(
+    *, cuda_graph: bool, block_stream_blocks_per_group: int
+) -> None:
+    if cuda_graph and block_stream_blocks_per_group > 0:
+        raise ValueError(
+            "cuda-graph is incompatible with block streaming: captured "
+            "graphs require resident, pointer-stable transformer weights"
+        )
+
+
+def _compile_repeated_transformer_blocks(
+    pipeline, component_name="transformer"
+) -> None:
+    transformer = _transformer_component(pipeline, component_name)
+    transformer.compile_repeated_blocks(fullgraph=True, dynamic=True)
+
+
+def _available_host_memory_bytes() -> int:
+    with open("/proc/meminfo", encoding="utf-8") as handle:
+        for line in handle:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    raise RuntimeError("could not read MemAvailable from /proc/meminfo")
+
+
+def _pin_adaln_for_cuda_graph(
+    transformer,
+    *,
+    available_bytes: int | None = None,
+    pin: Callable[[torch.Tensor], torch.Tensor] | None = None,
+) -> int:
+    from omni_infinity.adaln import HostResidentAdaLN
+
+    entries = []
+    seen = set()
+    for module in transformer.modules():
+        if (
+            isinstance(module, HostResidentAdaLN)
+            and id(module._entry) not in seen
+        ):
+            seen.add(id(module._entry))
+            entries.append(module._entry)
+    required = sum(entry.host_nbytes for entry in entries)
+    if required == 0:
+        logger.info("CUDA graph enabled without an AdaLN host cache")
+        return 0
+    available = (
+        _available_host_memory_bytes()
+        if available_bytes is None
+        else available_bytes
+    )
+    if available * 5 < required * 6:
+        raise MemoryError(
+            "pinning the AdaLN host cache for cuda-graph requires its full "
+            "footprint plus 20% headroom: "
+            f"required={required / 1024**3:.2f} GiB, "
+            f"available={available / 1024**3:.2f} GiB"
+        )
+    pinned = sum(entry.pin_memory(pin) for entry in entries)
+    logger.info("pinned %.2f GiB of AdaLN graph-copy sources", pinned / 1024**3)
+    return pinned
+
+
+def _wrap_transformer_with_cuda_graph(
+    pipeline, manager, component_name="transformer"
+) -> None:
+    transformer = _transformer_component(pipeline, component_name)
+    original_forward = transformer.forward
+
+    @wraps(type(transformer).forward)
+    def graph_forward(_module, *args, **kwargs):
+        output = manager.try_execute(
+            manager.current_bucket, original_forward, *args, **kwargs
+        )
+        if output is None:
+            return original_forward(*args, **kwargs)
+        return output
+
+    # Installed during model loading. C5 installs its generation-local wrapper
+    # later and captures this method as original_forward, so cache hits return
+    # outside the graph manager and are accounted by the runner's skip hook.
+    transformer.forward = MethodType(graph_forward, transformer)
 
 
 def _APPLY_GROUP_OFFLOADING(module, **kwargs):
@@ -213,6 +312,13 @@ def resolve_resolution(resolution: str) -> tuple[int, int]:
         ) from None
 
 
+def _effective_video_frames(requested_frames: int) -> int:
+    effective = requested_frames
+    while effective % 17 != 5:
+        effective += 1
+    return effective
+
+
 class ReferenceRunner:
     """Full-resident H3-Base FL2VA text-to-audio/video reference path."""
 
@@ -221,10 +327,19 @@ class ReferenceRunner:
         pipeline,
         overlap_controller=None,
         transformer_component: str = "transformer",
+        cuda_graph_manager=None,
+        pinned_adaln_bytes: int = 0,
+        cuda_graph_invalidate_between_generations: bool = False,
     ):
         self.pipeline = pipeline
         self.overlap_controller = overlap_controller
         self.transformer_component = transformer_component
+        self.cuda_graph_manager = cuda_graph_manager
+        self.pinned_adaln_bytes = pinned_adaln_bytes
+        self.cuda_graph_invalidate_between_generations = (
+            cuda_graph_invalidate_between_generations
+        )
+        self._cuda_graph_generation_started = False
 
     @classmethod
     def from_pretrained(
@@ -246,12 +361,22 @@ class ReferenceRunner:
         offload_memory_margin: str | None = None,
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
+        compile_blocks: bool = False,
+        cuda_graph: bool = False,
         stream_text_encoder: bool = False,
         step_overlap: bool = False,
         condition_cache: bool = False,
         condition_cache_dir: str | None = None,
         vision_cache: bool = False,
     ) -> "ReferenceRunner":
+        _validate_compile_blocks(
+            compile_blocks=compile_blocks,
+            block_stream_blocks_per_group=block_stream_blocks_per_group,
+        )
+        _validate_cuda_graph(
+            cuda_graph=cuda_graph,
+            block_stream_blocks_per_group=block_stream_blocks_per_group,
+        )
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
         try:
@@ -339,6 +464,11 @@ class ReferenceRunner:
                     )
         if built:
             pipeline.update_components(**built)
+        pinned_adaln_bytes = 0
+        if cuda_graph:
+            pinned_adaln_bytes = _pin_adaln_for_cuda_graph(
+                _transformer_component(pipeline, transformer_component)
+            )
         overlap_controller = None
         if block_stream_blocks_per_group:
             if not offload:
@@ -353,6 +483,14 @@ class ReferenceRunner:
                 block_stream_blocks_per_group,
                 block_stream_to_disk,
                 transformer_component,
+            )
+        if compile_blocks:
+            # The AdaLN host-cache modules are installed before regional
+            # compilation. C5 wraps the whole transformer forward later, so
+            # compiled repeated blocks sit inside its scope and a cache hit
+            # bypasses them entirely.
+            _compile_repeated_transformer_blocks(
+                pipeline, transformer_component
             )
         if step_overlap:
             from omni_infinity.step_overlap import enable_step_overlap
@@ -374,10 +512,21 @@ class ReferenceRunner:
             )
         else:
             pipeline.to(device)
+        cuda_graph_manager = None
+        if cuda_graph:
+            from omni_infinity.cuda_graph import CudaGraphManager
+
+            cuda_graph_manager = CudaGraphManager(device=device, max_buckets=2)
+            _wrap_transformer_with_cuda_graph(
+                pipeline, cuda_graph_manager, transformer_component
+            )
         runner = cls(
             pipeline,
             overlap_controller=overlap_controller,
             transformer_component=transformer_component,
+            cuda_graph_manager=cuda_graph_manager,
+            pinned_adaln_bytes=pinned_adaln_bytes,
+            cuda_graph_invalidate_between_generations=offload and cuda_graph,
         )
         attach_caches(
             runner,
@@ -436,14 +585,36 @@ class ReferenceRunner:
             binding.transformer = _transformer_component(
                 binding.pipeline, self.transformer_component
             )
-        with binding.denoise():
-            with _denoising_progress(
-                binding.pipeline,
-                num_inference_steps,
-                step_callback,
-                self.transformer_component,
+        graph_context = nullcontext()
+        if self.cuda_graph_manager is not None:
+            from omni_infinity.cuda_graph import GraphKey
+
+            if (
+                self.cuda_graph_invalidate_between_generations
+                and self._cuda_graph_generation_started
             ):
-                state = binding.pipeline(**binding.call_kwargs)
+                self.cuda_graph_manager.invalidate(
+                    "component offload generation boundary"
+                )
+            self._cuda_graph_generation_started = True
+            graph_context = self.cuda_graph_manager.bucket(
+                GraphKey(
+                    height=height,
+                    width=width,
+                    frames=_effective_video_frames(num_frames),
+                )
+            )
+        with graph_context:
+            with binding.denoise() as denoise_stats:
+                with _denoising_progress(
+                    binding.pipeline,
+                    num_inference_steps,
+                    step_callback,
+                    self.transformer_component,
+                ):
+                    state = binding.pipeline(**binding.call_kwargs)
+        if self.cuda_graph_manager is not None and denoise_stats is not None:
+            self.cuda_graph_manager.record_cache_skip(denoise_stats.skipped)
         binding.observe(state)
         values = {key: _state_value(state, key) for key in _OUTPUT_KEYS}
         return GenerationResult(**values)
