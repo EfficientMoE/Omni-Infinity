@@ -148,8 +148,11 @@ is gitignored — medians recorded here and in the notepad):
 only `warmup_not_done`×2 + `shape_bucket_miss`×1, i.e. the expected warmup
 path). Both profiles reproduce the goldens **bitwise** on GPU 4 as well. As
 Phase 0 predicted, the win is dominated by captured pinned H2D (copy busy
-−44.7%, cold-start 25.0 s → 0.8 s from eliminating the lazy-prefetch trace),
-not the 3.94% launch gap alone. Note: the bench harness does not emulate the
+−44.7%; the harness `cold_start_forward_wall_ms` metric drops 25.01 s →
+0.77 s by eliminating the lazy-prefetch trace — the first probed step wall is
+1205.6 ms), not the 3.94% launch gap alone. Each arm records 7 probed
+transformer forwards for the 8 scheduler steps — the known workload property
+(8 steps = 7 transformer forwards), identical in both arms. Note: the bench harness does not emulate the
 22 GiB envelope (its whole-run peak includes the resident text encoder); the
 envelope evidence is the Phase-3 smoke's 13.40 GiB denoise-window peak under
 `--max-vram 22GiB` semantics with arenas (1.54 GB) + graph pool (34.5 MB)

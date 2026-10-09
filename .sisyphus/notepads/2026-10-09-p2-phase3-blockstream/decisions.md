@@ -54,8 +54,9 @@ checking the exit code (pipefail).
 block-stream median step wall 2657.1 ms vs graph-block-stream 1186.2 ms
 => NET WIN 2.24x. Replay median 1185.7 ms (3 replays); captures=1, fails=0;
 fallbacks warmup_not_done:2 shape_bucket_miss:1 only. Both bitwise. Copy busy
-2037.8->1127.8 ms; launch gap 106.2->0.8 ms; cold start 25.0s->0.8s. Evidence
+2037.8->1127.8 ms; launch gap 106.2->0.8 ms; cold_start_forward_wall_ms 25.01s->0.77s (first probed step wall 1205.6 ms). Evidence
 results/p2_phase3/{block-stream,graph-block-stream}.json (gitignored, medians
 mirrored in the plan doc Phase 4 note). Bench harness peak (71.9/75.6 GiB)
 includes the resident text encoder - NOT the envelope gate; envelope evidence
 stays the Phase-3 smoke 13.40 GiB denoise-window peak.
+- c399446 bench(p2-phase3): timing ablation 2.24x — APPROVE (claude-fable-5; all numbers independently recomputed; non-blocking F1 cold-start metric attribution + F2 7-vs-8 step note fixed in follow-up; F3 DEFAULT_RESULTS nit + F4 profile-gate test gap recorded, not blocking)
