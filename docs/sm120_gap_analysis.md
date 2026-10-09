@@ -77,6 +77,26 @@ Gaps, ranked by expected impact:
    tensor cores; the FP8 step delivered 1.23× vs upstream's ~1.7–1.9×.
    A true-FP8 compute path (CUTLASS `scaled_mm_sm120`-style or
    `torch._scaled_mm`) is the single largest kernel win.
+   **Status (2026-10-08, PR #43):** landed as opt-in facade backends —
+   `backend="scaled_mm"` (`torch._scaled_mm` w8a8, per-row scales) and
+   `backend="cutlass_sm120"` (vendored vLLM CUTLASS blockwise kernel,
+   lazy JIT via `OMO_CUTLASS_DIR`, 128×128 weight + 1×128 activation
+   scales). Winner per shape (CUDA-event median, RTX PRO 6000):
+
+   | shape (M,N,K) | bf16 | triton w8a16 | cutlass_sm120 | winner |
+   |---|---:|---:|---:|---|
+   | 1024,28672,5376 | 2.809 | 1.018 | 0.586 | cutlass (1.74× vs triton) |
+   | 8192,28672,5376 | 8.037 | 8.224 | 5.130 | cutlass (1.60×) |
+   | 1024,7168,5376 | 0.753 | 0.316 | 0.225 | cutlass (1.40×) |
+   | 8192,7168,5376 | 2.135 | 1.992 | 2.191 | triton |
+   | 32768,* | 6.7–27.0 | 7.9–32.8 | 8.7–34.3 | bf16 (act-quant bound) |
+
+   w8a8 accuracy: cutlass rel≈0.026, scaled_mm rel≈0.037 vs the block
+   reference — both coarser than the weight-only Triton path. Rung C
+   boundary protection (`--fp8-protect-blocks`) moved the golden gate
+   rms_rel only 0.2135 → 0.1880 (first:2,last:3) → 0.1719
+   (first:5,last:10): the FP8 error is distributed across mid-blocks,
+   so the `rtol=2e-2` gate still fails and FP8 stays opt-in.
 2. **No CUDA graph capture.** The denoise loop is static-shape and repeated
    N times — ideal for graphs; every serving stack treats this as table
    stakes.
@@ -89,6 +109,13 @@ Gaps, ranked by expected impact:
    dispatch explicitly.
 5. **No SM120 Triton tuning.** Generic BLOCK/num_stages/num_warps; 99 KB
    SMEM budget differs from both SM80 and SM90 — autotune for CC 12.0.
+   **Status (2026-10-08, PR #43):** the fused FP8 GEMM now autotunes
+   over BLOCK_M/N/K ∈ {32,64,128}, stages ∈ {2,3,4}, warps ∈ {4,8}
+   statically pruned to the 99 KB budget (148 configs,
+   `cache_results=True`). Best config almost everywhere:
+   `BM=128,BN=128,BK=32,stages=3,warps=4` — BK=32 was inexpressible in
+   the old {64,128} grid; baseline-normalized gain ≈1.2× at M=1024,
+   neutral at M≥8192.
 6. **NVFP4 unexploited.** FP4 weight(-only or W4A4) for the 33B DiT halves
    weight traffic again vs FP8; the pipeline is bandwidth/offload-bound,
    so this attacks the actual bottleneck. (Accuracy gating applies — H3

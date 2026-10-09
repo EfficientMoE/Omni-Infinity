@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-10-08T12:06:02.347723+00:00",
+  "mode": "parity",
+  "config": "compile",
+  "model_arch": "h3-dense",
+  "optimizations": [
+    "adaln-host-cache",
+    "compile-blocks"
+  ],
+  "parameters": {
+    "prompt": "a red ball bouncing",
+    "first_frame": "/mnt/raid0nvme0/leyang/omni-wt/p2-cudagraph-compile/tests/fixtures/ref.png",
+    "steps": 8,
+    "actual_transformer_forwards": null,
+    "resolution": "256p",
+    "frames": 120,
+    "effective_frames": 124,
+    "seed": 0,
+    "goldens": "/mnt/raid0nvme0/leyang/omni-wt/p2-cudagraph-compile/tests/fixtures/goldens/fl2va_goldens.pt"
+  },
+  "environment": {
+    "python": "3.13.9",
+    "torch": "2.12.0+cu130",
+    "diffusers": "0.40.0",
+    "cuda": "13.0",
+    "driver": "590.48.01",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "cuda_visible_devices": "0",
+    "checkpoint": "/mnt/raid0nvme0/leyang/.cache/huggingface/hub/models--MiniMaxAI--MiniMax-H3/snapshots/42ed227ee7df40d41602854ae760620d6eb651fe",
+    "store_dir": "/mnt/raid0nvme0/leyang/h3-store-v2"
+  },
+  "full_generation_wall_seconds": 49.021225271746516,
+  "s_per_eval": 0.0,
+  "peak_gib": 72.20730686187744,
+  "rms_rel": 0.06643754988908768,
+  "cosine": 0.9978067874908447,
+  "parity": {
+    "rms_rel": 0.06643754988908768,
+    "bitwise": false,
+    "allclose": {
+      "rtol=atol=1e-5": false,
+      "rtol=atol=1e-4": false,
+      "rtol=atol=1e-3": false,
+      "rtol=atol=2e-2": false
+    },
+    "tier": "fail-2e-2"
+  },
+  "golden_provenance": {
+    "comparable": true,
+    "mismatches": []
+  },
+  "summary": null,
+  "steps": [],
+  "pinned_adaln_gib": 0.0,
+  "graph_stats": null,
+  "graph_replayed": null,
+  "graph_note": "not requested",
+  "execution_gate_passed": false,
+  "golden_gate_passed": false
+}
