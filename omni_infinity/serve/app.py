@@ -19,6 +19,7 @@ from omni_infinity.serve.models import (
     JobResponse,
     JobStatus,
 )
+from omni_infinity.serve.roles import parse_device_map, parse_role
 from omni_infinity.serve.service import (
     InvalidMedia,
     JobService,
@@ -67,6 +68,8 @@ class ServerSettings:
     host: str = "127.0.0.1"
     port: int = 8000
     workers: int = 1
+    role: str = "all"
+    device_map: tuple[tuple[str, str], ...] = ()
     stream_enabled: bool = False
     stream_max_sessions: int = 1
     stream_session_ttl: float = 30.0
@@ -106,6 +109,16 @@ class ServerSettings:
             host=os.environ.get("OMNI_HOST", "127.0.0.1"),
             port=int(os.environ.get("OMNI_PORT", "8000")),
             workers=int(os.environ.get("OMNI_WORKERS", "1")),
+            role=parse_role(os.environ.get("OMNI_ROLE", "all")).value,
+            device_map=tuple(
+                sorted(
+                    (role.value, device)
+                    for role, device in parse_device_map(
+                        os.environ.get("OMNI_DEVICE_MAP"),
+                        default_device=os.environ.get("OMNI_DEVICE", "cuda"),
+                    ).items()
+                )
+            ),
             stream_enabled=parse_bool(
                 os.environ.get("OMNI_STREAM_ENABLED", "false")
             ),
@@ -131,6 +144,24 @@ def load_runner(settings: ServerSettings):
     profile = resolve_profile(
         settings.model_arch, settings.optimizations, settings.checkpoint
     )
+    if settings.role == "pipeline":
+        from omni_infinity.serve.role_pipeline import RoleServeRunner
+        from omni_infinity.serve.roles import Role as StageRole
+
+        if profile.model_arch != "h3-dense":
+            raise ValueError(
+                "OMNI_ROLE=pipeline supports only h3-dense profiles"
+            )
+        if settings.checkpoint is None:
+            raise ValueError("OMNI_ROLE=pipeline requires OMNI_CHECKPOINT")
+        device_map = {
+            StageRole(name): device for name, device in settings.device_map
+        }
+        return RoleServeRunner(
+            settings.checkpoint,
+            device_map,
+            store_dir=settings.store_dir,
+        )
     kwargs = dict(profile.runner_kwargs)
     if kwargs.get("condition_cache"):
         kwargs["condition_cache_dir"] = settings.condition_cache_dir
@@ -223,6 +254,9 @@ def create_app(
         finally:
             stream_service.shutdown()
             service.shutdown()
+            runner_shutdown = getattr(runner, "shutdown", None)
+            if callable(runner_shutdown):
+                runner_shutdown()
 
     app = FastAPI(lifespan=lifespan)
 

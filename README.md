@@ -506,6 +506,29 @@ Tracked in the [task list](https://github.com/EfficientMoE/MoE-Infinity/issues/2
   - The required 256p/120-frame smoke reproduced the full-resident video and
     audio latents bitwise in **77.0 s**, peaking at **10.72 GiB**.
 
+### P7 — multi-GPU serving (6× RTX PRO 6000, PCIe)
+
+Tracked in [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42):
+
+- [x] Phase 0 — platform validation (P2P + NCCL, measured on-host; the
+      D2D-handoff and intra-socket-collective rules) —
+      [docs/multigpu_platform.md](docs/multigpu_platform.md).
+- [x] Phase 1 — stage pipelining. `OMNI_ROLE=pipeline` serves the job
+      API from encoder/denoiser/decoder role processes (one GPU each,
+      fully resident), bitwise per stage. Measured over the VidProM
+      trace: **135 jobs/h (1-GPU streamed) → 1247 (2-GPU, 9.2×) → 2481
+      (4-GPU) → 3397 (6-GPU, 25×)**. The denoiser is the unit bottleneck,
+      so a 2-GPU `{enc+dec | denoiser}` replica is the scaling unit
+      (`benchmarks/role_pipeline_bench.py`). CFG parallel dropped (H3 is
+      guidance-distilled).
+- [~] Phase 2 — single-request latency (USP + parallel VAE): **parked.**
+      A degree-2 Ulysses denoiser spike runs at 1.30× but fails the
+      parity gate under diffusers' experimental context parallelism
+      (`benchmarks/ulysses_spike.py`), and a seam-exact spatial-shard VAE
+      is blocked by the global-attention ViT decoder. Documented in
+      [docs/multigpu_platform.md](docs/multigpu_platform.md); Phase 1
+      stage pipelining already delivers the multi-GPU win.
+
 ### Deferred: shared `moe-kernels` package
 
 > **Deferred — shared `moe-kernels`.** Kernels currently live behind the
