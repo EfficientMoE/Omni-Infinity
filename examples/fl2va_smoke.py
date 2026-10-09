@@ -86,6 +86,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--block-stream-to-disk", default=None)
     parser.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        help="capture the denoise transformer forward into a CUDA graph; "
+        "with --block-stream-blocks-per-group the blocks stream through "
+        "pointer-stable weight arenas captured inside the graph",
+    )
+    parser.add_argument(
         "--stream-text-encoder",
         action="store_true",
         help="bf16 layer-stream the Qwen3-VL text encoder (requires --offload)",
@@ -189,8 +196,9 @@ def report_latent_parity(result, goldens_path: Path) -> bool:
         return False
     rms_rel = (latents - golden).norm().item() / golden.norm().item()
     close = torch.allclose(latents, golden, rtol=2e-2, atol=2e-2)
+    bitwise = torch.equal(latents, golden)
     print(
-        f"latents vs goldens: global rms_rel={rms_rel:.4f} "
+        f"latents vs goldens: bitwise={bitwise} global rms_rel={rms_rel:.4f} "
         f"elementwise_allclose(rtol=2e-2,atol=2e-2)={close}"
     )
     return rms_rel < 2e-2
@@ -283,6 +291,7 @@ def main() -> int:
         offload_memory_margin=_offload_margin(args),
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
         block_stream_to_disk=args.block_stream_to_disk,
+        cuda_graph=args.cuda_graph,
         stream_text_encoder=args.stream_text_encoder,
         condition_cache=getattr(args, "condition_cache", False),
         condition_cache_dir=getattr(args, "condition_cache_dir", None),
@@ -314,6 +323,13 @@ def main() -> int:
     if args.max_vram is not None and args.vram_window == "full":
         full_peak = torch.cuda.max_memory_allocated(args.device)
     print(f"generate wall-clock: {time.perf_counter() - start:.1f}s")
+    if runner.cuda_graph_manager is not None:
+        import json
+
+        print(
+            "graph telemetry: "
+            f"{json.dumps(runner.cuda_graph_manager.stats_snapshot())}"
+        )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if result.latents is not None:
         torch.save(

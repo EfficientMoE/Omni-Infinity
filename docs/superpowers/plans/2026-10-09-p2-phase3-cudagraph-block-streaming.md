@@ -121,9 +121,9 @@ while the AdaLN host-cache pinning path keeps working.
 ## Tasks
 
 - [x] Phase 0 feasibility probe: arena-redirected group-offload under `torch.cuda.graph`, note appended here
-- [ ] Pointer-stable double-buffered per-group arena allocator + VRAM accounting
-- [ ] Streaming→arena H2D on copy stream with event-synced compute-stream replay
-- [ ] Capture path (whole-forward, sub-graph fallback) + scoped lift of the block-stream guard
+- [x] Pointer-stable double-buffered per-group arena allocator + VRAM accounting (`omni_infinity/graph_arena.py`; single copy stream — D2H unneeded, weights are read-only from pinned host)
+- [x] Streaming→arena H2D on copy stream with event-synced compute-stream replay (arena hooks installed by the runner for the graphed profile only)
+- [x] Capture path (whole-forward, sub-graph fallback) + scoped lift of the block-stream guard — whole-forward capture SUCCEEDED on real H3 (capture_failures=0, bitwise parity, 13.40 GiB denoise peak); the sub-graph fallback was not needed
 - [ ] Validation: bitwise parity, 22 GiB OOM check, block-stream timing ablation (net win), telemetry
 - [ ] Docs: supported block-stream+graph envelope + updated P2 status
 
