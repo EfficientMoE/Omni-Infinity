@@ -82,9 +82,45 @@ step-wall win vs the block-stream baseline.
    counted; timing ablation block-stream OFF vs block-stream+graph (must be a **net** win);
    serve `graph_telemetry` fallback reasons; CPU suite non-regression.
 
+## Phase 0 decision note (2026-10-09)
+
+**Verdict: FEASIBLE — whole-forward arena capture (primary) AND per-block
+sub-graphs (fallback) both pass.** Probe:
+`benchmarks/probe_blockstream_graph.py` (4 Linear-pair bf16 blocks, 2 arenas →
+arena slots are reused within one forward, the real hazard schedule); evidence
+`results/p2_phase3/phase0_probe.json`; GPU 0 (RTX PRO 6000 Blackwell, shared —
+correctness only), torch 2.12.0+cu130, diffusers 0.40.0.
+
+- **stock**: `apply_group_offloading(block_level, num_blocks_per_group=1,
+  use_stream=True)` — the exact `_enable_block_streaming` config — capture
+  **fails** with `cudaErrorStreamCaptureInvalidated`. Root cause (read from
+  diffusers 0.40.0 source): `ModuleGroup._onload_from_memory` calls
+  `self.stream.synchronize()` on every onload, and
+  `GroupOffloadingHook.pre_forward` adds another `stream.synchronize()`; both
+  are CPU syncs, illegal inside a capture region. Fresh `.to(device)`
+  allocations + `param.data` rebinding per onload additionally break pointer
+  stability. Stock hooks can never be captured as-is → redirect required.
+- **arena (whole-forward)**: double-buffered pointer-stable arenas; params
+  rebound once into arena views; per-param H2D from fixed pinned host buffers
+  issued on a copy stream *inside* the capture region; hazards enforced only
+  with events (compute(g) waits copy_done(g); copy(g) waits
+  compute_done(g−2)). Capture succeeds; **5/5 replays bitwise-equal to eager**
+  (`max_abs_diff=0.0`) while host weights mutate between steps — the graph's
+  captured memcpy nodes re-read current host bytes every replay.
+- **subgraph (fallback)**: per-block graphs capture compute only; H2D runs
+  outside the graphs on the copy stream, event-synced, no CPU sync. Capture
+  succeeds; **5/5 replays bitwise**.
+
+Gate outcome: proceed to Phase 1. Capture-granularity preference for Phase 3:
+attempt whole-forward first (probe says the captured-H2D design is sound);
+sub-graphs stay the proven fallback. Integration risk moves to Phase 2: the
+real diffusers hooks must be bypassed/intercepted so captured groups keep
+arena-bound `param.data` (no `.to()` rebinding, no `stream.synchronize()`),
+while the AdaLN host-cache pinning path keeps working.
+
 ## Tasks
 
-- [ ] Phase 0 feasibility probe: arena-redirected group-offload under `torch.cuda.graph`, note appended here
+- [x] Phase 0 feasibility probe: arena-redirected group-offload under `torch.cuda.graph`, note appended here
 - [ ] Pointer-stable double-buffered per-group arena allocator + VRAM accounting
 - [ ] Streaming→arena H2D on copy stream with event-synced compute-stream replay
 - [ ] Capture path (whole-forward, sub-graph fallback) + scoped lift of the block-stream guard
