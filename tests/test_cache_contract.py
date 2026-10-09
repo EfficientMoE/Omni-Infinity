@@ -31,6 +31,9 @@ def test_static_optimization_set_excludes_caches():
         "fp8",
         "fp4",
         "block-stream",
+        "sage-attn",
+        "compile-blocks",
+        "cuda-graph",
         "text-encoder-stream",
     }
 

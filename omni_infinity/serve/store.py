@@ -19,6 +19,7 @@ from omni_infinity.serve.models import (
     TERMINAL_STATUSES,
     ArtifactMetadata,
     GenerationRequest,
+    GraphTelemetry,
     JobRecord,
     JobStatus,
     Progress,
@@ -108,6 +109,7 @@ class JobStore:
         *,
         error: str | None = None,
         artifacts: ArtifactMetadata | None = None,
+        graph_telemetry: GraphTelemetry | None = None,
     ) -> JobRecord:
         with self._lock:
             record = self.get(job_id)
@@ -127,6 +129,8 @@ class JobStore:
                     total_steps=record.progress.total_steps,
                 )
                 updates["artifacts"] = artifacts
+                if graph_telemetry is not None:
+                    updates["graph_telemetry"] = graph_telemetry
             if status == JobStatus.FAILED:
                 updates["error"] = (error or "job failed")[:MAX_ERROR_LENGTH]
             updated = record.model_copy(update=updates)

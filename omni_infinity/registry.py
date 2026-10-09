@@ -135,6 +135,41 @@ OPTIMIZATIONS = {
             }
         ),
     ),
+    "sage-attn": OptimizationSpec(
+        name="sage-attn",
+        description=(
+            "SageAttention (INT8 QK) window softmax on the VDN hybrid. "
+            "NOT parity-class: rms_rel ~1.3e-2 vs the fp32 reference "
+            "(bf16 backends sit at ~2.3e-3); accuracy-gated opt-in, "
+            "never a default."
+        ),
+        supported_archs=("vdn-hybrid",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"vdn-hybrid": _kw(softmax_backend="sage")}
+        ),
+    ),
+    "compile-blocks": OptimizationSpec(
+        name="compile-blocks",
+        description=(
+            "Regional torch.compile for repeated transformer blocks; "
+            "resident-profile-only."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(compile_blocks=True)}
+        ),
+    ),
+    "cuda-graph": OptimizationSpec(
+        name="cuda-graph",
+        description=(
+            "resident-profile-only CUDA-graph capture of the denoise "
+            "transformer forward."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(cuda_graph=True)}
+        ),
+    ),
     "text-encoder-stream": OptimizationSpec(
         name="text-encoder-stream",
         description=("Leaf-level streaming of the Qwen3-VL text encoder."),

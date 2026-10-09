@@ -94,6 +94,8 @@ supported configuration; the smoke CLIs and the ablation harness
 | `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
+| `compile-blocks` (regional compile; resident only, measured fail at `rtol=2e-2`) | ✓ | — |
+| `cuda-graph` (resident graph + pinned AdaLN; 1.54× combined, bitwise parity) | ✓ | — |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
@@ -105,7 +107,9 @@ backbone. Reproduction on RTX PRO 6000 Blackwell (sm120):
 per-NFE, bitwise golden parity (`tests/test_vdn_parity.py`), block
 streaming ~20 GiB peak. Ablation study:
 [docs/ablation_vdn.md](docs/ablation_vdn.md). Speedup attribution study:
-[docs/attribution_vdn.md](docs/attribution_vdn.md). Tracking:
+[docs/attribution_vdn.md](docs/attribution_vdn.md). Baseline tracking —
+VDN-H3 as the strongest tracked baseline plus the survey of claimed-stronger
+challengers: [docs/baselines_vdn.md](docs/baselines_vdn.md). Tracking:
 [#10](https://github.com/EfficientMoE/Omni-Infinity/issues/10).
 
 ### Opt-in caches
@@ -283,6 +287,13 @@ jobs/<uuid>/
   output.wav
   output.mp4
 ```
+
+Successful records optionally include `graph_telemetry` in `job.json` and the
+job API response when the loaded runner has a CUDA-graph manager. It reports
+per-job capture/replay counts, capture failures and time, warmup and eager
+fallback counts, plus final live-graph, pool-byte, and manager-generation
+gauges.
+Profiles without a manager and older records expose `graph_telemetry: null`.
 
 On process restart, persisted `running` jobs become `failed` with a restart
 message; denoising is not resumed. Queued records remain on disk but are not
@@ -532,8 +543,17 @@ pytest tests/ -m "not gpu and not weights" -q --timeout 180 \
 ```
 
 Tests marked `gpu` or `weights` need a CUDA device and a local checkpoint.
-CI excludes both marks. The CPU job installs a CPU torch wheel before the
-editable install.
+The per-PR CI excludes both marks; the CPU job installs a CPU torch wheel
+before the editable install, and pins `diffusers`/`transformers` to the
+golden-recording stack.
+
+A nightly workflow (`.github/workflows/nightly-gpu.yml`) runs the `gpu` and
+`weights` suites — the bitwise parity gates, the store-backed path, and the
+real job/stream API gates — on a self-hosted sm120 runner. The suite runs
+in a non-root container (`docker/Dockerfile.ci`) with the H3 snapshot and
+moe-store mounted read-only and reports written to a host-owned output
+directory. It is schedule/manual only, so pull requests never execute on
+the self-hosted runner.
 
 ## Contributing and Security
 

@@ -107,3 +107,100 @@ is ~2% faster than 1 block/group at identical peak.
    222-frame runs (temporal 37 vs 67 → hard shape error after
    successful generation). Fixed in `43a3f97`: grid runs don't take
    the goldens gate; parity is owned by `tests/test_vdn_parity.py`.
+
+## Window-softmax backend bake-off (sm120, issue #42 P3)
+
+`benchmarks/attn_bakeoff.py` times the window branch in isolation at H3
+geometry (56 heads x 128 head-dim, 1008 tokens/frame + 512 global rows,
+chunk=5 radius=1 anchors=both), CUDA-event medians over 20 iters on one
+RTX PRO 6000 Blackwell (CC 12.0), bf16, errors vs the fp32 eager
+reference. `cudnn` and `fmha-v2` run the same union-of-dense
+decomposition with the kernel swapped under the legs
+(`omni_infinity/arch/vdn_attention.py`); `fa4` has no sm120 install
+(flash-attn ships no consumer-Blackwell cute kernels) — recorded as
+unavailable rather than benched.
+
+| backend | window 8.6k (ms) | window 20.7k | window 38.8k | rms_rel class |
+|---|---:|---:|---:|---|
+| decomposed (auto today) | 6.98 | 27.81 | 60.52 | 2.3e-03 (bf16) |
+| flex | 7.01 | 30.55 | 66.78 | 2.3e-03 (bf16) |
+| **cudnn** | **6.53** | **27.02** | **59.24** | 2.3e-03 (bf16) |
+| fmha-v2 (FlashInfer 0.6.18) | 6.68 | 27.47 | 59.46 | 2.3e-03 (bf16) |
+| sage (INT8 QK) | 7.72 | 29.60 | 62.85 | 1.3e-02 (INT8 tier) |
+
+Full matrix (dense-mask rows included): `results/attn_bakeoff/results.csv`.
+`cudnn` leads at every size (2.1-6.4 % over `decomposed` on the window
+branch), `fmha-v2` second; both sit in the same bf16 reduction-order
+parity class as `decomposed` itself (2.3e-03 vs fp32). `sage` is slower
+AND INT8-tier — a negative result; it stays the accuracy-gated
+`sage-attn` registry opt-in. The gains are branch-local: scale by the
+window share of step time from the attribution study before expecting
+end-to-end movement.
+
+### Integration rung (vdn_smoke, 8 NFE, 120 frames, offload + text-encoder stream, GPU 4)
+
+| backend | wall s | s/eval incl. overhead | peak GiB | rms_rel vs goldens |
+|---|---:|---:|---:|---:|
+| main @83d1950 (implicit = spec flex) | 133.6 | 16.70 | 83.4 | 0.288* |
+| decomposed (pinned) | 127.8 | 15.97 | 81.8 | 0.306* |
+| cudnn | 168.5 | 21.06 | 81.8 | 0.409* |
+| fmha-v2 | 120.5 | 15.06 | 82.0 | 0.422* |
+
+\* the unmodified main baseline fails these goldens by the same class
+(0.288), so the committed `vdn_goldens.pt` does not match this
+offload + text-encoder-stream environment — the column compares
+backends relatively, not against a valid bitwise reference. The main
+row also ran a different kernel: the hub spec pins
+`softmax_backend: flex`, so the pre-P3 implicit default was flex (its
+slower wall and distinct rms_rel are consistent with the microbench
+flex rows). Decision:
+**`auto` on CC 12.x stays pinned to `decomposed`.** `cudnn`'s 2-6 %
+microbench win inverts at model scale (the per-chunk dense loop pays
+~50 layers x ~num-chunk launches per eval where `decomposed` makes two
+batched calls), a negative result the plan anticipated. `fmha-v2` is
+the runner-up (-0.9 s/eval wall, within config noise) and the adapter
+stays available behind `--softmax-backend fmha-v2` for a future
+re-measure once the goldens are re-recorded for this config.
+
+## P2 resident optimization ablation
+
+This separate, filterable P2 suite uses `--suite p2` in the same harness. It
+tests the `h3-dense` portable stack at 256p, 120 requested/124 effective
+frames, seed 0, `tests/fixtures/ref.png`, and prompt “a red ball bouncing.”
+Timing columns come from physical GPU 4, an RTX PRO 6000 Blackwell Max-Q
+Workstation Edition, using the median CUDA step window after the first forward
+for eager rows and steady replay windows for graph rows. Parity columns come
+from separate NFE-8 runs on physical GPU 0, the RTX PRO 6000 Blackwell Server
+Edition matching the golden provenance. Both used driver 590.48.01, PyTorch
+2.12.0+cu130, and diffusers 0.40.0.
+
+| config | NFE | s_per_nfe (ms) | peak_gib | rms_rel | cosine | parity tier | notes |
+|---|---:|---:|---:|---:|---:|---|---|
+| baseline | 8 | 1483.38 | 71.89 | 0 | 1.000004 | bitwise | canonical Phase-0 timing; reference |
+| baseline | 16 | 1492.56 | 71.89 | — | — | no golden | fresh timing; no golden at this NFE |
+| compile | 8 | 1579.38 | 71.89 | 0.06644 | 0.997807 | **FAIL 2e-2** | canonical Phase-1 timing; 0.939x, slower |
+| compile | 16 | 1446.59 | 71.89 | — | — | no golden | fresh timing; no golden at this NFE |
+| graph | 8 | **966.42** | 71.89 | 0 | 1.000004 | bitwise | 1.535x; 24.23 GiB host pinned; ≈2.5 s capture |
+| graph | 16 | **965.41** | 71.89 | — | — | no golden | 11 steady replays; no golden at this NFE |
+| compile+graph | 8 | 924.82 | 71.89 | 0.04114 | 0.999162 | **FAIL 2e-2** | capture succeeded; 2.67 s capture |
+| compile+graph | 16 | 924.90 | 71.89 | — | — | no golden | capture succeeded; no golden at this NFE |
+
+The NFE-8 baseline, compile, and graph timing cells deliberately report the
+canonical Phase 0/1/2 records so the headline comparison retains identical
+provenance. Fresh same-GPU rechecks are also preserved in their normalized
+JSON artifacts: baseline was 1492.84 ms, compile was 1238.67 ms, and graph was
+964.76 ms. The pageable AdaLN H2D portion of the eager rows varied materially
+with host-memory state, while pinned graph replay remained stable; replacing
+the canonical eager numbers with the favorable compile recheck would therefore
+be misleading. The NFE-16 rows are fresh measurements and should be read with
+that host-copy variability in mind. Exact records and the aggregate CSV are in
+`results/p2_phase2_ablation/`.
+
+**Verdict.** Graph-only is the single useful configuration: it preserves
+bitwise golden parity and delivers the canonical 1.535x resident-profile win.
+Compile-only remains a measured NFE-8 regression and fails the `2e-2` parity
+gate. Compile+graph did capture on torch 2.12 and replayed about 4% faster than
+graph-only, but it inherited compile's numerical failure, so that speed is not
+usable under the golden contract. Readers with enough memory for the
+~71.89 GiB resident profile and an additional 24.23 GiB of pinned host memory
+should choose resident graph-only; none of these rows is a 22 GiB profile.

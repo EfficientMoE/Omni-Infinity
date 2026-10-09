@@ -40,7 +40,17 @@ def _args():
     p.add_argument(
         "--softmax-backend",
         default=None,
-        choices=[None, "flex", "decomposed"],
+        choices=[
+            None,
+            "auto",
+            "flex",
+            "decomposed",
+            "ref",
+            "cudnn",
+            "fa4",
+            "fmha-v2",
+            "sage",
+        ],
     )
     p.add_argument("--offload", action="store_true")
     p.add_argument(

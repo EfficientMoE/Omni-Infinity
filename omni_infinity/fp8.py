@@ -28,6 +28,32 @@ from omni_infinity.kernels import fused_fp8_gemm, quantize_block_fp8
 
 _SKIP_PATTERNS = ("norm", "pos_embed", "patch_embed")
 
+_PROTECT_KEYS = ("first", "last")
+
+
+def parse_protect_blocks(spec: str) -> tuple[int, int]:
+    """``"first:2,last:3"`` -> ``(2, 3)``; either key may be omitted."""
+    counts = {}
+    for part in spec.split(","):
+        key, sep, value = part.strip().partition(":")
+        if key not in _PROTECT_KEYS or not sep or key in counts:
+            raise ValueError(
+                f"invalid --fp8-protect-blocks spec {spec!r}; expected "
+                "'first:N', 'last:M', or 'first:N,last:M'"
+            )
+        counts[key] = int(value)
+        if counts[key] < 0:
+            raise ValueError(f"negative count in protect spec {spec!r}")
+    return counts.get("first", 0), counts.get("last", 0)
+
+
+def protect_block_indices(
+    total_blocks: int, first: int, last: int
+) -> frozenset[int]:
+    return frozenset(range(min(first, total_blocks))) | frozenset(
+        range(max(total_blocks - last, 0), total_blocks)
+    )
+
 
 def quantize_per_row_fp8(
     weight: torch.Tensor,

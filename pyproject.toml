@@ -48,6 +48,9 @@ RFC = "https://github.com/EfficientMoE/MoE-Infinity/issues/222"
 [tool.setuptools.packages.find]
 include = ["omni_infinity*"]
 
+[tool.setuptools.package-data]
+"omni_infinity.kernels._impls.cutlass_sm120" = ["*.cu", "*.cuh", "*.hpp"]
+
 [tool.setuptools_scm]
 
 [tool.pytest.ini_options]

@@ -24,6 +24,8 @@ storage dtype, so increment 4's FP8 groups dequantize inside
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -70,6 +72,30 @@ class AdaLNEntry:
         scale = self.scale.to(device, non_blocking=True)
         weight = (weight.to(torch.float32) * scale).to(self.compute_dtype)
         return weight, bias
+
+    @property
+    def host_nbytes(self) -> int:
+        tensors = (self.weight, self.bias, self.scale)
+        return sum(
+            tensor.numel() * tensor.element_size()
+            for tensor in tensors
+            if tensor is not None
+        )
+
+    def pin_memory(
+        self,
+        pin: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    ) -> int:
+        """Pin stable graph-copy sources and return their total footprint."""
+        pin = pin or (lambda tensor: tensor.pin_memory())
+        for name in ("weight", "bias", "scale"):
+            tensor = getattr(self, name)
+            if tensor is None or tensor.is_pinned():
+                continue
+            if tensor.device.type != "cpu":
+                raise ValueError(f"AdaLN {name} must remain host-resident")
+            setattr(self, name, pin(tensor))
+        return self.host_nbytes
 
     def materialize_fp8(
         self, device: torch.device

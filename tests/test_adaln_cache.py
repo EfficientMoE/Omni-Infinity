@@ -80,3 +80,19 @@ def test_adaln_entry_materialize_bf16_is_byte_exact():
     assert torch.equal(materialized_weight, weight)
     assert torch.equal(materialized_bias, bias)
     assert materialized_weight.dtype == torch.bfloat16
+
+
+def test_adaln_entry_pinning_is_explicit_and_includes_optional_scale():
+    weight = torch.randn(12, TIME_EMBED, dtype=torch.bfloat16)
+    bias = torch.randn(12, dtype=torch.bfloat16)
+    scale = torch.randn(12, 1)
+    entry = AdaLNEntry(weight, bias, scale=scale)
+    seen = []
+
+    pinned_bytes = entry.pin_memory(
+        lambda tensor: seen.append(tensor) or tensor
+    )
+
+    assert seen == [weight, bias, scale]
+    assert pinned_bytes == sum(t.numel() * t.element_size() for t in seen)
+    assert entry.host_nbytes == pinned_bytes
