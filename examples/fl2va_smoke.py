@@ -291,7 +291,7 @@ def main() -> int:
         offload_memory_margin=_offload_margin(args),
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
         block_stream_to_disk=args.block_stream_to_disk,
-        cuda_graph=args.cuda_graph,
+        cuda_graph=getattr(args, "cuda_graph", False),
         stream_text_encoder=args.stream_text_encoder,
         condition_cache=getattr(args, "condition_cache", False),
         condition_cache_dir=getattr(args, "condition_cache_dir", None),
@@ -323,13 +323,11 @@ def main() -> int:
     if args.max_vram is not None and args.vram_window == "full":
         full_peak = torch.cuda.max_memory_allocated(args.device)
     print(f"generate wall-clock: {time.perf_counter() - start:.1f}s")
-    if runner.cuda_graph_manager is not None:
+    manager = getattr(runner, "cuda_graph_manager", None)
+    if manager is not None:
         import json
 
-        print(
-            "graph telemetry: "
-            f"{json.dumps(runner.cuda_graph_manager.stats_snapshot())}"
-        )
+        print(f"graph telemetry: {json.dumps(manager.stats_snapshot())}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     if result.latents is not None:
         torch.save(
