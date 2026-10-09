@@ -103,7 +103,7 @@ def test_settings_from_env_use_the_streamed_dense_defaults(clean_env):
     assert settings.stream_enabled is False
     assert settings.stream_max_sessions == 1
     assert settings.stream_session_ttl == 30.0
-    assert settings.stream_chunk_frames == 24
+    assert settings.stream_chunk_frames == 124
     assert settings.stream_queue_chunks == 8
     assert settings.stream_fallback_hls is False
 
@@ -274,6 +274,12 @@ def test_load_runner_forwards_the_dir_only_with_the_flag(monkeypatch):
 def test_main_rejects_more_than_one_worker(clean_env, monkeypatch):
     monkeypatch.setenv("OMNI_WORKERS", "2")
     with pytest.raises(ValueError, match="OMNI_WORKERS must be 1"):
+        main()
+
+
+def test_main_rejects_unwired_split_roles(clean_env, monkeypatch):
+    monkeypatch.setenv("OMNI_ROLE", "denoiser")
+    with pytest.raises(NotImplementedError, match="OMNI_ROLE"):
         main()
 
 

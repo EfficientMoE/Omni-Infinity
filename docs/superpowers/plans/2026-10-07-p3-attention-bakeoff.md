@@ -1,5 +1,7 @@
 # P3 — Attention backend bake-off for the window-softmax branch (SM120)
 
+> **Tracking PR** — implementation for this plan lands on this branch. Roadmap: #42.
+
 Tracking: [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42) (P3).
 Refs: [t2v survey](../../t2v_optimization_survey.md) §2, [repro_vdn](../../repro_vdn.md).
 
@@ -40,11 +42,11 @@ misdetection logged by the upstream component (physical CC is 12.0).
 
 ## Tasks
 
-- [ ] Capability-pinned dispatch + backend logging
-- [ ] `benchmarks/attn_bakeoff.py` matrix runner (bounded runtime)
-- [ ] cuDNN / FA4 / fmha_v2 adapters behind existing backend enum
-- [ ] SageAttention2 opt-in + accuracy tier doc
-- [ ] VDN ladder rerun; update ablation/attribution docs + issue #42
+- [x] Capability-pinned dispatch + backend logging
+- [x] `benchmarks/attn_bakeoff.py` matrix runner (bounded runtime)
+- [x] cuDNN / FA4 / fmha_v2 adapters behind existing backend enum
+- [x] SageAttention2 opt-in + accuracy tier doc
+- [x] VDN ladder rerun; update ablation/attribution docs + issue #42
 
 ## Verification
 

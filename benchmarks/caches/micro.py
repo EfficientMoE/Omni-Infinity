@@ -4,8 +4,9 @@
 """Microbenchmarks for the isolated cost of each issue #24 cache level.
 
 Everything runs on synthetic tensors, without checkpoints or network access.
-The serving code paths for C1 keys and tiers, C3 keys, and the C5 decision
-wrapper are timed on CPU in CI and on CUDA when available.
+The serving code paths for C1 keys and tiers, C2 keying and memory reuse, C3
+keys, and the C5 decision wrapper are timed on CPU in CI and on CUDA when
+available.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from benchmarks.caches.contract import MICRO_REPS, WARMUP
 from omni_infinity.caches._tensor_tree import update_hash_for_value
 from omni_infinity.caches.condition import ConditionCache, condition_key
 from omni_infinity.caches.denoise import DenoiseCacheConfig, denoise_step_cache
+from omni_infinity.caches.prefix import EncoderPrefixCache, encoder_prefix_key
 
 _EMBED_DIM = 5120
 
@@ -138,6 +140,38 @@ def run_micro(
         _row(
             "c1_disk_get_cold",
             _time_ms(cold_get, reps, warmup),
+            reps,
+            embed_rows=embed_rows,
+        )
+    )
+
+    token_ids = torch.arange(512, dtype=torch.int64).unsqueeze(0)
+    image = torch.zeros(image_bytes, dtype=torch.uint8)
+
+    def make_encoder_key():
+        return encoder_prefix_key(token_ids, (image,), namespace="micro")
+
+    rows.append(
+        _row(
+            "c2_encoder_key",
+            _time_ms(make_encoder_key, reps, warmup),
+            reps,
+            image_bytes=image_bytes,
+            tokens=token_ids.numel(),
+        )
+    )
+
+    encoder_cache = EncoderPrefixCache(max_entries=4)
+    encoder_key = make_encoder_key()
+
+    def encoder_put_get():
+        encoder_cache.put(encoder_key, entry)
+        return encoder_cache.get(encoder_key)
+
+    rows.append(
+        _row(
+            "c2_mem_put_get",
+            _time_ms(encoder_put_get, reps, warmup),
             reps,
             embed_rows=embed_rows,
         )

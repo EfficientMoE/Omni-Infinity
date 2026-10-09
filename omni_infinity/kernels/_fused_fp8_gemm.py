@@ -9,12 +9,26 @@ stay bf16 (weight-only); the MMA runs on bf16 tensor cores.
 
 from __future__ import annotations
 
+import inspect
+
 import torch
 import triton
 import triton.language as tl
 
 # Scale indexing loads ONE scalar scale per tile, so BLOCK_SIZE_N must divide
 # SCALE_BLOCK_M (128) and BLOCK_SIZE_K must divide SCALE_BLOCK_K (128).
+# P4 (sm120) grid per the P1+P4 plan: BLOCK_M/N/K in {32,64,128},
+# num_stages in {2,3,4}, num_warps in {4,8}, statically pruned to the
+# 99 KB SMEM budget of CC 12.0 (software-pipelined A bf16 + B fp8 tiles:
+# stages * (2*BM*BK + BN*BK) bytes). Triton's OutOfResources catch in
+# the autotuner remains the runtime safety net for epilogue overhead.
+_SM120_SMEM_BUDGET = 99 * 1024
+
+
+def _smem_estimate(bm: int, bn: int, bk: int, ns: int) -> int:
+    return ns * (2 * bm * bk + bn * bk)
+
+
 _CONFIGS = [
     triton.Config(
         {
@@ -26,14 +40,27 @@ _CONFIGS = [
         num_stages=ns,
         num_warps=nw,
     )
-    for bm in (64, 128)
-    for bn in (64, 128)
-    for bk in (64, 128)
-    for ns, nw in ((3, 4), (4, 8))
+    for bm in (32, 64, 128)
+    for bn in (32, 64, 128)
+    for bk in (32, 64, 128)
+    for ns in (2, 3, 4)
+    for nw in (4, 8)
+    if _smem_estimate(bm, bn, bk, ns) <= _SM120_SMEM_BUDGET
 ]
 
 
-@triton.autotune(configs=_CONFIGS, key=["M", "N", "K"])
+# cache_results (persistent best-config cache) only exists on newer
+# Triton; passing it blindly would TypeError at import on older
+# releases allowed by torch>=2.0, and _select_impl would silently fall
+# back to the slow pure-torch reference.
+_AUTOTUNE_KWARGS = (
+    {"cache_results": True}
+    if "cache_results" in inspect.signature(triton.autotune).parameters
+    else {}
+)
+
+
+@triton.autotune(configs=_CONFIGS, key=["M", "N", "K"], **_AUTOTUNE_KWARGS)
 @triton.jit
 def _fgemm_kernel(
     a_ptr,

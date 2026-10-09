@@ -1,7 +1,7 @@
 # Copyright (c) EfficientMoE.
 # SPDX-License-Identifier: Apache-2.0
 
-"""One-factor cache-contribution ablation for issue #24 C1/C3/C5.
+"""One-factor cache-contribution ablation for issue #24 C1/C2/C3/C5.
 
 The orchestrator spawns one subprocess per grid cell for CUDA-state
 isolation and writes rows in the frozen metric contract. Cell mode builds a
@@ -130,7 +130,7 @@ def _rows_from_cell_payload(cell: Cell, payload: dict) -> list[dict]:
         row["c5_skipped"] = phase.get("c5_skipped", "")
         row["notes"] = phase.get("notes", "")
         stats = phase.get("stats") or {}
-        for prefix in ("c1", "c3"):
+        for prefix in ("c1", "c2", "c3"):
             for counter in ("hits", "misses"):
                 value = (stats.get(prefix) or {}).get(counter, "")
                 row[f"{prefix}_{counter}"] = value
@@ -169,6 +169,7 @@ def _runner_kwargs(cell: Cell, args) -> dict:
             if config.condition_cache
             else None
         ),
+        "encoder_cache": config.encoder_cache,
         "vision_cache": config.vision_cache,
     }
     store_components = tuple(
@@ -179,23 +180,43 @@ def _runner_kwargs(cell: Cell, args) -> dict:
     return kwargs
 
 
+def c5_cell_skip(config: CacheConfig, args) -> str | None:
+    if not config.denoise_cache:
+        return None
+    if not args.c5_coefficients:
+        return "c5-uncalibrated"
+    if config.denoise_indicator != args.c5_fit_signal:
+        return "c5-signal-mismatch"
+    return None
+
+
+def _denoise_config(config: CacheConfig, args):
+    if not config.denoise_cache:
+        return None
+    from omni_infinity.caches.denoise import DenoiseCacheConfig
+
+    return DenoiseCacheConfig(
+        coefficients=tuple(args.c5_coefficients),
+        threshold=args.c5_threshold,
+        mode="output",
+        approximator=config.denoise_approximator,
+        indicator=config.denoise_indicator,
+        accumulate=config.denoise_accumulate,
+        calls_per_step=args.c5_calls_per_step,
+        signal_name=args.c5_signal_name,
+    )
+
+
 def _run_cell(cell: Cell, args) -> dict:
     if not os.environ.get("OMNI_CHECKPOINT"):
         return {"cell": cell.name, "skip": "weights-absent"}
     config = cell.config
     denoise_config = None
     if config.denoise_cache:
-        if not args.c5_coefficients:
-            return {"cell": cell.name, "skip": "c5-uncalibrated"}
-        from omni_infinity.caches.denoise import DenoiseCacheConfig
-
-        denoise_config = DenoiseCacheConfig(
-            coefficients=tuple(args.c5_coefficients),
-            threshold=args.c5_threshold,
-            mode="output",
-            calls_per_step=args.c5_calls_per_step,
-            signal_name=args.c5_signal_name,
-        )
+        skip = c5_cell_skip(config, args)
+        if skip is not None:
+            return {"cell": cell.name, "skip": skip}
+        denoise_config = _denoise_config(config, args)
 
     from omni_infinity.runner import ReferenceRunner, _transformer_component
 
@@ -243,6 +264,8 @@ def _run_cell(cell: Cell, args) -> dict:
         entry: dict = {"phase": phase, "e2e_ms": elapsed_ms, "stats": {}}
         if runner.condition_cache is not None:
             entry["stats"]["c1"] = runner.condition_cache.stats()
+        if runner.encoder_cache_controller is not None:
+            entry["stats"]["c2"] = runner.encoder_cache_controller.cache.stats()
         if runner.vision_cache_controller is not None:
             entry["stats"]["c3"] = runner.vision_cache_controller.cache.stats()
         if c5_stats is not None:
@@ -296,6 +319,8 @@ def _orchestrate(args) -> int:
         str(args.c5_calls_per_step),
         "--c5-signal-name",
         args.c5_signal_name,
+        "--c5-fit-signal",
+        args.c5_fit_signal,
     )
     if args.c5_coefficients:
         extra += (
@@ -367,6 +392,11 @@ def main() -> int:
     parser.add_argument("--c5-rms-rel-max", type=float, default=0.1)
     parser.add_argument("--c5-calls-per-step", type=int, default=1)
     parser.add_argument("--c5-signal-name", default="hidden_states")
+    parser.add_argument(
+        "--c5-fit-signal",
+        choices=("raw", "teacache", "fbcache"),
+        default="raw",
+    )
     args = parser.parse_args()
     if args.cell:
         cell = next(

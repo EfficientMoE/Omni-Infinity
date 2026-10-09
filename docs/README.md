@@ -38,7 +38,7 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
 - [Cache benchmarks](cache_benchmarks.md) — datasets, suites, the frozen
   metric contract, and how each level's contribution is quantified.
 - [C1 — exact condition cache](caches_c1_condition.md) — `condition-cache`.
-- [C2 — encoder prefix cache (deferred)](caches_c2_prefix.md).
+- [C2 — exact encoder-prefix cache](caches_c2_prefix.md) — `encoder-cache`.
 - [C3 — vision-embedding cache](caches_c3_vision.md) — `vision-cache`.
 - [C4 — VDN shape-cache limits](caches_c4_shape.md).
 - [C5 — denoise-step cache](caches_c5_denoise.md) — calibrated opt-in only.
@@ -69,6 +69,13 @@ Nothing is on by default. Each level has an opt-in interface and a design note.
 - [Baseline tracking](baselines_vdn.md) — VDN-H3 as the strongest tracked
   baseline, the MiniMax-H3 reference numbers, and the 2026-10 survey of
   models claiming stronger video-generation results than H3.
+
+## Multi-GPU (P7, issue #42)
+
+- [Platform validation](multigpu_platform.md) — measured P2P/NCCL results
+  on the 6× RTX PRO 6000 host, tuning recommendations, and the Phase 0
+  gate verdict for the
+  [P7 plan](superpowers/plans/2026-10-07-p7-multigpu.md).
 
 ## Research notes
 

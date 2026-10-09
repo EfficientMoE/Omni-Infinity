@@ -73,7 +73,7 @@ class DemoService:
         executor: Executor | None = None,
         optimizations: tuple[str, ...] = (),
         stream_service: DemoStreamService | None = None,
-        stream_chunk_frames: int = 24,
+        stream_chunk_frames: int = 124,
     ):
         self.runner = runner
         self.model_arch = model_arch

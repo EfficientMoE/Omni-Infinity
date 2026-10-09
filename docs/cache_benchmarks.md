@@ -2,8 +2,9 @@
 
 This suite tests and quantifies the contribution of each cache level listed
 under the README's [Opt-in caches](../README.md#opt-in-caches) section. The
-cache semantics are defined by the [C1 condition-cache](caches_c1_condition.md)
-and [C5 denoise-cache](caches_c5_denoise.md) designs and tracked in
+cache semantics are defined by the [C1 condition-cache](caches_c1_condition.md),
+[C2 encoder-prefix cache](caches_c2_prefix.md), and
+[C5 denoise-cache](caches_c5_denoise.md) designs and tracked in
 [issue #24](https://github.com/EfficientMoE/Omni-Infinity/issues/24).
 
 The benchmarks never enable caches in reference-parity gates. They are
@@ -30,9 +31,10 @@ python -m benchmarks.caches.workload --refresh --source vbench
 ### Micro
 
 `benchmarks.caches.micro` times C1 condition-key hashing, memory put/get and
-cold disk get, C3 vision-call key hashing, and C5 decision/replay overhead on
-synthetic tensors. It reports suite, cache identity, repetitions, device,
-latency percentiles, and cache-specific counters in
+cold disk get, C2 encoder-key hashing and memory put/get, C3 vision-call key
+hashing, and C5 decision/replay overhead on synthetic tensors. It reports
+suite, cache identity, repetitions, device, latency percentiles, and
+cache-specific counters in
 `results/cache-bench/micro.json`.
 
 ```bash
@@ -41,11 +43,12 @@ python -m benchmarks.caches.micro --results-dir results/cache-bench
 
 ### Ablation
 
-`benchmarks.caches.ablation` runs `{baseline,c1,c3,c5,all-exact}` as isolated
-subprocess cells. Each measured cell performs a cold and warm generation,
-records `e2e_ms`, `vram_peak_gib`, C1/C3 hit and miss counters, C5 step
-counters, `rms_rel`, its quality bound, and warm speedup. Per-cell JSON and
-the frozen rows in `results/cache-bench/results.csv` are written under the
+`benchmarks.caches.ablation` runs
+`{baseline,c1,c2,c3,c5,c5-teacache,c5-taylor1,c5-fbcache,all-exact}` as
+isolated subprocess cells. Each measured cell performs a cold and warm
+generation, records `e2e_ms`, `vram_peak_gib`, C1/C2/C3 hit and miss counters,
+C5 step counters, `rms_rel`, its quality bound, and warm speedup. Per-cell JSON
+and the frozen rows in `results/cache-bench/results.csv` are written under the
 results directory.
 
 ```bash
@@ -58,10 +61,13 @@ Cells without weights are `SKIP` with `weights-absent`. C5 has no invented
 default calibration, so it is `SKIP` with `c5-uncalibrated` unless calibrated
 coefficients and a threshold are supplied.
 
-The C3 and all-exact cells pass `tests/fixtures/ref.png` as image conditioning
-in both phases. This identical cold/warm image exercises the visual tower and
-therefore makes C3 vision-cache hits measurable without changing comparison
-inputs.
+The `c2` cell enables `encoder-cache`. C5 remains the raw-indicator cell;
+`c5-teacache` enables the timestep-modulated signal and accumulator,
+`c5-taylor1` adds first-order approximation, and `c5-fbcache` selects the
+first-block residual indicator. The C3 and all-exact cells pass
+`tests/fixtures/ref.png` as image conditioning in both phases. This identical
+cold/warm image exercises the visual tower and therefore makes C3 vision-cache
+hits measurable without changing comparison inputs.
 
 ### Serve trace
 
@@ -90,18 +96,40 @@ same trace to measure persistent disk-tier recovery.
 
 ### Denoise probe
 
-`benchmarks.caches.denoise_probe` records one input and output relative-L1
-distance per denoising transformer call in
+`benchmarks.caches.denoise_probe` records raw input, TeaCache, FBCache, and
+output relative-L1 distances per denoising transformer call in
 `results/cache-bench/denoise_probe.json`:
 
 ```bash
 OMNI_CHECKPOINT=... python -m benchmarks.caches.denoise_probe
 ```
 
-Fit a polynomial to these records, then pass the coefficients, threshold, and
-quality bound to `benchmarks.caches.ablation --c5-coefficients ...`. This
-probe-to-fit workflow is the only path to a measured C5 row that is not
-`c5-uncalibrated`.
+Fit a polynomial with `benchmarks.caches.denoise_fit`, then pass the printed
+coefficients and an accumulated-skip threshold to the ablation:
+
+```bash
+python -m benchmarks.caches.denoise_fit \
+  --probe results/cache-bench/denoise_probe.json \
+  --signal teacache --degree 4
+python -m benchmarks.caches.ablation \
+  --c5-coefficients <printed-coefficients> --c5-threshold <suggested-threshold> \
+  --c5-fit-signal teacache
+```
+
+Probe → fit → coefficients plus threshold → ablation is the only path to a
+measured C5 row that is not `c5-uncalibrated`. Coefficients are model-specific;
+the repository ships the fitting workflow, not fitted values. One calibration
+covers one indicator: `--c5-fit-signal` names the signal the coefficients were
+fitted on (`raw` runs `c5`; `teacache` runs `c5-teacache` and `c5-taylor1`;
+`fbcache` runs `c5-fbcache`), and every other C5 cell records a
+`c5-signal-mismatch` SKIP instead of reporting numbers from a foreign fit.
+
+### Pending weights-gated measurements
+
+| Cell | Contribution measurement | Status |
+|---|---|---|
+| `c2` | Encoder time saved on repeated VidProM prompts and repeated encoder presentations in the multi-prompt demo | Pending measurement (weights-gated) |
+| `c5` / `c5-teacache` / `c5-taylor1` / `c5-fbcache` | Warm speedup versus `rms_rel` quality curves across calibrated thresholds | Pending measurement (weights-gated) |
 
 ## Metric contract
 
@@ -132,10 +160,12 @@ FIELDS = (
     "speedup_vs_baseline",
     "verdict",
     "notes",
+    "c2_hits",
+    "c2_misses",
 )
 ```
 
-Exact C1, C3, and all-exact warm rows pass only when `rms_rel == 0` and the
+Exact C1, C2, C3, and all-exact warm rows pass only when `rms_rel == 0` and the
 required cache reports at least one hit. C5 warm rows pass only when
 `c5_skipped >= 1`, `speedup_vs_baseline > 1`, and
 `rms_rel <= rms_rel_max`. `weights-absent`, `c5-uncalibrated`, and
@@ -158,6 +188,8 @@ python -m benchmarks.caches.ablation --dry-run
 OMNI_CHECKPOINT=... OMNI_STORE_DIR=... \
   python -m benchmarks.caches.ablation
 OMNI_CHECKPOINT=... python -m benchmarks.caches.denoise_probe
+python -m benchmarks.caches.denoise_fit \
+  --probe results/cache-bench/denoise_probe.json --signal teacache --degree 4
 # Start the condition-cache server above, then:
 python -m benchmarks.caches.serve_trace --repeat-ratio 0.5
 ```

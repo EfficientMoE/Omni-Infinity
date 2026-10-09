@@ -105,6 +105,20 @@ OPTIMIZATIONS = {
             }
         ),
     ),
+    "fp4": OptimizationSpec(
+        name="fp4",
+        description=(
+            "MXFP4 (E2M1) weights on wide Linears (h3-dense store "
+            "path). Opt-in memory/bandwidth tradeoff one rung below "
+            "fp8; refuses to run without an explicit fp4 scale mode."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(transformer_fp4=True),
+            }
+        ),
+    ),
     "block-stream": OptimizationSpec(
         name="block-stream",
         description=(
@@ -119,6 +133,41 @@ OPTIMIZATIONS = {
                     offload=True, block_stream_blocks_per_group=1
                 ),
             }
+        ),
+    ),
+    "sage-attn": OptimizationSpec(
+        name="sage-attn",
+        description=(
+            "SageAttention (INT8 QK) window softmax on the VDN hybrid. "
+            "NOT parity-class: rms_rel ~1.3e-2 vs the fp32 reference "
+            "(bf16 backends sit at ~2.3e-3); accuracy-gated opt-in, "
+            "never a default."
+        ),
+        supported_archs=("vdn-hybrid",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"vdn-hybrid": _kw(softmax_backend="sage")}
+        ),
+    ),
+    "compile-blocks": OptimizationSpec(
+        name="compile-blocks",
+        description=(
+            "Regional torch.compile for repeated transformer blocks; "
+            "resident-profile-only."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(compile_blocks=True)}
+        ),
+    ),
+    "cuda-graph": OptimizationSpec(
+        name="cuda-graph",
+        description=(
+            "resident-profile-only CUDA-graph capture of the denoise "
+            "transformer forward."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {"h3-dense": _kw(cuda_graph=True)}
         ),
     ),
     "text-encoder-stream": OptimizationSpec(
@@ -140,6 +189,7 @@ def load_cache_optimizations() -> dict[str, OptimizationSpec]:
     optimizations = {}
     for module_name in (
         "omni_infinity.caches.condition",
+        "omni_infinity.caches.prefix",
         "omni_infinity.caches.vision",
     ):
         try:

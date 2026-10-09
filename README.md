@@ -66,9 +66,10 @@ design contracts, and measurement reports.
 - **Denoising-step scheduling.** Cross-step weight prefetch overlaps H2D copies
   with denoising compute (measured H2D/compute overlap of **0.637** and
   **0.599** at steps 2 and 3), with step-granular checkpointing for preemption.
-- **Opt-in caches (C1–C5).** Exact condition, vision-embedding, and
-  calibrated denoise-step caches. Nothing is on by default; contributions are
-  quantified in [docs/cache_benchmarks.md](docs/cache_benchmarks.md).
+- **Opt-in caches (C1–C5).** Exact condition, encoder-prefix,
+  vision-embedding, and calibrated denoise-step caches. Nothing is on by
+  default; contributions are quantified in
+  [docs/cache_benchmarks.md](docs/cache_benchmarks.md).
 - **Job-oriented serving.** Generation jobs with progress and artifact polling
   — not OpenAI chat completions — plus opt-in WebSocket streaming playback and
   a multi-prompt demo.
@@ -94,6 +95,8 @@ supported configuration; the smoke CLIs and the ablation harness
 | `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
+| `compile-blocks` (regional compile; resident only, measured fail at `rtol=2e-2`) | ✓ | — |
+| `cuda-graph` (resident graph + pinned AdaLN; 1.54× combined, bitwise parity) | ✓ | — |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",
@@ -119,8 +122,9 @@ for [issue #24](https://github.com/EfficientMoE/Omni-Infinity/issues/24).
 | cache | opt-in interface | status |
 |---|---|---|
 | C1 | `condition-cache` | Registry optimization. |
-| C2 / C4 | — | C2 is deferred. C4 is unchanged upstream. |
+| C2 | `encoder-cache` | C2 is an exact encoder-prefix cache. |
 | C3 | `vision-cache` | Registry optimization. |
+| C4 | — | C4 is unchanged upstream. |
 | C5 | `--denoise-cache-coefficients` plus `--denoise-cache-threshold` | Off the registry. C5 refuses to run without H3-calibrated coefficients. |
 
 Benchmarks quantifying each cache level's contribution (microbenchmarks,
@@ -286,6 +290,13 @@ jobs/<uuid>/
   output.mp4
 ```
 
+Successful records optionally include `graph_telemetry` in `job.json` and the
+job API response when the loaded runner has a CUDA-graph manager. It reports
+per-job capture/replay counts, capture failures and time, warmup and eager
+fallback counts, plus final live-graph, pool-byte, and manager-generation
+gauges.
+Profiles without a manager and older records expose `graph_telemetry: null`.
+
 On process restart, persisted `running` jobs become `failed` with a restart
 message; denoising is not resumed. Queued records remain on disk but are not
 automatically resubmitted. Terminal records remain pollable directly by their
@@ -378,7 +389,7 @@ Streaming settings:
 - `OMNI_STREAM_SESSION_TTL` defaults to `30` seconds. Sessions that never
   connect are checked when the next session is created, then cancelled.
   This is not a background timer.
-- `OMNI_STREAM_CHUNK_FRAMES` defaults to `24`.
+- `OMNI_STREAM_CHUNK_FRAMES` defaults to `124` (one 5.167-second H3 clip).
 - `OMNI_STREAM_QUEUE_CHUNKS` defaults to `8` and bounds socket buffering.
 - `OMNI_STREAM_FALLBACK_HLS` defaults off. When enabled, it adds
   `/v1/streams/{id}/playlist.m3u8`, `init.mp4`, `seg/{n}.m4s`, and
@@ -494,6 +505,29 @@ Tracked in the [task list](https://github.com/EfficientMoE/MoE-Infinity/issues/2
     **0.637** and **0.599** for destination steps 2 and 3.
   - The required 256p/120-frame smoke reproduced the full-resident video and
     audio latents bitwise in **77.0 s**, peaking at **10.72 GiB**.
+
+### P7 — multi-GPU serving (6× RTX PRO 6000, PCIe)
+
+Tracked in [#42](https://github.com/EfficientMoE/Omni-Infinity/issues/42):
+
+- [x] Phase 0 — platform validation (P2P + NCCL, measured on-host; the
+      D2D-handoff and intra-socket-collective rules) —
+      [docs/multigpu_platform.md](docs/multigpu_platform.md).
+- [x] Phase 1 — stage pipelining. `OMNI_ROLE=pipeline` serves the job
+      API from encoder/denoiser/decoder role processes (one GPU each,
+      fully resident), bitwise per stage. Measured over the VidProM
+      trace: **135 jobs/h (1-GPU streamed) → 1247 (2-GPU, 9.2×) → 2481
+      (4-GPU) → 3397 (6-GPU, 25×)**. The denoiser is the unit bottleneck,
+      so a 2-GPU `{enc+dec | denoiser}` replica is the scaling unit
+      (`benchmarks/role_pipeline_bench.py`). CFG parallel dropped (H3 is
+      guidance-distilled).
+- [~] Phase 2 — single-request latency (USP + parallel VAE): **parked.**
+      A degree-2 Ulysses denoiser spike runs at 1.30× but fails the
+      parity gate under diffusers' experimental context parallelism
+      (`benchmarks/ulysses_spike.py`), and a seam-exact spatial-shard VAE
+      is blocked by the global-attention ViT decoder. Documented in
+      [docs/multigpu_platform.md](docs/multigpu_platform.md); Phase 1
+      stage pipelining already delivers the multi-GPU win.
 
 ### Deferred: shared `moe-kernels` package
 

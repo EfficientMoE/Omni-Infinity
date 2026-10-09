@@ -58,7 +58,11 @@ def test_c1_cell_hits_bitwise_on_warm(tmp_path):
         timeout=3600,
     )
     assert proc.returncode == 0, proc.stderr
-    payload = json.loads(proc.stdout)
+    # Model import may print a non-JSON banner to stdout before the single
+    # json.dumps document the cell emits; decode from the first brace.
+    start = proc.stdout.find("{")
+    assert start != -1, proc.stdout
+    payload, _ = json.JSONDecoder().raw_decode(proc.stdout[start:])
     warm = payload["phases"][1]
     assert warm["rms_rel"] == 0.0
     assert warm["stats"]["c1"]["hits"] >= 1
