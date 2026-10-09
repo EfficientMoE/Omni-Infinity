@@ -80,6 +80,15 @@ ARCHS = {
             "+ window softmax + merged LoRAs) via diffusers remote code."
         ),
     ),
+    "ltx-2.5": ArchSpec(
+        name="ltx-2.5",
+        runner="omni_infinity.arch.ltx2:Ltx2Runner",
+        default_checkpoint="Lightricks/LTX-2.5",
+        description=(
+            "[WIP #54] Lightricks LTX-2.5 22B joint audio-video DiT "
+            "(scaffold only; loading/generation not yet implemented)."
+        ),
+    ),
 }
 
 OPTIMIZATIONS = {

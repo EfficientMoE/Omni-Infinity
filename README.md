@@ -88,6 +88,7 @@ supported configuration; the smoke CLIs and the ablation harness
 |---|---|---|
 | `h3-dense` | `omni_infinity.runner.ReferenceRunner` | `MiniMaxAI/MiniMax-H3` |
 | `vdn-hybrid` | `omni_infinity.arch.vdn.VdnRunner` | `OpenVDN/vdn-minimax-h3` (Hub repo-id only — see the cross-repo `trust_remote_code` note in [docs/repro_vdn.md](docs/repro_vdn.md)) |
+| `ltx-2.5` _(WIP)_ | `omni_infinity.arch.ltx2.Ltx2Runner` | `Lightricks/LTX-2.5` — scaffold only, not yet runnable ([#54](https://github.com/EfficientMoE/Omni-Infinity/issues/54), plan: [docs/ltx2_integration.md](docs/ltx2_integration.md)) |
 
 | optimization | h3-dense | vdn-hybrid |
 |---|:---:|:---:|
