@@ -358,6 +358,8 @@ class ReferenceRunner:
         fp8_skip_last_blocks: int = 0,
         fp8_protect_blocks: str | None = None,
         fp8_scale: str = "block",
+        transformer_fp4: bool = False,
+        fp4_scale: str | None = None,
         offload_memory_margin: str | None = None,
         block_stream_blocks_per_group: int = 0,
         block_stream_to_disk: str | None = None,
@@ -379,6 +381,22 @@ class ReferenceRunner:
         )
         if step_overlap and not block_stream_blocks_per_group:
             raise ValueError("step_overlap requires bf16 block streaming")
+        if transformer_fp4:
+            if fp4_scale is None:
+                raise ValueError(
+                    "transformer_fp4 requires an explicit fp4 scale mode "
+                    "(--fp4-scale mxfp4); fp4 is opt-in with no default"
+                )
+            if fp4_scale != "mxfp4":
+                raise ValueError(
+                    f"unsupported fp4_scale {fp4_scale!r}; only 'mxfp4' "
+                    "is supported"
+                )
+            if transformer_fp8:
+                raise ValueError(
+                    "transformer_fp8 and transformer_fp4 are mutually "
+                    "exclusive"
+                )
         try:
             from diffusers import MiniMaxH3ModularPipeline
         except ImportError as exc:
@@ -437,7 +455,7 @@ class ReferenceRunner:
             source = StoreComponentSource(store_dir)
             for name in substituted:
                 if name == transformer_component and (
-                    adaln_host_cache or transformer_fp8
+                    adaln_host_cache or transformer_fp8 or transformer_fp4
                 ):
                     built[name] = load_transformer_with_adaln_cache(
                         _h3_component_class(name),
@@ -453,6 +471,7 @@ class ReferenceRunner:
                             else None
                         ),
                         fp8_mode=fp8_scale,
+                        fp4=transformer_fp4,
                     )
                 else:
                     built[name] = load_diffusers_component(

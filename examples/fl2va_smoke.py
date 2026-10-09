@@ -77,6 +77,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="keep the last N transformer blocks in bf16 (FP8 error compounds "
         "in the late blocks; trades memory for latent accuracy)",
     )
+    parser.add_argument("--transformer-fp4", action="store_true")
+    parser.add_argument(
+        "--fp4-scale",
+        choices=["mxfp4"],
+        default=None,
+        help="fp4 weight scale mode (required with --transformer-fp4; "
+        "mxfp4=packed E2M1 weights with per-32 E8M0 scales, fused "
+        "weight-only GEMM)",
+    )
     parser.add_argument(
         "--fp8-protect-blocks",
         default=None,
@@ -287,6 +296,8 @@ def main() -> int:
         transformer_fp8=args.transformer_fp8,
         fp8_scale=args.fp8_scale,
         fp8_skip_last_blocks=args.fp8_skip_last_blocks,
+        transformer_fp4=getattr(args, "transformer_fp4", False),
+        fp4_scale=getattr(args, "fp4_scale", None),
         fp8_protect_blocks=getattr(args, "fp8_protect_blocks", None),
         offload_memory_margin=_offload_margin(args),
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,

@@ -62,7 +62,10 @@ markers = [
 
 [tool.coverage.run]
 source = ["omni_infinity"]
-omit = ["omni_infinity/kernels/_fused_fp8_gemm.py"]
+omit = [
+    "omni_infinity/kernels/_fused_fp8_gemm.py",
+    "omni_infinity/kernels/_fused_mxfp4_gemm.py",
+]
 
 [tool.coverage.report]
 show_missing = true

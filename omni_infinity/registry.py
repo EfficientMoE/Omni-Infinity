@@ -105,6 +105,20 @@ OPTIMIZATIONS = {
             }
         ),
     ),
+    "fp4": OptimizationSpec(
+        name="fp4",
+        description=(
+            "MXFP4 (E2M1) weights on wide Linears (h3-dense store "
+            "path). Opt-in memory/bandwidth tradeoff one rung below "
+            "fp8; refuses to run without an explicit fp4 scale mode."
+        ),
+        supported_archs=("h3-dense",),
+        runner_kwargs_by_arch=MappingProxyType(
+            {
+                "h3-dense": _kw(transformer_fp4=True),
+            }
+        ),
+    ),
     "block-stream": OptimizationSpec(
         name="block-stream",
         description=(
