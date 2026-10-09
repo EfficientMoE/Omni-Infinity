@@ -78,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
         "in the late blocks; trades memory for latent accuracy)",
     )
     parser.add_argument(
+        "--fp8-protect-blocks",
+        default=None,
+        help="keep boundary transformer blocks in bf16, e.g. 'first:2,last:3' "
+        "(rung C of the P1 plan: residual pathways self-correct mid-blocks, "
+        "so protecting entry/exit blocks caps the FP8 latent deviation)",
+    )
+    parser.add_argument(
         "--block-stream-blocks-per-group",
         type=int,
         default=0,
@@ -280,6 +287,7 @@ def main() -> int:
         transformer_fp8=args.transformer_fp8,
         fp8_scale=args.fp8_scale,
         fp8_skip_last_blocks=args.fp8_skip_last_blocks,
+        fp8_protect_blocks=getattr(args, "fp8_protect_blocks", None),
         offload_memory_margin=_offload_margin(args),
         block_stream_blocks_per_group=args.block_stream_blocks_per_group,
         block_stream_to_disk=args.block_stream_to_disk,

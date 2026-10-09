@@ -72,6 +72,19 @@ class ArtifactMetadata(BaseModel):
     sampling_rate: int = Field(gt=0)
 
 
+class GraphTelemetry(BaseModel):
+    captures: int
+    replays: int
+    capture_failures: int
+    graph_pool_bytes: int
+    capture_time_ms: float
+    warmup_calls: int
+    capture_warmup_calls: int
+    graphs: int
+    generation: int
+    fallback_reasons: dict[str, int] = Field(default_factory=dict)
+
+
 class JobRecord(BaseModel):
     id: str
     request: GenerationRequest
@@ -83,6 +96,7 @@ class JobRecord(BaseModel):
     finished_at: datetime | None = None
     error: str | None = Field(default=None, max_length=MAX_ERROR_LENGTH)
     artifacts: ArtifactMetadata | None = None
+    graph_telemetry: GraphTelemetry | None = None
 
 
 class JobResponse(BaseModel):
@@ -96,6 +110,7 @@ class JobResponse(BaseModel):
     finished_at: datetime | None = None
     error: str | None = None
     artifacts: ArtifactMetadata | None = None
+    graph_telemetry: GraphTelemetry | None = None
 
     @classmethod
     def from_record(cls, record: JobRecord) -> JobResponse:
