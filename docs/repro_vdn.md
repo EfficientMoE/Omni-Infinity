@@ -121,7 +121,23 @@ the Hub repo-id `OpenVDN/vdn-minimax-h3` (resolved offline from the
 pre-populated `HF_HOME` cache) — never a local path. Verified
 weight-identical (same snapshot; goldens replay bitwise).
 
-Note: the upstream component log prints an `sm100 INFERENCE ... flex
-is running the STATIC block-sparse schedule` warning on this card
-(physical CC is 12.0); absolute s/eval on the diffusers path is
-therefore pessimistic vs an FA-enabled build. Row ordering unaffected.
+Note: the upstream component detects capability with a `>= 10` test,
+so this card (physical CC 12.0, sm120) used to take the sm100 path and
+log an `sm100 INFERENCE ... flex is running the STATIC block-sparse
+schedule` warning whenever flex was left implicit. Since the P3
+capability pin (`omni_infinity/arch/vdn_attention.py`, issue #42) the
+runner always resolves `softmax_backend` explicitly on
+`torch.cuda.get_device_capability()` and logs the resolution, so the
+warning no longer appears on omni-driven runs: `auto`/unset resolves to
+`decomposed` on CC 12.x and the flex path is only entered when forced,
+which is the one case the warning legitimately describes. Note this is
+a real default flip for implicit runs: the published checkpoint spec
+pins `"softmax_backend": "flex"` (stage-dmd-step-250/diffusers/
+config.json), so pre-P3 runs that omitted the knob were running FLEX --
+that is precisely why the warning fired. Decomposed sits in the same
+bf16 reduction-order class but is NOT bitwise-identical to flex, so
+`vdn_goldens.pt` recorded pre-P3 will not replay bitwise under the new
+implicit default; re-record goldens (or pass `--softmax-backend flex`)
+before leaning on the bitwise gate. The sm120
+backend ranking is recorded in
+[ablation_vdn.md](ablation_vdn.md#window-softmax-backend-bake-off-sm120-issue-42-p3).
