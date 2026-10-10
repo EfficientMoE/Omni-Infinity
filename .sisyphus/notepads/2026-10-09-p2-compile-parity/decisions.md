@@ -31,3 +31,7 @@ Every commit MUST pass review BEFORE push:
 
 ## Review verdicts
 (record here, newest last)
+- e11b8a0 probe(parity-p0) divergence probe script: APPROVE (claude-fable-5; non-blocking:
+  enforce bitwise gates, refiner capture validation -> addressed in edc98a3)
+- edc98a3 probe(parity-p0) hardening follow-up: APPROVE (claude-fable-5; non-blocking
+  cosmetics: dict sentinel shape, error msg completeness, stage-5 reference label)
