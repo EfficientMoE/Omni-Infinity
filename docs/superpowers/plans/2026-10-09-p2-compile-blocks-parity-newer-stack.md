@@ -134,7 +134,7 @@ rows pin diffusers `0.40.0` and isolate **torch** as the upgrade variable.
 | stack (cu130, cp313) | sm120+fp8 smoke | eager run-to-run | eager vs golden | compiled vs golden | compiled vs eager | gate |
 |---|---|---|---|---|---|---|
 | torch 2.12.0 + diffusers 0.40.0 (pinned, Phase 0) | pass | bitwise | **bitwise** | 0.0411–0.0900 | = vs golden | FAIL |
-| torch 2.14.1 + diffusers 0.40.0 | pass (fp8 rel 2.5e-3) | bitwise | 0.0471 fail | 0.0797 fail | **0.0745 fail** | FAIL (exit 1) |
+| torch 2.14.1 + diffusers 0.40.0 | pass (fp8 rel 2.2e-3) | bitwise | 0.0471 fail | 0.0797 fail | **0.0745 fail** | FAIL (exit 1) |
 | torch 2.16.0.dev20261009 + diffusers 0.40.0 | pass (fp8 rel 2.4e-3) | bitwise | 0.1008 fail | 0.0527 fail | **0.0998 fail** | FAIL (exit 1) |
 
 `compiled vs eager` is the stack-intrinsic compile fidelity — what a

@@ -44,3 +44,8 @@ Every commit MUST pass review BEFORE push:
   before first matrix run) -> implemented in bd6c948
 - bd6c948 bench(parity-p1) F1-F3 hardening: APPROVE (claude-fable-5; polish notes only:
   warm-cache-dir not rejected, smoke-fail row omits gate keys as missing-not-null)
+- 00bb377 results(parity-p1) upgrade-matrix negative + abort gate: APPROVE (claude-fable-5;
+  non-blocking: t2141 fp8 smoke 2.5e-3 -> 2.2e-3 transcription slip, fixed next commit)
+- [2026-10-10] ABORT GATE DECISION: no candidate stack closes compile-vs-eager parity
+  (0.0745 / 0.0998 vs allclose 2e-2). compile-blocks stays opt-in + non-gating; NO pin
+  bump; Phase-2 conditionals N/A; goldens untouched.
