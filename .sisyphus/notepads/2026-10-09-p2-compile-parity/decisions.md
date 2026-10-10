@@ -40,3 +40,7 @@ Every commit MUST pass review BEFORE push:
 - 39e1e66 fix(parity-p0) corrections + GPU-0 sweep: REQUEST-CHANGES (chained peak
   off-by-one: block 43 not 44) -> fixed in 4a6dcd5
 - 4a6dcd5 fix(parity-p0) block-43 off-by-one: APPROVE (claude-fable-5, verified vs probe.json)
+- ee31c7c bench(parity-p1) stackcheck script: APPROVE (claude-fable-5; F1-F3 requested
+  before first matrix run) -> implemented in bd6c948
+- bd6c948 bench(parity-p1) F1-F3 hardening: APPROVE (claude-fable-5; polish notes only:
+  warm-cache-dir not rejected, smoke-fail row omits gate keys as missing-not-null)
