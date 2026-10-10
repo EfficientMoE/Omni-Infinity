@@ -125,7 +125,10 @@ OPTIMIZATIONS = {
         name="compile-blocks",
         description=(
             "Regional torch.compile for repeated transformer blocks; "
-            "resident-profile-only."
+            "resident-profile-only. Opt-in and non-gating: golden parity "
+            "fails allclose 2e-2 on every tested stack (torch 2.12.0 / "
+            "2.14.1 / 2.16-nightly, cu130) via Inductor fused norm/rotary "
+            "codegen divergence."
         ),
         supported_archs=("h3-dense",),
         runner_kwargs_by_arch=MappingProxyType(

@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-10-10T04:24:17.688826+00:00",
+  "purpose": "phase1 upgrade-matrix stack check",
+  "stack_label": "torch2.16.0.dev20261009+cu130 diffusers0.40.0",
+  "compile_kwargs": {
+    "fullgraph": "True",
+    "dynamic": "True"
+  },
+  "environment": {
+    "python": "3.13.9",
+    "torch": "2.16.0.dev20261009+cu130",
+    "cuda": "13.0",
+    "diffusers": "0.40.0",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "cuda_visible_devices": "0",
+    "torchinductor_cache_dir": "/tmp/opencode/inductor-p1-t216n",
+    "checkpoint": "/mnt/raid0nvme0/leyang/.cache/huggingface/hub/models--MiniMaxAI--MiniMax-H3/snapshots/42ed227ee7df40d41602854ae760620d6eb651fe",
+    "store_dir": "/mnt/raid0nvme0/leyang/h3-store-v2",
+    "transformers": "5.12.0"
+  },
+  "parameters": {
+    "prompt": "a red ball bouncing",
+    "steps": 8,
+    "resolution": "256p",
+    "frames": 120,
+    "seed": 0
+  },
+  "smoke": {
+    "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": [
+      12,
+      0
+    ],
+    "arch_list": [
+      "sm_75",
+      "sm_80",
+      "sm_86",
+      "sm_90",
+      "sm_100",
+      "sm_120",
+      "compute_120"
+    ],
+    "bf16_matmul_sdpa": true,
+    "fp8_triton_vs_reference_rel": 0.0024376711808145046,
+    "fp8_ok": true
+  },
+  "smoke_ok": true,
+  "eager_wall_seconds": 37.33660167269409,
+  "eager_vs_eager": {
+    "rms_rel": 0.0,
+    "bitwise": true,
+    "allclose": {
+      "rtol=atol=1e-5": true,
+      "rtol=atol=1e-4": true,
+      "rtol=atol=1e-3": true,
+      "rtol=atol=2e-2": true
+    },
+    "tier": "bitwise"
+  },
+  "eager_deterministic": true,
+  "golden_provenance": {
+    "comparable": false,
+    "mismatches": [
+      "torch_version: recorded='2.12.0+cu130', runtime='2.16.0.dev20261009+cu130'"
+    ]
+  },
+  "eager_vs_golden": {
+    "rms_rel": 0.10084656625986099,
+    "bitwise": false,
+    "allclose": {
+      "rtol=atol=1e-5": false,
+      "rtol=atol=1e-4": false,
+      "rtol=atol=1e-3": false,
+      "rtol=atol=2e-2": false
+    },
+    "tier": "fail-2e-2"
+  },
+  "compiled_wall_seconds_cold": 50.419689213857055,
+  "dynamo_unique_graphs": 2,
+  "compiled_vs_golden": {
+    "rms_rel": 0.05267740413546562,
+    "bitwise": false,
+    "allclose": {
+      "rtol=atol=1e-5": false,
+      "rtol=atol=1e-4": false,
+      "rtol=atol=1e-3": false,
+      "rtol=atol=2e-2": false
+    },
+    "tier": "fail-2e-2"
+  },
+  "compiled_vs_eager": {
+    "rms_rel": 0.09977006912231445,
+    "bitwise": false,
+    "allclose": {
+      "rtol=atol=1e-5": false,
+      "rtol=atol=1e-4": false,
+      "rtol=atol=1e-3": false,
+      "rtol=atol=2e-2": false
+    },
+    "tier": "fail-2e-2"
+  },
+  "gate_compile_vs_eager_2e2": false,
+  "gate_compile_vs_golden_2e2": false
+}

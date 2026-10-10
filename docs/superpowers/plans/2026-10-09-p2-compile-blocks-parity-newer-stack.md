@@ -119,13 +119,42 @@ Excluding the culprit norm/rotary regions from compilation would forfeit
 the fusion that is compile-blocks' entire perf rationale (wall already
 0.939×). → Phase 0 does not close parity in-stack; proceed to Phase 1.
 
+## Phase 1 results (2026-10-10, isolated venvs, GPU 0) — ABORT GATE TRIGGERED
+
+Harness: `benchmarks/compile_parity_stackcheck.py` (per-stack smoke + eager
+determinism control + three latent parities), rows under
+`results/p2_parity_followup/phase1/`. Candidate envs were isolated venvs in
+`/tmp/opencode` with fresh per-stack `TORCHINDUCTOR_CACHE_DIR`; the pinned
+default env was never modified. diffusers `0.41.0` fails to run the
+pipeline on **either** torch (video decode dtype mismatch, `float !=
+c10::BFloat16`, in `MiniMaxH3VideoDecodeStep` — the fp32-kept video VAE vs
+the packed latents; the plan's API-drift risk, realized), so both matrix
+rows pin diffusers `0.40.0` and isolate **torch** as the upgrade variable.
+
+| stack (cu130, cp313) | sm120+fp8 smoke | eager run-to-run | eager vs golden | compiled vs golden | compiled vs eager | gate |
+|---|---|---|---|---|---|---|
+| torch 2.12.0 + diffusers 0.40.0 (pinned, Phase 0) | pass | bitwise | **bitwise** | 0.0411–0.0900 | = vs golden | FAIL |
+| torch 2.14.1 + diffusers 0.40.0 | pass (fp8 rel 2.5e-3) | bitwise | 0.0471 fail | 0.0797 fail | **0.0745 fail** | FAIL (exit 1) |
+| torch 2.16.0.dev20261009 + diffusers 0.40.0 | pass (fp8 rel 2.4e-3) | bitwise | 0.1008 fail | 0.0527 fail | **0.0998 fail** | FAIL (exit 1) |
+
+`compiled vs eager` is the stack-intrinsic compile fidelity — what a
+Phase-2 golden re-baseline could at best recover — and it stays in the
+same 0.04–0.10 band Phase 0 measured on the pinned stack. Newer Inductor
+does **not** emit near-bitwise fused norm/rotary codegen; the nightly is
+the worst row. Two further negatives: eager itself drifts across torch
+versions (0.0471 / 0.1008 vs the pinned-stack goldens), so even an
+eager-only pin bump would force a golden re-baseline; and diffusers 0.41
+breaks the pipeline outright. Per the abort gate: **STOP — `compile-blocks`
+remains opt-in, non-gating, with a documented negative result.** Phase 2
+(adopt) is not applicable; no pin bump is proposed.
+
 ## Tasks
 
 - [x] Phase 0 per-op/per-block divergence localization + in-stack mitigation probe, note appended here
-- [ ] Isolated upgrade-matrix harness + `rms_rel`/allclose/sm120-fp8 results table (abort gate)
-- [ ] (conditional) Full validation on a passing stack: CPU suite + GPU parity/timing + golden re-baseline
-- [ ] (conditional) Pin-bump proposal behind a decision gate (separate reviewed change)
-- [ ] `compile-blocks` parity-tier doc + supported-stack envelope updated
+- [x] Isolated upgrade-matrix harness + `rms_rel`/allclose/sm120-fp8 results table (abort gate)
+- [ ] (conditional) Full validation on a passing stack: CPU suite + GPU parity/timing + golden re-baseline — N/A, abort gate triggered (no passing stack)
+- [ ] (conditional) Pin-bump proposal behind a decision gate (separate reviewed change) — N/A, abort gate triggered
+- [x] `compile-blocks` parity-tier doc + supported-stack envelope updated
 
 ## Verification
 

@@ -94,7 +94,7 @@ supported configuration; the smoke CLIs and the ablation harness
 | `adaln-host-cache` (moe-store AdaLN branch cache) | ✓ | — |
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
-| `compile-blocks` (regional compile; resident only, measured fail at `rtol=2e-2`) | ✓ | — |
+| `compile-blocks` (regional compile; resident only, fails `rtol=2e-2` parity on every tested stack: torch 2.12.0 / 2.14.1 / 2.16-nightly cu130 — Inductor fused norm/rotary codegen, see the [parity follow-up plan](docs/superpowers/plans/2026-10-09-p2-compile-blocks-parity-newer-stack.md)) | ✓ | — |
 | `cuda-graph` (resident graph + pinned AdaLN; 1.54× combined, bitwise parity) | ✓ | — |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 

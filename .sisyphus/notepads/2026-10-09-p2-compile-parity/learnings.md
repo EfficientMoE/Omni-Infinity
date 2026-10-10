@@ -54,3 +54,14 @@
   do NOT reproduce on GPU 0: compiled-path parity error is unstable across cards/runs
   (0.04-0.09 band) while eager stays bitwise. "FSP helps" was noise, not signal.
 - Phase-1 implication unchanged: pass requires near-bitwise per-forward Inductor codegen.
+
+## [2026-10-10] Phase 1 — upgrade matrix NEGATIVE, abort gate honored
+- Isolated venvs /tmp/opencode/env-{t2141,t216n} (pinned anaconda3 untouched).
+- diffusers 0.41.0 BREAKS the pipeline on both torches: decode.video dtype mismatch
+  (float vs bf16) in MiniMaxH3VideoDecodeStep -> both rows pinned d0.40.0.
+- sm120 + opt-in fp8 smoke PASS on both stacks (arch list has sm_120; fp8 ~2.4e-3).
+- torch 2.14.1: eager-vs-golden 0.0471 (eager drift!), compiled-vs-eager 0.0745 FAIL.
+- torch 2.16.0.dev20261009: eager-vs-golden 0.1008, compiled-vs-eager 0.0998 FAIL.
+- Eager run-to-run bitwise on both stacks (determinism control OK).
+- Conclusion: Inductor fused-codegen divergence persists on newer stacks (0.04-0.10
+  band); nightly worst. Negative result stands; compile-blocks stays opt-in non-gating.
