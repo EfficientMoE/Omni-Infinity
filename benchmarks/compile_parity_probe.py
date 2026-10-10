@@ -387,14 +387,30 @@ def main() -> int:
     results["eager_control_parity"] = control
     log(f"eager control: tier={control['tier']} bitwise={control['bitwise']}")
     if not control["bitwise"]:
-        log("FATAL: eager control is not bitwise; captures are not golden")
+        raise RuntimeError(
+            "eager control is not bitwise vs the goldens; captured "
+            "activations are not golden-trajectory activations"
+        )
     del result, golden
     torch.cuda.empty_cache()
 
     blocks = capture.blocks
     missing = [i for i, t in enumerate(capture.block_inputs) if t is None]
-    if missing or capture.norm_out_input is None:
-        raise RuntimeError(f"capture incomplete: missing blocks {missing}")
+    missing_refiner = [
+        i for i, t in enumerate(capture.refiner_inputs) if t is None
+    ]
+    if (
+        missing
+        or missing_refiner
+        or capture.norm_out_input is None
+        or capture.final_norm_input is None
+    ):
+        raise RuntimeError(
+            f"capture incomplete: blocks {missing}, refiner {missing_refiner}"
+        )
+    log("moving transformer back to cuda for replay stages")
+    transformer.to(torch.device("cuda"))
+    torch.cuda.empty_cache()
     shared_gpu = {
         "temb": capture.shared["temb"].cuda(),
         "adaln_indices": capture.shared["adaln_indices"].cuda(),
@@ -443,7 +459,7 @@ def main() -> int:
     with torch.no_grad():
         for index in args.sample_blocks:
             block = blocks[index]
-            reference = block_reference(index)
+            reference = run_block_eager(block, block_input(index), shared_gpu)
             row = {}
             for backend in ("eager", "aot_eager", "inductor"):
                 torch._dynamo.reset()
@@ -461,6 +477,7 @@ def main() -> int:
             backend_rows[str(index)] = row
             del reference
             torch.cuda.empty_cache()
+    backend_rows["reference"] = "fresh eager replay output"
     results["backend_bisect"] = backend_rows
 
     # ---- stage 4: piece bisect on sampled blocks ----
@@ -482,7 +499,7 @@ def main() -> int:
             fns = block_eager_fns(block, m)
             attn_fns = attn_eager_fns(block.attn, m)
             hidden = block_input(index)
-            reference = block_reference(index)
+            reference = run_block_eager(block, hidden, shared_gpu)
             row: dict[str, Any] = {}
             recon = block_recon_forward(fns, None, hidden, shared_gpu)
             row["recon_eager"] = metrics(recon, reference)
@@ -512,6 +529,7 @@ def main() -> int:
             piece_rows[str(index)] = row
             del hidden, reference
             torch.cuda.empty_cache()
+    piece_rows["reference"] = "fresh eager replay output"
     results["piece_bisect"] = piece_rows
 
     # ---- stage 5: inductor config variants on the worst sampled block ----
@@ -535,7 +553,7 @@ def main() -> int:
     config_rows: dict[str, Any] = {"block": worst}
     with torch.no_grad():
         block = blocks[worst]
-        reference = block_reference(worst)
+        reference = run_block_eager(block, block_input(worst), shared_gpu)
         for variant_name, overrides in config_variants.items():
             valid = {
                 key: val
@@ -601,6 +619,7 @@ def main() -> int:
         range(len(per_block)), key=lambda i: per_block[i]["rms_rel"]
     )
     results["production_compile"] = {
+        "reference": "in-situ step-1 captures (gated by eager_replay sanity)",
         "unique_graphs": unique_graphs,
         "per_block": per_block,
         "per_block_rms_rel_max": per_block[worst_block]["rms_rel"],
