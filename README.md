@@ -96,7 +96,7 @@ supported configuration; the smoke CLIs and the ablation harness
 | `fp8` (weight-only FP8 on wide Linears) | ✓ | ✓ |
 | `block-stream` (transformer block_level group offload) | ✓ | ✓ |
 | `compile-blocks` (regional compile; resident only, measured fail at `rtol=2e-2`) | ✓ | — |
-| `cuda-graph` (resident graph + pinned AdaLN; 1.54× combined, bitwise parity) | ✓ | — |
+| `cuda-graph` (resident graph + pinned AdaLN, 1.54× combined; with `block-stream`: pointer-stable weight arenas, whole-forward capture, 2.24× step wall vs the streamed baseline, 13.40 GiB denoise peak; bitwise parity in both profiles) | ✓ | — |
 | `text-encoder-stream` (Qwen3-VL leaf_level streaming) | ✓ | ✓ |
 
 `vdn-hybrid` is **VDN-Minimax-H3** ("Video DeltaNet",

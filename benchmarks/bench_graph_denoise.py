@@ -48,7 +48,14 @@ PHASE0_BASELINE = REPO / "results" / "p2_phase0" / "resident.json"
 PROFILE_OPTIMIZATIONS = {
     "resident": ("adaln-host-cache",),
     "graph-resident": ("adaln-host-cache", "cuda-graph"),
+    "block-stream": ("adaln-host-cache", "block-stream"),
+    "graph-block-stream": (
+        "adaln-host-cache",
+        "block-stream",
+        "cuda-graph",
+    ),
 }
+GRAPH_PROFILES = ("graph-resident", "graph-block-stream")
 
 
 def classify_graph_step(before: dict, after: dict) -> str:
@@ -143,7 +150,7 @@ def parse_driver_version(banner: str) -> str:
 
 
 def graph_execution_gate_passes(profile_name: str, stats: dict | None) -> bool:
-    if profile_name != "graph-resident":
+    if profile_name not in GRAPH_PROFILES:
         return True
     expected_fallbacks = {"warmup_not_done", "shape_bucket_miss"}
     unexpected_fallback = bool(
@@ -421,7 +428,7 @@ def main() -> int:
         return 1
     if (
         args.mode == "timing"
-        and args.profile == "graph-resident"
+        and args.profile in GRAPH_PROFILES
         and replay_metrics["steps"] == 0
     ):
         print("timing replay gate failed", flush=True)

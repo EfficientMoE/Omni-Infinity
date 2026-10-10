@@ -276,6 +276,10 @@ class CudaGraphManager:
         self._lock = threading.RLock()
         self.generation = 0
         self.current_bucket: GraphKey | None = None
+        # Gauges set by the runner when arena block streaming is active
+        # (additive telemetry; zero for resident profiles).
+        self.arena_bytes = 0
+        self.pinned_host_bytes = 0
 
     @contextmanager
     def bucket(self, key: GraphKey):
@@ -489,6 +493,8 @@ class CudaGraphManager:
                 "capture_warmup_calls": self._stats.capture_warmup_calls,
                 "graphs": len(self._graphs),
                 "generation": self.generation,
+                "arena_bytes": self.arena_bytes,
+                "pinned_host_bytes": self.pinned_host_bytes,
                 "fallback_reasons": dict(self._stats.fallback_reasons),
             }
 

@@ -60,6 +60,8 @@ GRAPH_TELEMETRY_PAYLOAD = {
     "capture_warmup_calls": 2,
     "graphs": 1,
     "generation": 0,
+    "arena_bytes": 0,
+    "pinned_host_bytes": 0,
     "fallback_reasons": {
         "warmup_not_done": 2,
         "shape_bucket_miss": 1,

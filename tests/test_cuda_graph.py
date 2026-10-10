@@ -245,6 +245,8 @@ def test_stats_snapshot_and_cache_skip_hook_are_plain_dicts():
         "capture_warmup_calls": 0,
         "graphs": 0,
         "generation": 0,
+        "arena_bytes": 0,
+        "pinned_host_bytes": 0,
         "fallback_reasons": {"cache_skip": 3},
     }
     assert isinstance(snapshot["fallback_reasons"], dict)
