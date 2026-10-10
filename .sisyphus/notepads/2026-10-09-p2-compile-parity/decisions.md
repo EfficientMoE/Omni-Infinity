@@ -35,3 +35,8 @@ Every commit MUST pass review BEFORE push:
   enforce bitwise gates, refiner capture validation -> addressed in edc98a3)
 - edc98a3 probe(parity-p0) hardening follow-up: APPROVE (claude-fable-5; non-blocking
   cosmetics: dict sentinel shape, error msg completeness, stage-5 reference label)
+- 377f3a1 results(parity-p0): REQUEST-CHANGES (ff-bitwise claim unsupported; borrowed
+  default/FSP e2e numbers lacked GPU-0 artifacts) -> fixed in 39e1e66
+- 39e1e66 fix(parity-p0) corrections + GPU-0 sweep: REQUEST-CHANGES (chained peak
+  off-by-one: block 43 not 44) -> fixed in 4a6dcd5
+- 4a6dcd5 fix(parity-p0) block-43 off-by-one: APPROVE (claude-fable-5, verified vs probe.json)
