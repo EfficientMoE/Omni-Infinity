@@ -74,9 +74,43 @@ Success is either:
    the plan/README status with the supported stack envelope; keep the registry opt
    gated and labelled with its validated stack.
 
+## Phase 0 results (2026-10-10, pinned stack, GPU 0, bitwise eager control)
+
+Probe: `benchmarks/compile_parity_probe.py` →
+`results/p2_parity_followup/phase0/probe.json`; e2e verification via
+`benchmarks/profile_denoise_step.py --profile compile-resident`.
+
+**Divergence localized to Inductor codegen, not tracing or decompositions.**
+On real step-1 golden-trajectory activations, `torch.compile` with
+`backend=eager` and `backend=aot_eager` is **bitwise** on sampled blocks
+(0/24/49); only `backend=inductor` diverges (rms_rel 4.9e-3 / 2.6e-3 /
+4.1e-2). Piece bisect on a bitwise-verified block reconstruction: all GEMMs
+(q/k/v/out, ff) and SDPA are **bitwise** under Inductor (extern kernels);
+`HostResidentAdaLN` compiled alone is **bitwise**. The error enters in the
+fused pointwise/reduction codegen: dominant **q/k RMSNorm + rotary region
+inside attention** (`attn_qknorm_rope` = 3.98e-2 of block 49's 4.06e-2),
+secondary RMSNorm+AdaLN-modulate chains (norm1mod up to 2.1e-2) and gated
+residual adds (≤5.6e-3). Per-block error grows with depth; chained
+within-forward divergence reaches 1.2e-1 around block 42 → 6.5e-2 at block
+49, matching the e2e 7.26e-2 scale across 7 forwards.
+
+**In-stack mitigation verdict: NEGATIVE — no tested config closes the
+golden gate.** End-to-end video-latent `rms_rel` (allclose 2e-2 all fail):
+default `0.0726`; `TORCHINDUCTOR_FORCE_SAME_PRECISION=1` `0.0389` (P2);
+`TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` `0.0900`; emulate+force_same
+`0.0900` (bit-identical to emulate alone). Block-level:
+`pattern_matcher=False` 4.06e-2 and `max_fusion_size=1 + epilogue_fusion
+=False` 3.69e-2 do not help; `emulate_precision_casts` cuts block 49 to
+1.32e-3 (30×) yet is **worse** end to end — per-forward rounding deltas
+amplify chaotically over the 50-block × 7-forward trajectory, so only
+near-bitwise per-forward codegen can pass, and no config achieves it.
+Excluding the culprit norm/rotary regions from compilation would forfeit
+the fusion that is compile-blocks' entire perf rationale (wall already
+0.939×). → Phase 0 does not close parity in-stack; proceed to Phase 1.
+
 ## Tasks
 
-- [ ] Phase 0 per-op/per-block divergence localization + in-stack mitigation probe, note appended here
+- [x] Phase 0 per-op/per-block divergence localization + in-stack mitigation probe, note appended here
 - [ ] Isolated upgrade-matrix harness + `rms_rel`/allclose/sm120-fp8 results table (abort gate)
 - [ ] (conditional) Full validation on a passing stack: CPU suite + GPU parity/timing + golden re-baseline
 - [ ] (conditional) Pin-bump proposal behind a decision gate (separate reviewed change)

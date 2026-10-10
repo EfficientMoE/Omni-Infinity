@@ -29,3 +29,17 @@
   (+ tests/fixtures/ref.png). 256p, 120 req/124 eff frames, seed 0, 8 steps.
 - Parity provenance: goldens recorded on RTX PRO 6000 Server Edition (GPU 0). Parity on
   GPU 0; timing on GPU 4. CPU test baseline: 430 passed, 13 deselected.
+
+## [2026-10-10] Phase 0 — divergence localized (probe.json, GPU 0, bitwise control)
+- Dynamo tracing + AOT decomps BITWISE (backend=eager/aot_eager); divergence is 100%
+  Inductor codegen of fused pointwise/reduction chains.
+- Named culprit: q/k RMSNorm + rotary fused region in attention (attn_qknorm_rope:
+  3.98e-2 of block-49's 4.06e-2); secondary: RMSNorm+AdaLN modulate chains, gated
+  residual adds. GEMMs + SDPA + HostResidentAdaLN all BITWISE under Inductor.
+- Per-block error grows with depth (block0 4.9e-3 -> block49 4.1e-2); chained
+  within-forward peaks 1.2e-1 @ block 42.
+- e2e config sweep ALL FAIL allclose 2e-2: default .0726 / FSP .0389 / EMULATE .0900 /
+  EMULATE+FSP .0900 (bit-identical to emulate). emulate is 30x BETTER per-block but
+  WORSE e2e -> chaotic trajectory amplification; only near-bitwise per-forward passes.
+- Phase 1 bar: a newer stack passes ONLY if its Inductor emits bitwise-or-near-bitwise
+  fused norm/rotary kernels vs eager bf16 op-by-op rounding. Low prior; measure anyway.
