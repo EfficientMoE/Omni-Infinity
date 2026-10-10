@@ -93,7 +93,7 @@ region inside attention** (`attn_qknorm_rope` = 3.98e-2 of block 49's
 gated residual adds (≤5.6e-3), and the SwiGLU FeedForward piece (≤7.3e-4;
 its linears were not isolated from the fused activation). Per-block error
 grows with depth; chained within-forward divergence peaks at 1.32e-1 at
-block 44 → 6.5e-2 at block 49, matching the e2e 7.26e-2 scale across 7
+block 43 → 6.5e-2 at block 49, matching the e2e 7.26e-2 scale across 7
 forwards.
 
 **In-stack mitigation verdict: NEGATIVE — no tested config closes the
