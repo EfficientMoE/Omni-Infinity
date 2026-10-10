@@ -84,21 +84,32 @@ Probe: `benchmarks/compile_parity_probe.py` →
 On real step-1 golden-trajectory activations, `torch.compile` with
 `backend=eager` and `backend=aot_eager` is **bitwise** on sampled blocks
 (0/24/49); only `backend=inductor` diverges (rms_rel 4.9e-3 / 2.6e-3 /
-4.1e-2). Piece bisect on a bitwise-verified block reconstruction: all GEMMs
-(q/k/v/out, ff) and SDPA are **bitwise** under Inductor (extern kernels);
-`HostResidentAdaLN` compiled alone is **bitwise**. The error enters in the
-fused pointwise/reduction codegen: dominant **q/k RMSNorm + rotary region
-inside attention** (`attn_qknorm_rope` = 3.98e-2 of block 49's 4.06e-2),
-secondary RMSNorm+AdaLN-modulate chains (norm1mod up to 2.1e-2) and gated
-residual adds (≤5.6e-3). Per-block error grows with depth; chained
-within-forward divergence reaches 1.2e-1 around block 42 → 6.5e-2 at block
-49, matching the e2e 7.26e-2 scale across 7 forwards.
+4.1e-2). Piece bisect on a bitwise-verified block reconstruction: the
+attention GEMMs (`attn_qkv`, `attn_out`), SDPA, and `HostResidentAdaLN`
+each compile **bitwise** under Inductor (extern kernels). The error enters
+in the fused pointwise/reduction codegen: dominant **q/k RMSNorm + rotary
+region inside attention** (`attn_qknorm_rope` = 3.98e-2 of block 49's
+4.06e-2), secondary RMSNorm+AdaLN-modulate chains (norm1mod up to 2.1e-2),
+gated residual adds (≤5.6e-3), and the SwiGLU FeedForward piece (≤7.3e-4;
+its linears were not isolated from the fused activation). Per-block error
+grows with depth; chained within-forward divergence peaks at 1.32e-1 at
+block 44 → 6.5e-2 at block 49, matching the e2e 7.26e-2 scale across 7
+forwards.
 
 **In-stack mitigation verdict: NEGATIVE — no tested config closes the
-golden gate.** End-to-end video-latent `rms_rel` (allclose 2e-2 all fail):
-default `0.0726`; `TORCHINDUCTOR_FORCE_SAME_PRECISION=1` `0.0389` (P2);
-`TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` `0.0900`; emulate+force_same
-`0.0900` (bit-identical to emulate alone). Block-level:
+golden gate.** End-to-end video-latent `rms_rel`, all four measured on
+GPU 0 with a fresh per-experiment `TORCHINDUCTOR_CACHE_DIR`
+(`results/p2_parity_followup/phase0/e2e-*/compile-resident.json`; allclose
+2e-2 all fail): default `0.0411`; `TORCHINDUCTOR_FORCE_SAME_PRECISION=1`
+`0.0664`; `TORCHINDUCTOR_EMULATE_PRECISION_CASTS=1` `0.0900`;
+emulate+force_same `0.0900` (bit-identical to emulate alone). Prior
+measurements — the P2 GPU-3 artifact (default `0.0726`,
+`results/p2_phase1/parity/compile-resident.json`) and the P2 GPU-2
+FSP probe note (`~0.0389`, no artifact) — differ in magnitude from the
+GPU-0 runs: while the eager path is bitwise-reproducible on these cards,
+the compiled path's parity error is **not stable across cards or runs**
+(0.04–0.09 band), so no flag ordering ("FSP helps") survives
+re-measurement. Block-level:
 `pattern_matcher=False` 4.06e-2 and `max_fusion_size=1 + epilogue_fusion
 =False` 3.69e-2 do not help; `emulate_precision_casts` cuts block 49 to
 1.32e-3 (30×) yet is **worse** end to end — per-forward rounding deltas

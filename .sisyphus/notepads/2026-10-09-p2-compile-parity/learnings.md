@@ -43,3 +43,14 @@
   WORSE e2e -> chaotic trajectory amplification; only near-bitwise per-forward passes.
 - Phase 1 bar: a newer stack passes ONLY if its Inductor emits bitwise-or-near-bitwise
   fused norm/rotary kernels vs eager bf16 op-by-op rounding. Low prior; measure anyway.
+
+## [2026-10-10] Phase 0 corrections (review 377f3a1) + GPU-0 uniform e2e sweep
+- CORRECTION: ff piece (whole SwiGLU FeedForward incl. fused activation) is NOT bitwise
+  (<=7.3e-4); only attn_qkv/attn_out GEMMs, SDPA, and HostResidentAdaLN are bitwise.
+  ff linears were never isolated. Chained within-forward peak is 1.32e-1 @ block 44.
+- GPU-0 fresh-cache e2e sweep (results/p2_parity_followup/phase0/e2e-*): default 0.0411,
+  FSP 0.0664, emulate 0.0900, emulate+FSP 0.0900 (bit-identical) — ALL fail 2e-2.
+- Prior values (GPU-3 artifact default 0.0726; P2 GPU-2 FSP note ~0.0389, no artifact)
+  do NOT reproduce on GPU 0: compiled-path parity error is unstable across cards/runs
+  (0.04-0.09 band) while eager stays bitwise. "FSP helps" was noise, not signal.
+- Phase-1 implication unchanged: pass requires near-bitwise per-forward Inductor codegen.
