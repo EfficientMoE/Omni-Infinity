@@ -1,0 +1,876 @@
+{
+  "schema_version": 1,
+  "timestamp_utc": "2026-10-10T03:04:06.632247+00:00",
+  "purpose": "phase0 compile-blocks divergence localization",
+  "compile_kwargs": {
+    "fullgraph": "True",
+    "dynamic": "True"
+  },
+  "environment": {
+    "python": "3.13.9",
+    "torch": "2.12.0+cu130",
+    "cuda": "13.0",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "cuda_visible_devices": "0",
+    "torchinductor_cache_dir": "/tmp/opencode/inductor-p0",
+    "checkpoint": "/mnt/raid0nvme0/leyang/.cache/huggingface/hub/models--MiniMaxAI--MiniMax-H3/snapshots/42ed227ee7df40d41602854ae760620d6eb651fe",
+    "store_dir": "/mnt/raid0nvme0/leyang/h3-store-v2"
+  },
+  "parameters": {
+    "prompt": "a red ball bouncing",
+    "steps": 8,
+    "resolution": "256p",
+    "frames": 120,
+    "seed": 0,
+    "sample_blocks": [
+      0,
+      24,
+      49
+    ]
+  },
+  "eager_control_parity": {
+    "rms_rel": 0.0,
+    "bitwise": true,
+    "allclose": {
+      "rtol=atol=1e-5": true,
+      "rtol=atol=1e-4": true,
+      "rtol=atol=1e-3": true,
+      "rtol=atol=2e-2": true
+    },
+    "tier": "bitwise"
+  },
+  "capture": {
+    "blocks": 50,
+    "refiner_blocks": 2,
+    "seq_len": 2922,
+    "hidden_size": 5376,
+    "temb_dtype": "torch.float32",
+    "hidden_dtype": "torch.bfloat16"
+  },
+  "eager_replay": {
+    "all_bitwise": true,
+    "nonbitwise_blocks": [],
+    "max_rms_rel": 0.0
+  },
+  "backend_bisect": {
+    "0": {
+      "eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "aot_eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "inductor": {
+        "rms_rel": 0.004941985011100769,
+        "max_abs": 512.0,
+        "bitwise": false
+      }
+    },
+    "24": {
+      "eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "aot_eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "inductor": {
+        "rms_rel": 0.002623653504997492,
+        "max_abs": 1024.0,
+        "bitwise": false
+      }
+    },
+    "49": {
+      "eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "aot_eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "inductor": {
+        "rms_rel": 0.04059375077486038,
+        "max_abs": 11024.0,
+        "bitwise": false
+      }
+    },
+    "reference": "fresh eager replay output"
+  },
+  "piece_bisect": {
+    "0": {
+      "recon_eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "recon_eager_attn_pieces": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "adaln": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "norm1mod": {
+        "rms_rel": 0.0017671575769782066,
+        "max_abs": 16.0,
+        "bitwise": false
+      },
+      "attn": {
+        "rms_rel": 0.0022666810546070337,
+        "max_abs": 16.0,
+        "bitwise": false
+      },
+      "res1": {
+        "rms_rel": 0.005614329595118761,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      "norm2mod": {
+        "rms_rel": 0.0012031407095491886,
+        "max_abs": 16.0,
+        "bitwise": false
+      },
+      "ff": {
+        "rms_rel": 0.0007254762458615005,
+        "max_abs": 16.0,
+        "bitwise": false
+      },
+      "res2": {
+        "rms_rel": 0.001322418567724526,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      "attn_qkv": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "attn_qknorm_rope": {
+        "rms_rel": 0.0022666810546070337,
+        "max_abs": 16.0,
+        "bitwise": false
+      },
+      "attn_sdpa": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "attn_out": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      }
+    },
+    "24": {
+      "recon_eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "recon_eager_attn_pieces": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "adaln": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "norm1mod": {
+        "rms_rel": 0.0016789103392511606,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      "attn": {
+        "rms_rel": 0.0014733251882717013,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      "res1": {
+        "rms_rel": 0.0013499503256753087,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      "norm2mod": {
+        "rms_rel": 0.0012882439186796546,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      "ff": {
+        "rms_rel": 0.0007073383894748986,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      "res2": {
+        "rms_rel": 0.0008670553215779364,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      "attn_qkv": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "attn_qknorm_rope": {
+        "rms_rel": 0.0014733251882717013,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      "attn_sdpa": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "attn_out": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      }
+    },
+    "49": {
+      "recon_eager": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "recon_eager_attn_pieces": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "adaln": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "norm1mod": {
+        "rms_rel": 0.02061375230550766,
+        "max_abs": 9152.0,
+        "bitwise": false
+      },
+      "attn": {
+        "rms_rel": 0.03984164819121361,
+        "max_abs": 11024.0,
+        "bitwise": false
+      },
+      "res1": {
+        "rms_rel": 0.0025329983327537775,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      "norm2mod": {
+        "rms_rel": 0.0019388447981327772,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      "ff": {
+        "rms_rel": 0.0004600046086125076,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      "res2": {
+        "rms_rel": 0.002071391325443983,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      "attn_qkv": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "attn_qknorm_rope": {
+        "rms_rel": 0.03984164819121361,
+        "max_abs": 11024.0,
+        "bitwise": false
+      },
+      "attn_sdpa": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      },
+      "attn_out": {
+        "rms_rel": 0.0,
+        "max_abs": 0.0,
+        "bitwise": true
+      }
+    },
+    "reference": "fresh eager replay output"
+  },
+  "inductor_config_variants": {
+    "block": 49,
+    "default": {
+      "rms_rel": 0.04059375077486038,
+      "max_abs": 11024.0,
+      "bitwise": false,
+      "skipped_keys": []
+    },
+    "force_same_precision": {
+      "rms_rel": 0.04059375077486038,
+      "max_abs": 11024.0,
+      "bitwise": false,
+      "skipped_keys": []
+    },
+    "emulate_precision_casts": {
+      "rms_rel": 0.0013197400839999318,
+      "max_abs": 2048.0,
+      "bitwise": false,
+      "skipped_keys": []
+    },
+    "force_same+emulate": {
+      "rms_rel": 0.0013197400839999318,
+      "max_abs": 2048.0,
+      "bitwise": false,
+      "skipped_keys": []
+    },
+    "pattern_matcher_off": {
+      "rms_rel": 0.04059375077486038,
+      "max_abs": 11024.0,
+      "bitwise": false,
+      "skipped_keys": []
+    },
+    "fuse_off": {
+      "rms_rel": 0.03689016029238701,
+      "max_abs": 11024.0,
+      "bitwise": false,
+      "skipped_keys": []
+    }
+  },
+  "production_compile": {
+    "reference": "in-situ step-1 captures (gated by eager_replay sanity)",
+    "unique_graphs": 2,
+    "per_block": [
+      {
+        "rms_rel": 0.004941985011100769,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004448602441698313,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.002825410570949316,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0021573405247181654,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0018488244386389852,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0020687829237431288,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.002080941805616021,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0019479901529848576,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0019594815094023943,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0018453020602464676,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0018752776086330414,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0019794763065874577,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0020365130621939898,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.001821371610276401,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0018228179542347789,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0018289919244125485,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0018647878896445036,
+        "max_abs": 256.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0037057138979434967,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0023485964629799128,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0023576028179377317,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0022544157691299915,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.002528374781832099,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0023240423761308193,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0023403549566864967,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.002623653504997492,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0027663104701787233,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.003229745663702488,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0037046580109745264,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004325167275965214,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0047285608015954494,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005362391006201506,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0057942247949540615,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.00629582442343235,
+        "max_abs": 768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006796864327043295,
+        "max_abs": 896.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.007480179890990257,
+        "max_abs": 8192.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0073890346102416515,
+        "max_abs": 1216.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005785743705928326,
+        "max_abs": 8192.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004818431101739407,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004832523874938488,
+        "max_abs": 8192.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004301106091588736,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004631862509995699,
+        "max_abs": 2048.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005085357930511236,
+        "max_abs": 8192.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005060003604739904,
+        "max_abs": 704.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006387313362210989,
+        "max_abs": 8192.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.00551981246098876,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.021601717919111252,
+        "max_abs": 2560.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004861246328800917,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0050450945273041725,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005964305251836777,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.04059375077486038,
+        "max_abs": 11024.0,
+        "bitwise": false
+      }
+    ],
+    "per_block_rms_rel_max": 0.04059375077486038,
+    "per_block_rms_rel_argmax": 49,
+    "per_block_rms_rel_median": 0.0037057138979434967,
+    "chained": [
+      {
+        "rms_rel": 0.004941985011100769,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.004834797233343124,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005500860046595335,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.00584795605391264,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.005940515547990799,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006070266477763653,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006130828056484461,
+        "max_abs": 512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006282255053520203,
+        "max_abs": 768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006517396774142981,
+        "max_abs": 768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.006677835248410702,
+        "max_abs": 768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0069181956350803375,
+        "max_abs": 768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.00711425393819809,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.007445585448294878,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.007794727571308613,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.008104545995593071,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.008358021266758442,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.008678236976265907,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.00833968911319971,
+        "max_abs": 1024.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.011516664177179337,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.011735833249986172,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.011532176285982132,
+        "max_abs": 4608.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.011934797279536724,
+        "max_abs": 4608.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.012904379516839981,
+        "max_abs": 4608.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.012845369055867195,
+        "max_abs": 4608.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.012886523269116879,
+        "max_abs": 4608.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.01366272009909153,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.014806406572461128,
+        "max_abs": 4096.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.01680935174226761,
+        "max_abs": 8704.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.018923776224255562,
+        "max_abs": 10112.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.021647293120622635,
+        "max_abs": 8448.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.025774260982871056,
+        "max_abs": 5504.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.034852903336286545,
+        "max_abs": 5888.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.04678860679268837,
+        "max_abs": 9728.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.05526174232363701,
+        "max_abs": 10368.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.06857746839523315,
+        "max_abs": 16384.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.07659266144037247,
+        "max_abs": 16512.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.06439241766929626,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.07127217203378677,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0841854065656662,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.09433095157146454,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.10971744358539581,
+        "max_abs": 39808.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.12034095078706741,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.12368855625391006,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.13239754736423492,
+        "max_abs": 24576.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.11269518733024597,
+        "max_abs": 24576.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.10056308656930923,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.09194041043519974,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.08540540933609009,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0706263855099678,
+        "max_abs": 32768.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0646134689450264,
+        "max_abs": 32768.0,
+        "bitwise": false
+      }
+    ],
+    "chained_final_rms_rel": 0.0646134689450264,
+    "refiner_per_block": [
+      {
+        "rms_rel": 0.00365380453877151,
+        "max_abs": 128.0,
+        "bitwise": false
+      },
+      {
+        "rms_rel": 0.0031628066208213568,
+        "max_abs": 512.0,
+        "bitwise": false
+      }
+    ]
+  }
+}
