@@ -108,6 +108,11 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
     pds._validate_environment()
+    if not os.environ.get("TORCHINDUCTOR_CACHE_DIR"):
+        raise SystemExit(
+            "set a fresh per-stack TORCHINDUCTOR_CACHE_DIR (plan Phase 1 "
+            "requires per-experiment inductor cache isolation)"
+        )
 
     import diffusers
 
@@ -153,6 +158,19 @@ def main() -> int:
     log(f"stack={args.stack_label} torch={torch.__version__}")
     results["smoke"] = sm120_fp8_smoke()
     log(f"smoke: {results['smoke']}")
+    smoke_ok = bool(
+        results["smoke"].get("bf16_matmul_sdpa")
+        and results["smoke"].get("fp8_ok")
+    )
+    results["smoke_ok"] = smoke_ok
+    if not smoke_ok:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(results, indent=2) + "\n", encoding="utf-8"
+        )
+        log(f"wrote {args.output}")
+        log("smoke gate failed: sm120/fp8 non-starter stack (plan risk 1)")
+        return 2
 
     resolved = resolve_profile(
         "h3-dense", ("adaln-host-cache",), checkpoint=str(args.checkpoint)
@@ -197,6 +215,17 @@ def main() -> int:
     log("eager generation")
     eager_latents, eager_seconds = generate()
     results["eager_wall_seconds"] = eager_seconds
+    log("eager repeat (stack determinism control, expect bitwise)")
+    eager_repeat, _ = generate()
+    results["eager_vs_eager"] = pds.latent_parity(eager_repeat, eager_latents)
+    results["eager_deterministic"] = bool(results["eager_vs_eager"]["bitwise"])
+    log(f"eager vs eager bitwise={results['eager_deterministic']}")
+    del eager_repeat
+    if not results["eager_deterministic"]:
+        log(
+            "WARNING: eager path is not run-to-run bitwise on this stack; "
+            "compiled_vs_eager attribution is contaminated"
+        )
 
     golden = torch.load(args.goldens, map_location="cpu", weights_only=False)
     results["golden_provenance"] = pds.golden_provenance(
@@ -256,6 +285,12 @@ def main() -> int:
         json.dumps(results, indent=2) + "\n", encoding="utf-8"
     )
     log(f"wrote {args.output}")
+    if not results["eager_deterministic"]:
+        log(
+            "stack gate failed: eager path not bitwise-reproducible, so no "
+            "provenance-clean re-baseline is possible on this stack"
+        )
+        return 3
     if not results["gate_compile_vs_eager_2e2"]:
         log("stack gate failed: compiled vs eager exceeds allclose 2e-2")
         return 1
