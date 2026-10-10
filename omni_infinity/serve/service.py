@@ -48,6 +48,8 @@ def _graph_telemetry_delta(
         ),
         graphs=after.graphs,
         generation=after.generation,
+        arena_bytes=after.arena_bytes,
+        pinned_host_bytes=after.pinned_host_bytes,
         fallback_reasons=fallback_reasons,
     )
 

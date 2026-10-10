@@ -228,20 +228,187 @@ def test_compile_blocks_rejects_block_streaming():
     )
 
 
-def test_cuda_graph_rejects_block_streaming_but_allows_compile_blocks():
-    with pytest.raises(
-        ValueError, match="cuda-graph is incompatible with block streaming"
-    ):
-        runner_mod._validate_cuda_graph(
-            cuda_graph=True, block_stream_blocks_per_group=1
-        )
-
+def test_cuda_graph_validation_matrix_scopes_the_block_stream_lift():
+    runner_mod._validate_cuda_graph(
+        cuda_graph=True, block_stream_blocks_per_group=1
+    )
     runner_mod._validate_cuda_graph(
         cuda_graph=True, block_stream_blocks_per_group=0
+    )
+    runner_mod._validate_cuda_graph(
+        cuda_graph=False,
+        block_stream_blocks_per_group=1,
+        block_stream_to_disk="/spill",
+        step_overlap=True,
     )
     runner_mod._validate_compile_blocks(
         compile_blocks=True, block_stream_blocks_per_group=0
     )
+
+    with pytest.raises(ValueError, match="block_stream_to_disk"):
+        runner_mod._validate_cuda_graph(
+            cuda_graph=True,
+            block_stream_blocks_per_group=1,
+            block_stream_to_disk="/spill",
+        )
+    with pytest.raises(ValueError, match="step_overlap"):
+        runner_mod._validate_cuda_graph(
+            cuda_graph=True,
+            block_stream_blocks_per_group=1,
+            step_overlap=True,
+        )
+    with pytest.raises(ValueError, match="step_overlap"):
+        runner_mod._validate_cuda_graph(
+            cuda_graph=True,
+            block_stream_blocks_per_group=0,
+            step_overlap=True,
+        )
+
+
+def test_registry_rejects_cuda_graph_for_vdn_hybrid():
+    from omni_infinity.registry import runner_kwargs_for
+
+    merged = runner_kwargs_for("h3-dense", ["cuda-graph", "block-stream"])
+    assert merged["cuda_graph"] is True
+    assert merged["block_stream_blocks_per_group"] == 1
+
+    with pytest.raises(ValueError, match="does not support arch"):
+        runner_kwargs_for("vdn-hybrid", ["cuda-graph", "block-stream"])
+
+
+def test_block_stream_with_cuda_graph_installs_arena_not_stock_hooks(
+    monkeypatch,
+):
+    pytest.importorskip("diffusers")
+    calls = {}
+
+    class FakeTransformer(torch.nn.Module):
+        def forward(self, hidden_states):
+            return hidden_states
+
+    class FakePipeline:
+        def __init__(self):
+            self.transformer = FakeTransformer()
+
+        def load_components(self, **kwargs):
+            pass
+
+        def update_components(self, **kwargs):
+            pass
+
+    class FakeModularPipeline:
+        @classmethod
+        def from_pretrained(
+            cls, checkpoint, workflow="fl2va", components_manager=None
+        ):
+            calls["components_manager"] = components_manager
+            return FakePipeline()
+
+    class FakeComponentsManager:
+        def enable_auto_cpu_offload(self, device, memory_reserve_margin):
+            calls["auto_offload"] = (device, memory_reserve_margin)
+
+    class FakeArenaStreamer:
+        arena_bytes = 1234
+        pinned_host_bytes = 5678
+
+    class FakeManager:
+        def __init__(self, device, max_buckets):
+            self.arena_bytes = 0
+            self.pinned_host_bytes = 0
+
+    def fake_arena(pipeline, device, blocks_per_group, component_name):
+        calls["arena"] = (device, blocks_per_group, component_name)
+        return FakeArenaStreamer()
+
+    def fake_stock(pipeline, device, blocks_per_group, to_disk, component):
+        calls["stock"] = (device, blocks_per_group)
+
+    monkeypatch.setattr(
+        "diffusers.MiniMaxH3ModularPipeline",
+        FakeModularPipeline,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "diffusers.modular_pipelines.ComponentsManager",
+        FakeComponentsManager,
+    )
+    monkeypatch.setattr(
+        "omni_infinity.cuda_graph.CudaGraphManager", FakeManager
+    )
+    monkeypatch.setattr(runner_mod, "_enable_arena_block_streaming", fake_arena)
+    monkeypatch.setattr(runner_mod, "_enable_block_streaming", fake_stock)
+
+    runner = runner_mod.ReferenceRunner.from_pretrained(
+        checkpoint="dummy",
+        device="cpu",
+        offload=True,
+        components=("transformer",),
+        block_stream_blocks_per_group=1,
+        cuda_graph=True,
+    )
+
+    assert calls["arena"] == ("cpu", 1, "transformer")
+    assert "stock" not in calls
+    assert isinstance(runner.arena_streamer, FakeArenaStreamer)
+    assert runner.cuda_graph_manager.arena_bytes == 1234
+    assert runner.cuda_graph_manager.pinned_host_bytes == 5678
+    assert runner.cuda_graph_invalidate_between_generations is True
+
+
+def test_block_stream_without_cuda_graph_keeps_stock_hooks(monkeypatch):
+    pytest.importorskip("diffusers")
+    calls = {}
+
+    class FakePipeline:
+        def load_components(self, **kwargs):
+            pass
+
+        def update_components(self, **kwargs):
+            pass
+
+    class FakeModularPipeline:
+        @classmethod
+        def from_pretrained(
+            cls, checkpoint, workflow="fl2va", components_manager=None
+        ):
+            return FakePipeline()
+
+    class FakeComponentsManager:
+        def enable_auto_cpu_offload(self, device, memory_reserve_margin):
+            pass
+
+    monkeypatch.setattr(
+        "diffusers.MiniMaxH3ModularPipeline",
+        FakeModularPipeline,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "diffusers.modular_pipelines.ComponentsManager",
+        FakeComponentsManager,
+    )
+    monkeypatch.setattr(
+        runner_mod,
+        "_enable_arena_block_streaming",
+        lambda *args, **kwargs: calls.setdefault("arena", True),
+    )
+    monkeypatch.setattr(
+        runner_mod,
+        "_enable_block_streaming",
+        lambda *args, **kwargs: calls.setdefault("stock", True),
+    )
+
+    runner = runner_mod.ReferenceRunner.from_pretrained(
+        checkpoint="dummy",
+        device="cpu",
+        offload=True,
+        components=(),
+        block_stream_blocks_per_group=1,
+        cuda_graph=False,
+    )
+
+    assert calls == {"stock": True}
+    assert runner.arena_streamer is None
 
 
 def test_cuda_graph_registry_profile_binds_reference_runner_api():
